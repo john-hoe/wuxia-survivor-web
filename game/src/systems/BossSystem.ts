@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { heifengChiefConfig, type BossAttackId, type BossConfig, type BossId, type BossState } from "../data/bosses";
 import { eventBus } from "../utils/EventBus";
+import type { GameEventName } from "../types";
 import { getArtAnimationKey } from "../utils/artAssets";
 import { JuiceSystem } from "./JuiceSystem";
 
@@ -41,6 +42,10 @@ type BossRuntime = {
   chargeGhostsSpawned: number;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
   shadow: Phaser.GameObjects.Ellipse;
+  auraRing: Phaser.GameObjects.Image;
+  inkShadow: Phaser.GameObjects.Image;
+  introSlamLanded: boolean;
+  windupRecoilMs: number;
   warningView?: Phaser.GameObjects.Container;
   attackView?: Phaser.GameObjects.Container;
 };
@@ -115,6 +120,28 @@ const INTRO_OFFSET_Y = -420;
 const INTRO_TARGET_OFFSET_Y = -90;
 const IDLE_ATTACK_CHECK_MS = 250;
 const BOSS_SPRITE_SCALE = 0.58;
+/** 气场升级：Boss 显示尺寸在现有 viewScale 基准上乘法叠加（碰撞半径不变） */
+const BOSS_SIZE_MULTIPLIER = 1.35;
+/** 常驻气环：半径≈视觉半径×体型倍率×1.1，呼吸 alpha 区间 */
+const AURA_RING_RADIUS_FACTOR = 1.1;
+const AURA_RING_ALPHA_MIN = 0.18;
+const AURA_RING_ALPHA_MAX = 0.32;
+const AURA_RING_BREATH_MS = 980;
+/** 气环之下的墨黑软椭圆投影：比气环略大 */
+const INK_SHADOW_RADIUS_FACTOR = 1.18;
+const INK_SHADOW_ALPHA = 0.32;
+/** 出场落地一击：400ms 加速下落 + 80ms 落地顿，落地帧墨环冲击波扩散 500ms */
+const INTRO_FALL_MS = 400;
+const INTRO_LAND_HOLD_MS = 80;
+const SLAM_SHOCKWAVE_MS = 500;
+/** 程序化气场纹理：画布尺寸、渐变外缘半径、气环环带中心半径（均为纹理像素） */
+const AURA_TEXTURE_SIZE = 256;
+const AURA_TEXTURE_GRADIENT_RADIUS = 124;
+const AURA_TEXTURE_RING_BAND_RADIUS = 102;
+/** windup 蓄力压扁 0.94，出手帧 1.06 回弹后归位 */
+const WINDUP_SQUASH = 0.94;
+const WINDUP_RECOIL = 1.06;
+const WINDUP_RECOIL_MS = 140;
 /** 受击白闪（Boss 用金色）与 squash 回弹时长 */
 const HIT_FLASH_MS = 80;
 const HIT_SQUASH_MS = 60;
@@ -151,6 +178,7 @@ export class BossSystem {
     runtime.chargeCooldownMs = Math.max(0, runtime.chargeCooldownMs - clampedDeltaMs);
     runtime.whirlwindCooldownMs = Math.max(0, runtime.whirlwindCooldownMs - clampedDeltaMs);
     runtime.hitSquashMs = Math.max(0, runtime.hitSquashMs - clampedDeltaMs);
+    runtime.windupRecoilMs = Math.max(0, runtime.windupRecoilMs - clampedDeltaMs);
     runtime.ghostCooldownMs = Math.max(0, runtime.ghostCooldownMs - clampedDeltaMs);
     runtime.stateMs += clampedDeltaMs;
 
@@ -208,6 +236,8 @@ export class BossSystem {
     const view = this.createBossView();
     const usesSpriteArt = view.getData("bossSpriteArt") === true;
     const shadow = this.scene.add.ellipse(0, 0, usesSpriteArt ? 108 : 86, usesSpriteArt ? 28 : 26, 0x050705, 0.36).setDepth(11);
+    // 气场层：墨黑软椭圆投影（下）+ 朱砂气环（上），depth 均低于 Boss view(13)
+    const { auraRing, inkShadow } = this.createAuraViews();
     const runtime: BossRuntime = {
       runtimeId: BOSS_RUNTIME_ID,
       hp: this.config.maxHp,
@@ -230,12 +260,17 @@ export class BossSystem {
       stageCleared: false,
       deathNotified: false,
       hitSquashMs: 0,
+      windupRecoilMs: 0,
       ghostCooldownMs: 0,
       chargeGhostsSpawned: 0,
+      introSlamLanded: false,
       view,
-      shadow
+      shadow,
+      auraRing,
+      inkShadow
     };
     this.runtime = runtime;
+    this.startAuraBreathing(runtime);
     this.updateScreenPosition(runtime);
     this.options.playSfx("boss_warning");
     eventBus.emit("boss_intro_started", {
@@ -354,8 +389,12 @@ export class BossSystem {
     this.scene.tweens.timeScale = 1;
     this.scene.tweens.killTweensOf(this.runtime.view);
     this.scene.tweens.killTweensOf(this.runtime.shadow);
+    this.scene.tweens.killTweensOf(this.runtime.auraRing);
+    this.scene.tweens.killTweensOf(this.runtime.inkShadow);
     this.clearWarning(this.runtime);
     this.clearAttackView(this.runtime);
+    this.runtime.auraRing.destroy();
+    this.runtime.inkShadow.destroy();
     this.runtime.shadow.destroy();
     this.runtime.view.destroy();
     this.runtime = undefined;
@@ -371,12 +410,44 @@ export class BossSystem {
       x: heroWorld.x,
       y: heroWorld.y + INTRO_TARGET_OFFSET_Y
     };
+    // 墨晕/压暗的 alpha 渐显保持原有节奏（横跨整个 introMs）
     const introProgress = Phaser.Math.Clamp(runtime.stateMs / this.config.introMs, 0, 1);
-    const easedProgress = Phaser.Math.Easing.Cubic.Out(introProgress);
-    runtime.worldX = Phaser.Math.Linear(start.x, target.x, easedProgress);
-    runtime.worldY = Phaser.Math.Linear(start.y, target.y, easedProgress);
     runtime.view.setAlpha(0.72 + introProgress * 0.28);
-    this.setBossViewMotionScale(runtime, 1 + Math.sin(runtime.stateMs / 70) * 0.025);
+
+    if (!runtime.introSlamLanded) {
+      // 出场落地一击：400ms 加速下落（Cubic.In），从屏幕上缘外砸向出场位
+      const fallProgress = Phaser.Math.Clamp(runtime.stateMs / INTRO_FALL_MS, 0, 1);
+      const easedFall = Phaser.Math.Easing.Cubic.In(fallProgress);
+      runtime.worldX = Phaser.Math.Linear(start.x, target.x, easedFall);
+      runtime.worldY = Phaser.Math.Linear(start.y, target.y, easedFall);
+      this.setBossViewMotionScale(runtime, 1 + Math.sin(runtime.stateMs / 70) * 0.025);
+      if (fallProgress >= 1) {
+        runtime.introSlamLanded = true;
+        runtime.worldX = target.x;
+        runtime.worldY = target.y;
+        this.createSlamShockwave(runtime);
+        // 防御性广播：GameScene 可接震屏/音效；事件名未列入 GameEventName 联合类型时以断言兜底
+        const screen = this.worldToScreen(runtime.worldX, runtime.worldY);
+        eventBus.emit("boss_slam_landed" as GameEventName, {
+          bossId: this.config.id,
+          worldX: runtime.worldX,
+          worldY: runtime.worldY,
+          screenX: screen.x,
+          screenY: screen.y
+        });
+      }
+      return;
+    }
+
+    // 落地顿 80ms：压扁回弹，之后在原位维持微浮动直至 intro 结束切入战斗态
+    const holdProgress = Phaser.Math.Clamp((runtime.stateMs - INTRO_FALL_MS) / INTRO_LAND_HOLD_MS, 0, 1);
+    runtime.worldX = target.x;
+    runtime.worldY = target.y;
+    if (holdProgress < 1) {
+      this.setBossViewMotionScale(runtime, Phaser.Math.Linear(0.92, 1, Phaser.Math.Easing.Quadratic.Out(holdProgress)));
+    } else {
+      this.setBossViewMotionScale(runtime, 1 + Math.sin(runtime.stateMs / 70) * 0.012);
+    }
     if (runtime.stateMs >= this.config.introMs) {
       runtime.view.setAlpha(1);
       this.setBossViewMotionScale(runtime, 1);
@@ -410,6 +481,7 @@ export class BossSystem {
       this.clearWarning(runtime);
       this.clearWindupTint(runtime);
       runtime.attackDamageApplied = false;
+      runtime.windupRecoilMs = WINDUP_RECOIL_MS;
       this.createChargeAttackView(runtime);
       this.transitionTo(runtime, "charge_slash", false);
       eventBus.emit("boss_attack_started", {
@@ -448,6 +520,7 @@ export class BossSystem {
       this.clearWarning(runtime);
       this.clearWindupTint(runtime);
       runtime.attackDamageApplied = false;
+      runtime.windupRecoilMs = WINDUP_RECOIL_MS;
       this.createWhirlwindAttackView(runtime);
       this.transitionTo(runtime, "whirlwind", false);
       eventBus.emit("boss_attack_started", {
@@ -481,6 +554,11 @@ export class BossSystem {
     runtime.view.setAlpha(1 - progress);
     this.setBossViewMotionScale(runtime, 1 + progress * 0.28);
     runtime.shadow.setAlpha(0.36 * (1 - progress));
+    // 气环随死亡演出消散：略扩散并淡出（呼吸 Tween 已在 beginDeath 停止）
+    runtime.auraRing.setAlpha(AURA_RING_ALPHA_MAX * (1 - progress));
+    const ringBaseScale = (runtime.auraRing.getData("baseDisplayScale") as number | undefined) ?? 1;
+    runtime.auraRing.setScale(ringBaseScale * (1 + progress * 0.45));
+    runtime.inkShadow.setAlpha(INK_SHADOW_ALPHA * (1 - progress));
     if (runtime.stateMs < 900 || runtime.deathNotified) {
       return;
     }
@@ -566,6 +644,9 @@ export class BossSystem {
     this.clearWarning(runtime);
     this.clearAttackView(runtime);
     this.clearWindupTint(runtime);
+    runtime.windupRecoilMs = 0;
+    // 停止气环呼吸 Tween，交由 updateDead 做消散演出
+    this.scene.tweens.killTweensOf(runtime.auraRing);
     runtime.stageCleared = true;
     runtime.currentAttack = "none";
     runtime.lastAttack = runtime.lastAttack === "none" ? runtime.currentAttack : runtime.lastAttack;
@@ -706,20 +787,22 @@ export class BossSystem {
 
   private createBossView(): Phaser.GameObjects.Container | Phaser.GameObjects.Sprite {
     if (this.scene.textures.exists("boss_heifeng_idle")) {
+      // 体型升级：在现有 viewScale 基准上乘法叠加 1.35 倍
+      const spriteScale = BOSS_SPRITE_SCALE * BOSS_SIZE_MULTIPLIER;
       const bossView = this.scene.add.sprite(0, 0, "boss_heifeng_idle")
         .setDepth(13)
         .setOrigin(0.5, 0.66)
-        .setScale(BOSS_SPRITE_SCALE)
+        .setScale(spriteScale)
         .setAlpha(0.98);
       const animationKey = getArtAnimationKey("boss_heifeng_idle");
       if (this.scene.anims.exists(animationKey)) {
         bossView.play(animationKey);
       }
       bossView.setData("bossSpriteArt", true);
-      bossView.setData("baseScale", BOSS_SPRITE_SCALE);
+      bossView.setData("baseScale", spriteScale);
       bossView.setData("motionScale", 1);
       bossView.setData("facingLeft", false);
-      bossView.setData("shadowOffsetY", 56);
+      bossView.setData("shadowOffsetY", 56 * BOSS_SIZE_MULTIPLIER);
       return bossView;
     }
 
@@ -744,7 +827,7 @@ export class BossSystem {
       .setBlendMode(Phaser.BlendModes.ADD);
     const bossView = this.scene.add.container(0, 0, [backRobe, leftArm, rightArm, torso, dangerCore, blade, head, brow, beard])
       .setDepth(13);
-    bossView.setData("baseScale", 1);
+    bossView.setData("baseScale", 1 * BOSS_SIZE_MULTIPLIER);
     bossView.setData("motionScale", 1);
     bossView.setData("facingLeft", false);
     return bossView;
@@ -855,6 +938,102 @@ export class BossSystem {
     });
   }
 
+  /** 气场层：墨黑软椭圆投影（下，比气环略大）+ 朱砂气环（上），均低于 Boss view(13)。 */
+  private createAuraViews(): { auraRing: Phaser.GameObjects.Image; inkShadow: Phaser.GameObjects.Image } {
+    this.ensureAuraTextures();
+    const ringRadius = this.config.visualRadius * BOSS_SIZE_MULTIPLIER * AURA_RING_RADIUS_FACTOR;
+    const inkRadius = ringRadius * INK_SHADOW_RADIUS_FACTOR;
+
+    // 墨黑软椭圆投影：径向渐变圆形纹理压扁 0.42 成软椭圆
+    const inkShadow = this.scene.add.image(0, 0, "boss_ink_shadow")
+      .setDepth(11.4)
+      .setAlpha(INK_SHADOW_ALPHA);
+    const inkScale = inkRadius / AURA_TEXTURE_GRADIENT_RADIUS;
+    inkShadow.setScale(inkScale, inkScale * 0.42);
+
+    // 朱砂气环：环带中心半径对齐 ringRadius
+    const auraRing = this.scene.add.image(0, 0, "boss_aura_ring")
+      .setDepth(11.5)
+      .setAlpha(AURA_RING_ALPHA_MIN);
+    const ringScale = ringRadius / AURA_TEXTURE_RING_BAND_RADIUS;
+    auraRing.setScale(ringScale);
+    auraRing.setData("baseDisplayScale", ringScale);
+    return { auraRing, inkShadow };
+  }
+
+  /** 气环呼吸：alpha 0.18↔0.32 往返（beginDeath 时停掉转消散演出）。 */
+  private startAuraBreathing(runtime: BossRuntime): void {
+    runtime.auraRing.setAlpha(AURA_RING_ALPHA_MIN);
+    this.scene.tweens.add({
+      targets: runtime.auraRing,
+      alpha: AURA_RING_ALPHA_MAX,
+      duration: AURA_RING_BREATH_MS,
+      ease: "Sine.easeInOut",
+      yoyo: true,
+      repeat: -1
+    });
+  }
+
+  /** 程序化径向渐变纹理：朱砂气环 + 墨黑软影，只生成一次。 */
+  private ensureAuraTextures(): void {
+    if (!this.scene.textures.exists("boss_aura_ring")) {
+      const canvasTexture = this.scene.textures.createCanvas("boss_aura_ring", AURA_TEXTURE_SIZE, AURA_TEXTURE_SIZE);
+      if (canvasTexture) {
+        const context = canvasTexture.getContext();
+        const center = AURA_TEXTURE_SIZE / 2;
+        const gradient = context.createRadialGradient(center, center, 0, center, center, AURA_TEXTURE_GRADIENT_RADIUS);
+        gradient.addColorStop(0, "rgba(120, 20, 12, 0)");
+        gradient.addColorStop(0.58, "rgba(120, 20, 12, 0)");
+        gradient.addColorStop(0.74, "rgba(196, 58, 38, 0.95)");
+        gradient.addColorStop(0.88, "rgba(150, 32, 20, 0.5)");
+        gradient.addColorStop(1, "rgba(120, 20, 12, 0)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, AURA_TEXTURE_SIZE, AURA_TEXTURE_SIZE);
+        canvasTexture.refresh();
+      }
+    }
+    if (!this.scene.textures.exists("boss_ink_shadow")) {
+      const canvasTexture = this.scene.textures.createCanvas("boss_ink_shadow", AURA_TEXTURE_SIZE, AURA_TEXTURE_SIZE);
+      if (canvasTexture) {
+        const context = canvasTexture.getContext();
+        const center = AURA_TEXTURE_SIZE / 2;
+        const gradient = context.createRadialGradient(center, center, 0, center, center, AURA_TEXTURE_GRADIENT_RADIUS);
+        gradient.addColorStop(0, "rgba(6, 5, 5, 0.92)");
+        gradient.addColorStop(0.6, "rgba(6, 5, 5, 0.45)");
+        gradient.addColorStop(1, "rgba(6, 5, 5, 0)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, AURA_TEXTURE_SIZE, AURA_TEXTURE_SIZE);
+        canvasTexture.refresh();
+      }
+    }
+  }
+
+  /** 落地一击的墨环冲击波：Graphics 墨圈从落点扩散 500ms 后销毁。 */
+  private createSlamShockwave(runtime: BossRuntime): void {
+    const screen = this.worldToScreen(runtime.worldX, runtime.worldY);
+    const graphics = this.scene.add.graphics().setDepth(35);
+    const wave = { radius: 16, alpha: 0.85, lineWidth: 12 };
+    const maxRadius = this.config.visualRadius * BOSS_SIZE_MULTIPLIER * 2.4;
+    this.scene.tweens.add({
+      targets: wave,
+      radius: maxRadius,
+      alpha: 0,
+      lineWidth: 2,
+      duration: SLAM_SHOCKWAVE_MS,
+      ease: "Cubic.easeOut",
+      onUpdate: () => {
+        graphics.clear();
+        graphics.lineStyle(wave.lineWidth, 0x17100f, wave.alpha);
+        graphics.strokeCircle(screen.x, screen.y, wave.radius);
+        graphics.lineStyle(Math.max(1, wave.lineWidth * 0.4), 0x8f4b2f, wave.alpha * 0.7);
+        graphics.strokeCircle(screen.x, screen.y, Math.max(1, wave.radius * 0.82));
+      },
+      onComplete: () => {
+        graphics.destroy();
+      }
+    });
+  }
+
   private updateWarningView(runtime: BossRuntime): void {
     if (!runtime.warningView) {
       return;
@@ -897,8 +1076,12 @@ export class BossSystem {
   private updateScreenPosition(runtime: BossRuntime): void {
     const screen = this.worldToScreen(runtime.worldX, runtime.worldY);
     runtime.view.setPosition(screen.x, screen.y);
-    const shadowOffsetY = (runtime.view.getData("shadowOffsetY") as number | undefined) ?? this.config.visualRadius * 0.58;
+    const shadowOffsetY = (runtime.view.getData("shadowOffsetY") as number | undefined)
+      ?? this.config.visualRadius * 0.58 * BOSS_SIZE_MULTIPLIER;
     runtime.shadow.setPosition(screen.x, screen.y + shadowOffsetY);
+    // 气场层跟随脚下：墨黑投影在下、朱砂气环在上
+    runtime.inkShadow.setPosition(screen.x, screen.y + shadowOffsetY);
+    runtime.auraRing.setPosition(screen.x, screen.y + shadowOffsetY);
     runtime.view.setData("facingLeft", this.shouldFaceLeft(runtime));
     this.applyBossViewScale(runtime);
   }
@@ -1024,7 +1207,14 @@ export class BossSystem {
     const facingLeft = (runtime.view.getData("facingLeft") as boolean | undefined) ?? false;
     // 受击 squash 回弹：60ms 内从 0.92 恢复到 1（每帧缩放会覆盖 Tween，故用衰减因子）
     const squash = runtime.hitSquashMs > 0 ? 1 - 0.08 * (runtime.hitSquashMs / HIT_SQUASH_MS) : 1;
-    runtime.view.setScale((facingLeft ? -1 : 1) * baseScale * motionScale * squash, baseScale * motionScale * squash);
+    // 蓄力强化：windup 期压扁 0.94；出手帧 1.06 回弹，140ms 内衰减归位
+    const windupScale = runtime.windupRecoilMs > 0
+      ? 1 + (WINDUP_RECOIL - 1) * (runtime.windupRecoilMs / WINDUP_RECOIL_MS)
+      : runtime.state === "charge_windup" || runtime.state === "whirlwind_windup"
+        ? WINDUP_SQUASH
+        : 1;
+    const totalScale = baseScale * motionScale * squash * windupScale;
+    runtime.view.setScale((facingLeft ? -1 : 1) * totalScale, totalScale);
     runtime.shadow.setScale(Math.max(0.55, motionScale));
   }
 

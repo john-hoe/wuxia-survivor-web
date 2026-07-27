@@ -61,6 +61,24 @@ const HUD_VALUE_Y = 34;
 // Boss 血条：顶栏正下方
 const BOSS_BAR_Y = 68;
 const BOSS_BAR_WIDTH = 420;
+// ── 主角表现层：接触阴影 + 程序化动画（移动倾斜 / 待机呼吸）────────────
+/** 接触阴影纹理键：程序化径向渐变墨黑椭圆，按 key 缓存只生成一次。 */
+const HERO_SHADOW_TEXTURE_KEY = "hero_contact_shadow";
+const HERO_SHADOW_WIDTH = 56;
+const HERO_SHADOW_HEIGHT = 20;
+const HERO_SHADOW_ALPHA = 0.3;
+/** 阴影 depth：比主角精灵（10）低 1，高于地面层（-30~-23）。 */
+const HERO_SHADOW_DEPTH = 9;
+/** 移动倾斜上限 ±3.5°，按水平速度占比取值，lerp 平滑、停止归零。 */
+const HERO_TILT_MAX_RAD = Phaser.Math.DegToRad(3.5);
+const HERO_TILT_SMOOTH_MS = 110;
+/** 待机呼吸：1.6s 正弦周期，scaleY 在基础 scale 上乘法叠加 ±1.5%。 */
+const HERO_BREATH_PERIOD_MS = 1600;
+const HERO_BREATH_AMOUNT = 0.015;
+/** 移动时 scaleY 回落到基础值的平滑时间常数。 */
+const HERO_BREATH_RECOVER_MS = 140;
+/** 死亡后阴影淡出时长，与 startDeathTransition 的 420ms 转场窗口同步。 */
+const HERO_SHADOW_DEATH_FADE_MS = 420;
 
 /** 装饰物微动画元数据：残旗呼吸 / 竹丛错相位摆动 / 灯笼轻晃。 */
 type ScatterPropSway = {
@@ -85,7 +103,11 @@ export class GameScene extends Phaser.Scene {
   private progressionSystem?: ProgressionSystem;
   private latestProgression?: ProgressionSnapshot;
   private heroView?: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
-  private heroShadow?: Phaser.GameObjects.Ellipse;
+  private heroShadow?: Phaser.GameObjects.Image;
+  /** 主角基础 scaleY：drawHero 时采样（现有约 0.66），呼吸/回落均乘法叠加，不写死。 */
+  private heroBaseScaleY = 1;
+  /** 当前移动倾斜角（弧度），指数平滑趋近目标。 */
+  private heroTiltRad = 0;
   private footHpBack?: Phaser.GameObjects.Rectangle;
   private footHpFill?: Phaser.GameObjects.Rectangle;
   private screenDamageEdges: Phaser.GameObjects.Rectangle[] = [];
@@ -443,7 +465,7 @@ export class GameScene extends Phaser.Scene {
     if (this.heroMovement) {
       this.latestMovement = this.heroMovement.update(activeDeltaMs);
       this.updateStageScroll(this.latestMovement);
-      this.updateHeroView(this.latestMovement);
+      this.updateHeroView(this.latestMovement, activeDeltaMs);
     }
 
     this.updateAtmosphere(activeDeltaMs);
@@ -1263,10 +1285,41 @@ export class GameScene extends Phaser.Scene {
     this.spawnEnemyShowcaseForDebug();
   }
 
+  /** 主角脚下软椭圆接触阴影：程序化径向渐变墨黑椭圆纹理，按 key 缓存只生成一次。 */
+  private ensureHeroShadowTexture(): void {
+    if (this.textures.exists(HERO_SHADOW_TEXTURE_KEY)) {
+      return;
+    }
+    // 纹理直接按最终尺寸 56×20 生成，updateHeroView 的移动拉伸 setScale 才无需换算。
+    const canvasTexture = this.textures.createCanvas(HERO_SHADOW_TEXTURE_KEY, HERO_SHADOW_WIDTH, HERO_SHADOW_HEIGHT);
+    const context = canvasTexture?.getContext();
+    if (!canvasTexture || !context) {
+      return;
+    }
+    context.clearRect(0, 0, HERO_SHADOW_WIDTH, HERO_SHADOW_HEIGHT);
+    context.save();
+    context.translate(HERO_SHADOW_WIDTH / 2, HERO_SHADOW_HEIGHT / 2);
+    context.scale(1, HERO_SHADOW_HEIGHT / HERO_SHADOW_WIDTH);
+    const gradient = context.createRadialGradient(0, 0, 0, 0, 0, HERO_SHADOW_WIDTH / 2);
+    gradient.addColorStop(0, "rgba(5, 7, 5, 0.95)");
+    gradient.addColorStop(0.55, "rgba(5, 7, 5, 0.5)");
+    gradient.addColorStop(1, "rgba(5, 7, 5, 0)");
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.arc(0, 0, HERO_SHADOW_WIDTH / 2, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    canvasTexture.refresh();
+  }
+
   private drawHero(): void {
     const centerX = this.scale.width / 2;
     const centerY = this.getHeroScreenY();
-    this.heroShadow = this.add.ellipse(centerX, centerY + 24, 52, 16, 0x050705, 0.32).setDepth(5);
+    this.heroTiltRad = 0;
+    this.ensureHeroShadowTexture();
+    this.heroShadow = this.add.image(centerX, centerY + 24, HERO_SHADOW_TEXTURE_KEY)
+      .setAlpha(HERO_SHADOW_ALPHA)
+      .setDepth(HERO_SHADOW_DEPTH);
 
     if (this.textures.exists("hero_shaoxia_idle")) {
       const heroSprite = this.add.sprite(centerX, centerY, "hero_shaoxia_idle")
@@ -1287,6 +1340,8 @@ export class GameScene extends Phaser.Scene {
       const waist = this.add.rectangle(0, 12, 28, 8, 0x2f5b4f, 1);
       this.heroView = this.add.container(centerX, centerY, [body, facing, waist]).setDepth(10);
     }
+    // 采样基础 scaleY（sprite 约 0.66 / 占位容器 1），待机呼吸以此乘法叠加。
+    this.heroBaseScaleY = this.heroView.scaleY;
 
     this.footHpBack = this.add.rectangle(centerX - 28, centerY + 38, 56, 6, 0x070807, 0.75)
       .setOrigin(0, 0.5)
@@ -1568,14 +1623,14 @@ export class GameScene extends Phaser.Scene {
     this.refreshPropScatter();
   }
 
-  private updateHeroView(movement: HeroMovementSnapshot): void {
+  private updateHeroView(movement: HeroMovementSnapshot, deltaMs: number): void {
     if (!this.heroView) {
       return;
     }
 
+    const health = this.getHealthSnapshot();
     const heroSprite = this.heroView instanceof Phaser.GameObjects.Sprite ? this.heroView : undefined;
     if (heroSprite) {
-      const health = this.getHealthSnapshot();
       if (health.invincibleMs > 0 && this.textures.exists("hero_shaoxia_hurt")) {
         this.playHeroAnimation(heroSprite, "hero_shaoxia_hurt");
       } else if (movement.inputMagnitude > 0.02 && this.textures.exists("hero_shaoxia_move")) {
@@ -1587,9 +1642,27 @@ export class GameScene extends Phaser.Scene {
       if (Math.abs(movement.inputX) > 0.05) {
         heroSprite.setFlipX(movement.inputX > 0);
       }
-      heroSprite.setRotation(0);
+
+      // 程序化倾斜：按水平速度占比 ±3.5°，指数平滑，停止时归零（只写 rotation，不打断帧动画/flipX）。
+      const speedRef = Math.max(1, movement.speed);
+      const tiltTarget = Phaser.Math.Clamp(movement.velocityX / speedRef, -1, 1) * HERO_TILT_MAX_RAD;
+      this.heroTiltRad = Phaser.Math.Linear(this.heroTiltRad, tiltTarget, 1 - Math.exp(-deltaMs / HERO_TILT_SMOOTH_MS));
+      if (movement.inputMagnitude <= 0.02 && Math.abs(this.heroTiltRad) < 0.001) {
+        this.heroTiltRad = 0;
+      }
+      heroSprite.setRotation(this.heroTiltRad);
     } else if (movement.inputMagnitude > 0.02) {
+      // 占位箭头：rotation 仍用于指示朝向，不叠加倾斜。
       this.heroView.rotation = Math.atan2(movement.inputX, -movement.inputY);
+    }
+
+    // 待机呼吸：idle 时 scaleY 在基础 scale 上乘法叠加 ±1.5%（1.6s 正弦），移动时平滑回落基础值。
+    if (movement.inputMagnitude <= 0.02) {
+      const breath = Math.sin((this.elapsedMs / HERO_BREATH_PERIOD_MS) * Math.PI * 2) * HERO_BREATH_AMOUNT;
+      this.heroView.setScale(this.heroView.scaleX, this.heroBaseScaleY * (1 + breath));
+    } else {
+      const recover = 1 - Math.exp(-deltaMs / HERO_BREATH_RECOVER_MS);
+      this.heroView.setScale(this.heroView.scaleX, Phaser.Math.Linear(this.heroView.scaleY, this.heroBaseScaleY, recover));
     }
 
     const centerY = this.getHeroScreenY();
@@ -1597,11 +1670,18 @@ export class GameScene extends Phaser.Scene {
     this.heroView.setPosition(this.scale.width / 2, centerY + bob);
     this.heroShadow?.setScale(1 + movement.inputMagnitude * 0.08, 1);
 
-    const health = this.getHealthSnapshot();
-    if (health.invincibleMs > 0) {
-      this.heroView.setAlpha(Math.sin(this.elapsedMs / 18) > 0 ? 0.46 : 0.95);
-    } else {
-      this.heroView.setAlpha(1);
+    const heroAlpha = health.invincibleMs > 0
+      ? (Math.sin(this.elapsedMs / 18) > 0 ? 0.46 : 0.95)
+      : 1;
+    this.heroView.setAlpha(heroAlpha);
+    // 接触阴影与主角透明度同步：受伤闪烁同节奏淡出淡入，死亡时随转场窗口持续淡出。
+    if (this.heroShadow) {
+      if (health.isDead) {
+        const fadeStep = (HERO_SHADOW_ALPHA * deltaMs) / HERO_SHADOW_DEATH_FADE_MS;
+        this.heroShadow.setAlpha(Math.max(0, this.heroShadow.alpha - fadeStep));
+      } else {
+        this.heroShadow.setAlpha(HERO_SHADOW_ALPHA * heroAlpha);
+      }
     }
 
     const footY = centerY + bob + 38;

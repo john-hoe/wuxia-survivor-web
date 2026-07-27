@@ -97,6 +97,19 @@ type EnemyRuntime = {
   hitOffsetX: number;
   hitOffsetY: number;
   hitOffsetAgeMs: number;
+  /** 接触阴影（池化复用，每帧贴地跟随；死亡渐隐回池、回收即回池） */
+  shadow: Phaser.GameObjects.Image;
+  /** 锚点到脚底的表现层距离（阴影贴地 y 偏移） */
+  footOffsetY: number;
+  /** 移动倾斜当前角（rad，指数 lerp 平滑，与既有步行 sway 叠加） */
+  leanRad: number;
+  /** 步行颠簸表现层 y 偏移（px，负值向上抬起） */
+  bobOffsetY: number;
+  /** 近战前扑表现层状态：方向/距离/计时（不动世界坐标与碰撞） */
+  lungeDirX: number;
+  lungeDirY: number;
+  lungeDistance: number;
+  lungeAgeMs: number;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
   /**
    * 墨染江山·最小减速通道（本字段为 zone 技能新增的唯一状态）：
@@ -152,6 +165,26 @@ const HIT_KNOCKBACK_ELITE_MAX_PX = 6;
 const HIT_OFFSET_DECAY_MS = 30;
 const HIT_OFFSET_OSCILLATION_MS = 90;
 const HIT_OFFSET_SETTLE_MS = 160;
+/** 接触阴影：径向渐变墨黑椭圆纹理（一次生成全局缓存），宽度≈碰撞直径×1.6，精英略大 */
+const SHADOW_TEXTURE_KEY = "vfx_enemy_contact_shadow";
+const SHADOW_TINT = 0x050705;
+const SHADOW_BASE_ALPHA = 0.28;
+const SHADOW_WIDTH_SCALE = 1.6;
+const SHADOW_ELITE_WIDTH_SCALE = 2;
+const SHADOW_ASPECT = 0.5;
+const SHADOW_DEATH_FADE_MS = 140;
+/** 移动倾斜平滑时间常数（指数 lerp，约 90ms 跟上横向速度变化） */
+const LEAN_SMOOTH_MS = 90;
+/** 近战前扑（纯表现层，不动碰撞）：出手瞬间向少侠方向 12-15px，60ms 扑出 + 80ms 回位 */
+const LUNGE_MIN_PX = 12;
+const LUNGE_MAX_PX = 15;
+const LUNGE_OUT_MS = 60;
+const LUNGE_BACK_MS = 80;
+const LUNGE_TOTAL_MS = LUNGE_OUT_MS + LUNGE_BACK_MS;
+/** 木人精英碎裂：木块上抛 150ms + 重力下坠 250ms，共 400ms 后销毁 */
+const WOOD_SHARD_RISE_MS = 150;
+const WOOD_SHARD_TOTAL_MS = 400;
+const WOOD_SHARD_TINTS = [0x7a4f2a, 0x8d6132, 0x6c4322, 0x5e421c];
 
 export class EnemyDirectorSystem {
   private readonly config: EnemyDirectorConfig;
@@ -169,6 +202,10 @@ export class EnemyDirectorSystem {
   private lastSpawnSide: SpawnSide | "none" = "none";
   private sameSpawnSideStreak = 0;
   private readonly spawnedEnemyIds = new Set<EnemyId>();
+  /** 接触阴影池：回收/死亡渐隐结束的阴影复位复用，120+ 敌同屏零反复分配 */
+  private readonly shadowPool: Phaser.GameObjects.Image[] = [];
+  /** 死亡渐隐中的阴影（已脱离敌人实体，渐隐完成后回池；destroy 时兜底销毁） */
+  private readonly fadingShadows = new Set<Phaser.GameObjects.Image>();
   /** 减速请求事件退订函数（enemy_slow_requested → applySlow 桥接） */
   private readonly unsubscribeSlowRequest: () => void;
 
@@ -227,7 +264,17 @@ export class EnemyDirectorSystem {
     this.unsubscribeSlowRequest();
     for (const enemy of this.enemies) {
       enemy.view.destroy();
+      enemy.shadow.destroy();
     }
+    for (const shadow of this.fadingShadows) {
+      this.scene.tweens.killTweensOf(shadow);
+      shadow.destroy();
+    }
+    this.fadingShadows.clear();
+    for (const shadow of this.shadowPool) {
+      shadow.destroy();
+    }
+    this.shadowPool.length = 0;
     this.clearEliteWarning();
     this.enemies.length = 0;
     this.spawnDistanceSamples.length = 0;
@@ -470,6 +517,7 @@ export class EnemyDirectorSystem {
     const heroWorld = this.options.getHeroWorld();
     const spawn = spawnOverride ?? this.pickSpawnPoint(heroWorld);
     const view = this.createEnemyFallback(config);
+    const shadow = this.acquireShadow(config, view.depth - 1);
     const enemy: EnemyRuntime = {
       runtimeId: this.nextRuntimeId,
       config,
@@ -489,6 +537,14 @@ export class EnemyDirectorSystem {
       hitOffsetAgeMs: HIT_OFFSET_SETTLE_MS,
       slowFactor: 1,
       slowMsRemaining: 0,
+      shadow,
+      footOffsetY: this.getFootOffsetY(view, config),
+      leanRad: 0,
+      bobOffsetY: 0,
+      lungeDirX: 0,
+      lungeDirY: 0,
+      lungeDistance: 0,
+      lungeAgeMs: LUNGE_TOTAL_MS,
       view
     };
     this.nextRuntimeId += 1;
@@ -546,6 +602,7 @@ export class EnemyDirectorSystem {
       enemy.hitSquashMs = Math.max(0, enemy.hitSquashMs - deltaMs);
       enemy.hitOffsetAgeMs = Math.min(HIT_OFFSET_SETTLE_MS, enemy.hitOffsetAgeMs + deltaMs);
       this.applyKnockbackMotion(enemy, deltaMs);
+      this.updatePresentationMotion(enemy, deltaMs, chaseScale);
       this.updateEnemyScreenPosition(enemy);
       this.updateEnemyFallbackAnimation(enemy, deltaMs);
       this.applyContactDamageIfNeeded(enemy);
@@ -594,6 +651,8 @@ export class EnemyDirectorSystem {
       amount: enemy.config.contactDamage,
       died: result.died
     });
+    // 出手帧：表现层前扑（不动碰撞），12-15px 扑向少侠后 80ms 回位
+    this.startLunge(enemy, heroWorld);
   }
 
   private getDespawnReason(enemy: EnemyRuntime, distanceFromHero: number, deltaMs: number): string | undefined {
@@ -621,6 +680,7 @@ export class EnemyDirectorSystem {
 
   private despawnEnemy(index: number, reason: string, distanceFromHero: number): void {
     const [enemy] = this.enemies.splice(index, 1);
+    this.releaseShadow(enemy.shadow);
     enemy.view.destroy();
     this.despawnSamples.push({ ageMs: 0 });
     eventBus.emit("enemy_despawned", {
@@ -634,6 +694,7 @@ export class EnemyDirectorSystem {
   private killEnemy(index: number, source: string, result: EnemyDamageResult): void {
     const [enemy] = this.enemies.splice(index, 1);
     this.playEnemyDeathTween(enemy);
+    this.fadeEnemyShadow(enemy.shadow);
     const juice = JuiceSystem.get(this.scene);
     juice.killBurst(result.screenX, result.screenY, getKillBurstTint(enemy.config));
     if (enemy.config.tier === "elite") {
@@ -651,8 +712,25 @@ export class EnemyDirectorSystem {
     });
   }
 
-  /** 死亡 200ms 小动画：沿远离少侠方向击飞 30-50px + 压扁 + 渐隐，结束后销毁。 */
+  /**
+   * 死亡差异化（killBurst 粒子保留在 killEnemy 统一触发）：
+   * 山贼/盾贼 击飞+压扁+旋转 ±25°；恶犬 侧翻滑停；木人精英 碎裂飞木块。
+   */
   private playEnemyDeathTween(enemy: EnemyRuntime): void {
+    this.scene.tweens.killTweensOf(enemy.view);
+    if (enemy.config.id === "wooden_dummy_elite") {
+      this.playEliteShatterDeath(enemy);
+      return;
+    }
+    if (enemy.config.id === "hound") {
+      this.playHoundSideFlipDeath(enemy);
+      return;
+    }
+    this.playBanditKnockDeath(enemy);
+  }
+
+  /** 山贼/盾贼：沿远离少侠方向击飞 30-50px + 压扁 + 旋转 ±25° + 渐隐，200ms 后销毁。 */
+  private playBanditKnockDeath(enemy: EnemyRuntime): void {
     const view = enemy.view;
     const heroWorld = this.options.getHeroWorld();
     const awayX = enemy.worldX - heroWorld.x;
@@ -661,12 +739,12 @@ export class EnemyDirectorSystem {
     const dirX = length > 0 ? awayX / length : 1;
     const dirY = length > 0 ? awayY / length : 0;
     const distance = Phaser.Math.Between(30, 50);
-    this.scene.tweens.killTweensOf(view);
     this.scene.tweens.add({
       targets: view,
       x: view.x + dirX * distance,
       y: view.y + dirY * distance,
       scaleY: view.scaleY * 0.2,
+      rotation: view.rotation + Phaser.Math.RND.pick([-1, 1]) * Phaser.Math.DegToRad(25),
       alpha: 0,
       duration: DEATH_TWEEN_MS,
       ease: "Quad.easeOut",
@@ -674,6 +752,100 @@ export class EnemyDirectorSystem {
         if (view.active) {
           view.destroy();
         }
+      }
+    });
+  }
+
+  /** 恶犬：侧翻 90°（倒向移动一侧）+ 渐隐 + 沿移动方向 10-16px 轻微滑停，不击飞。 */
+  private playHoundSideFlipDeath(enemy: EnemyRuntime): void {
+    const view = enemy.view;
+    const slideDirX = enemy.directionX !== 0 || enemy.directionY !== 0 ? enemy.directionX : 1;
+    const slideDirY = enemy.directionY;
+    const slide = Phaser.Math.Between(10, 16);
+    const flipSign = slideDirX >= 0 ? 1 : -1;
+    this.scene.tweens.add({
+      targets: view,
+      rotation: view.rotation + flipSign * (Math.PI / 2),
+      x: view.x + slideDirX * slide,
+      y: view.y + slideDirY * slide,
+      alpha: 0,
+      duration: 240,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        if (view.active) {
+          view.destroy();
+        }
+      }
+    });
+  }
+
+  /** 木人精英：主体 150ms 快速溃缩渐隐，同时飞出 3-4 块木屑（上抛→重力下坠+旋转，400ms 后销毁）。 */
+  private playEliteShatterDeath(enemy: EnemyRuntime): void {
+    const view = enemy.view;
+    this.scene.tweens.add({
+      targets: view,
+      alpha: 0,
+      scaleX: view.scaleX * 0.92,
+      scaleY: view.scaleY * 1.06,
+      duration: 150,
+      ease: "Quad.easeIn",
+      onComplete: () => {
+        if (view.active) {
+          view.destroy();
+        }
+      }
+    });
+    const shardCount = Phaser.Math.Between(3, 4);
+    for (let index = 0; index < shardCount; index += 1) {
+      this.spawnWoodShard(
+        view.x + Phaser.Math.Between(-16, 16),
+        view.y + Phaser.Math.Between(-34, 8),
+        view.depth
+      );
+    }
+  }
+
+  /** 单片木屑：水平漂移+旋转匀速，y 先 Quad.easeOut 上抛再 Quad.easeIn 下坠（重力感），结束销毁。 */
+  private spawnWoodShard(x: number, y: number, depth: number): void {
+    const shard = this.scene.add.rectangle(
+      x,
+      y,
+      Phaser.Math.Between(10, 20),
+      Phaser.Math.Between(6, 14),
+      Phaser.Math.RND.pick(WOOD_SHARD_TINTS),
+      1
+    )
+      .setStrokeStyle(1, 0x2a1a10, 0.9)
+      .setDepth(depth)
+      .setRotation(Math.random() * Math.PI);
+    const driftX = Phaser.Math.Between(-34, 34);
+    const rise = Phaser.Math.Between(30, 58);
+    const spin = Phaser.Math.RND.pick([-1, 1]) * Phaser.Math.FloatBetween(2.4, 4.6);
+    this.scene.tweens.add({
+      targets: shard,
+      x: x + driftX,
+      rotation: shard.rotation + spin,
+      duration: WOOD_SHARD_TOTAL_MS,
+      ease: "Linear"
+    });
+    this.scene.tweens.add({
+      targets: shard,
+      y: y - rise,
+      duration: WOOD_SHARD_RISE_MS,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.scene.tweens.add({
+          targets: shard,
+          y: y + 24,
+          alpha: 0.2,
+          duration: WOOD_SHARD_TOTAL_MS - WOOD_SHARD_RISE_MS,
+          ease: "Quad.easeIn",
+          onComplete: () => {
+            if (shard.active) {
+              shard.destroy();
+            }
+          }
+        });
       }
     });
   }
@@ -840,7 +1012,6 @@ export class EnemyDirectorSystem {
   }
 
   private createBanditFallback(config: EnemyConfig): Phaser.GameObjects.Container {
-    const shadow = this.scene.add.ellipse(0, 32, 44, 12, 0x050705, 0.24);
     const body = this.scene.add.ellipse(0, 4, 42, 50, 0x9b5438, 1)
       .setStrokeStyle(3, 0x5b2f28, 0.95);
     const head = this.scene.add.circle(0, -24, 15, 0xc77b4b, 1)
@@ -852,7 +1023,7 @@ export class EnemyDirectorSystem {
       .setRotation(-0.34);
     const footLeft = this.scene.add.rectangle(-11, 29, 13, 9, 0x5b2f28, 0.96);
     const footRight = this.scene.add.rectangle(11, 29, 13, 9, 0x5b2f28, 0.96);
-    const enemyView = this.scene.add.container(0, 0, [shadow, weapon, body, head, scarf, footLeft, footRight])
+    const enemyView = this.scene.add.container(0, 0, [weapon, body, head, scarf, footLeft, footRight])
       .setDepth(8)
       .setAlpha(0.97);
     enemyView.setData("enemyId", config.id);
@@ -862,7 +1033,6 @@ export class EnemyDirectorSystem {
   }
 
   private createHoundFallback(config: EnemyConfig): Phaser.GameObjects.Container {
-    const shadow = this.scene.add.ellipse(0, 21, 42, 10, 0x050705, 0.22);
     const body = this.scene.add.ellipse(-2, 3, 42, 24, 0x5c2b2b, 1)
       .setStrokeStyle(2, 0x2a1717, 0.95);
     const head = this.scene.add.circle(20, -4, 12, 0x6d3330, 1)
@@ -873,7 +1043,7 @@ export class EnemyDirectorSystem {
     const legA = this.scene.add.rectangle(-11, 15, 6, 13, 0x301716, 1).setRotation(0.25);
     const legB = this.scene.add.rectangle(10, 15, 6, 13, 0x301716, 1).setRotation(-0.25);
     const eye = this.scene.add.circle(24, -7, 2, 0xf3d799, 1);
-    const enemyView = this.scene.add.container(0, 0, [shadow, tail, body, legA, legB, head, earA, earB, eye])
+    const enemyView = this.scene.add.container(0, 0, [tail, body, legA, legB, head, earA, earB, eye])
       .setDepth(8)
       .setAlpha(0.97);
     enemyView.setData("enemyId", config.id);
@@ -883,7 +1053,6 @@ export class EnemyDirectorSystem {
   }
 
   private createShieldBanditFallback(config: EnemyConfig): Phaser.GameObjects.Container {
-    const shadow = this.scene.add.ellipse(0, 36, 54, 14, 0x050705, 0.26);
     const body = this.scene.add.ellipse(2, 4, 48, 58, 0x7b5939, 1)
       .setStrokeStyle(3, 0x3d2a1c, 0.95);
     const head = this.scene.add.circle(2, -29, 16, 0xbf7544, 1)
@@ -895,7 +1064,7 @@ export class EnemyDirectorSystem {
     const mace = this.scene.add.rectangle(27, 0, 7, 46, 0x573925, 1)
       .setStrokeStyle(1, 0x271a13, 0.9)
       .setRotation(0.3);
-    const enemyView = this.scene.add.container(0, 0, [shadow, mace, body, head, shield, shieldRim])
+    const enemyView = this.scene.add.container(0, 0, [mace, body, head, shield, shieldRim])
       .setDepth(8)
       .setAlpha(0.97);
     enemyView.setData("enemyId", config.id);
@@ -905,7 +1074,6 @@ export class EnemyDirectorSystem {
   }
 
   private createWoodenDummyFallback(config: EnemyConfig): Phaser.GameObjects.Container {
-    const shadow = this.scene.add.ellipse(0, 50, 72, 18, 0x050705, 0.28);
     const trunk = this.scene.add.rectangle(0, 5, 44, 82, 0x7a4f2a, 1)
       .setStrokeStyle(4, 0x3d2615, 0.95);
     const head = this.scene.add.rectangle(0, -48, 38, 34, 0x8d6132, 1)
@@ -924,7 +1092,7 @@ export class EnemyDirectorSystem {
       fontSize: "20px",
       fontStyle: "bold"
     }).setOrigin(0.5).setResolution(2);
-    const enemyView = this.scene.add.container(0, 0, [shadow, armLeft, armRight, trunk, head, core, warningMarks])
+    const enemyView = this.scene.add.container(0, 0, [armLeft, armRight, trunk, head, core, warningMarks])
       .setDepth(9)
       .setAlpha(0.98);
     enemyView.setData("enemyId", config.id);
@@ -948,31 +1116,31 @@ export class EnemyDirectorSystem {
       }
       const baseScale = (enemy.view.getData("baseScale") as number | undefined) ?? 1;
       const roleMotion = getSpriteRoleMotion(enemy.config.role);
-      enemy.view.setRotation(Math.sin(walkMs / roleMotion.rotateMs) * roleMotion.rotation);
+      enemy.view.setRotation(Math.sin(walkMs / roleMotion.rotateMs) * roleMotion.rotation + enemy.leanRad);
       enemy.view.setScale(baseScale * squash, (baseScale + Math.sin(walkMs / roleMotion.pulseMs) * roleMotion.pulse) * squash);
       return;
     }
 
     if (enemy.config.role === "fast") {
-      enemy.view.setRotation(Math.sin(walkMs / 72) * 0.1);
+      enemy.view.setRotation(Math.sin(walkMs / 72) * 0.1 + enemy.leanRad);
       enemy.view.setScale((1 + Math.sin(walkMs / 58) * 0.045) * squash, (1 - Math.sin(walkMs / 58) * 0.025) * squash);
       return;
     }
 
     if (enemy.config.role === "tank") {
-      enemy.view.setRotation(Math.sin(walkMs / 180) * 0.045);
+      enemy.view.setRotation(Math.sin(walkMs / 180) * 0.045 + enemy.leanRad);
       enemy.view.setScale(squash, (1 + Math.sin(walkMs / 150) * 0.02) * squash);
       return;
     }
 
     if (enemy.config.role === "elite_pressure") {
-      enemy.view.setRotation(Math.sin(walkMs / 260) * 0.035);
+      enemy.view.setRotation(Math.sin(walkMs / 260) * 0.035 + enemy.leanRad);
       enemy.view.setScale((1 + Math.sin(walkMs / 180) * 0.018) * squash, (1 + Math.cos(walkMs / 210) * 0.018) * squash);
       return;
     }
 
     const sway = Math.sin(walkMs / 125) * 0.08;
-    enemy.view.setRotation(sway);
+    enemy.view.setRotation(sway + enemy.leanRad);
     enemy.view.setScale(squash, (1 + Math.sin(walkMs / 90) * 0.035) * squash);
   }
 
@@ -981,10 +1149,120 @@ export class EnemyDirectorSystem {
     const heroScreen = this.options.getHeroScreen();
     // 受击击退偏移：弹性回位系数（回稳后为 0，零开销）
     const offsetScale = getHitOffsetScale(enemy.hitOffsetAgeMs);
+    // 前扑表现层系数（未出手/已回位为 0，零开销）
+    const lungeScale = getLungeScale(enemy.lungeAgeMs);
+    const baseX = heroScreen.x + enemy.worldX - heroWorld.x;
+    const baseY = heroScreen.y + enemy.worldY - heroWorld.y;
     enemy.view.setPosition(
-      heroScreen.x + enemy.worldX - heroWorld.x + enemy.hitOffsetX * offsetScale,
-      heroScreen.y + enemy.worldY - heroWorld.y + enemy.hitOffsetY * offsetScale
+      baseX + enemy.hitOffsetX * offsetScale + enemy.lungeDirX * enemy.lungeDistance * lungeScale,
+      baseY + enemy.hitOffsetY * offsetScale + enemy.lungeDirY * enemy.lungeDistance * lungeScale + enemy.bobOffsetY
     );
+    // 接触阴影贴地跟随：不继承受击/前扑/颠簸偏移（地面参照，反衬身体位移）
+    enemy.shadow.setPosition(baseX, baseY + enemy.footOffsetY);
+  }
+
+  /** 径向渐变墨黑椭圆纹理：24 层同心椭圆由外向内递增不透明度，一次生成全局缓存复用。 */
+  private ensureShadowTexture(): void {
+    if (this.scene.textures.exists(SHADOW_TEXTURE_KEY)) {
+      return;
+    }
+
+    const width = 64;
+    const height = 32;
+    const graphics = this.scene.add.graphics();
+    const steps = 24;
+    for (let step = steps; step >= 1; step -= 1) {
+      const fraction = step / steps;
+      const alpha = 0.05 + 0.95 * Math.pow(1 - fraction, 2);
+      graphics.fillStyle(SHADOW_TINT, alpha);
+      graphics.fillEllipse(width / 2, height / 2, width * fraction, height * fraction);
+    }
+    graphics.generateTexture(SHADOW_TEXTURE_KEY, width, height);
+    graphics.destroy();
+  }
+
+  /** 取阴影（池化）：按碰撞直径×1.6 定宽，精英 ×2 略大；depth 比角色 view 低 1。 */
+  private acquireShadow(config: EnemyConfig, depth: number): Phaser.GameObjects.Image {
+    this.ensureShadowTexture();
+    const shadow = this.shadowPool.pop() ?? this.scene.add.image(0, 0, SHADOW_TEXTURE_KEY);
+    this.scene.tweens.killTweensOf(shadow);
+    const widthScale = config.tier === "elite" ? SHADOW_ELITE_WIDTH_SCALE : SHADOW_WIDTH_SCALE;
+    const width = config.collisionRadius * 2 * widthScale;
+    shadow
+      .setActive(true)
+      .setVisible(true)
+      .setDisplaySize(width, width * SHADOW_ASPECT)
+      .setAlpha(SHADOW_BASE_ALPHA)
+      .setDepth(depth);
+    return shadow;
+  }
+
+  /** 阴影回池：停 tween、摘除渐隐跟踪、失活隐藏，等待下次 spawn 复用。 */
+  private releaseShadow(shadow: Phaser.GameObjects.Image): void {
+    if (!shadow.active) {
+      return;
+    }
+    this.scene.tweens.killTweensOf(shadow);
+    this.fadingShadows.delete(shadow);
+    shadow.setActive(false).setVisible(false);
+    this.shadowPool.push(shadow);
+  }
+
+  /** 死亡阴影：脱离敌人实体，140ms 渐隐后回池（尸体击飞/碎裂时地面影子同步消散）。 */
+  private fadeEnemyShadow(shadow: Phaser.GameObjects.Image): void {
+    this.fadingShadows.add(shadow);
+    this.scene.tweens.add({
+      targets: shadow,
+      alpha: 0,
+      duration: SHADOW_DEATH_FADE_MS,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.releaseShadow(shadow);
+      }
+    });
+  }
+
+  /** 锚点到脚底的表现层距离：贴图按帧高×缩放×(1-originY) 推算，几何兜底沿用原内置阴影偏移。 */
+  private getFootOffsetY(view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite, config: EnemyConfig): number {
+    if (view instanceof Phaser.GameObjects.Sprite) {
+      return Math.max(0, view.displayHeight * (1 - view.originY) - 2);
+    }
+    if (config.id === "wooden_dummy_elite") {
+      return 50;
+    }
+    if (config.id === "shield_bandit") {
+      return 36;
+    }
+    if (config.id === "hound") {
+      return 21;
+    }
+    return 32;
+  }
+
+  /**
+   * 程序化移动动画（纯表现层，不改世界坐标，与 hitOffset 共存）：
+   * 倾斜按横向速度 ±3-5° 指数 lerp；颠簸按步行相位向上抬 1-2px（减速/击退时收敛）；推进前扑计时。
+   */
+  private updatePresentationMotion(enemy: EnemyRuntime, deltaMs: number, chaseScale: number): void {
+    const motion = getRolePresentationMotion(enemy.config.role);
+    const velocityX = enemy.directionX * enemy.config.moveSpeed * chaseScale;
+    const leanTarget = Phaser.Math.Clamp(velocityX / Math.max(1, enemy.config.moveSpeed), -1, 1) * motion.leanMaxRad;
+    enemy.leanRad += (leanTarget - enemy.leanRad) * (1 - Math.exp(-deltaMs / LEAN_SMOOTH_MS));
+    const walkMs = (enemy.view.getData("walkMs") as number | undefined) ?? 0;
+    const moveWeight = Phaser.Math.Clamp(Math.abs(chaseScale), 0, 1);
+    enemy.bobOffsetY = -Math.abs(Math.sin(walkMs / motion.bobMs)) * motion.bobPx * moveWeight;
+    enemy.lungeAgeMs = Math.min(LUNGE_TOTAL_MS, enemy.lungeAgeMs + deltaMs);
+  }
+
+  /** 近战前扑：记录朝少侠方向与 12-15px 随机距离，计时归零即开始（偏移在 updateEnemyScreenPosition 叠加）。 */
+  private startLunge(enemy: EnemyRuntime, heroWorld: Point): void {
+    const toHeroX = heroWorld.x - enemy.worldX;
+    const toHeroY = heroWorld.y - enemy.worldY;
+    const length = Math.hypot(toHeroX, toHeroY);
+    enemy.lungeDirX = length > 0 ? toHeroX / length : (enemy.directionX !== 0 ? enemy.directionX : 1);
+    enemy.lungeDirY = length > 0 ? toHeroY / length : enemy.directionY;
+    enemy.lungeDistance = Phaser.Math.Between(LUNGE_MIN_PX, LUNGE_MAX_PX);
+    enemy.lungeAgeMs = 0;
   }
 
   private createTargetSnapshot(enemy: EnemyRuntime): EnemyTargetSnapshot {
@@ -1302,6 +1580,34 @@ function getHitOffsetScale(ageMs: number): number {
     Math.exp(-ageMs / HIT_OFFSET_DECAY_MS) *
     Math.cos((ageMs / HIT_OFFSET_OSCILLATION_MS) * Math.PI * 2)
   );
+}
+
+/** 前扑表现层系数：60ms easeOutQuad 扑到满幅，80ms easeInOutQuad 回位，全程 140ms。 */
+function getLungeScale(ageMs: number): number {
+  if (ageMs >= LUNGE_TOTAL_MS) {
+    return 0;
+  }
+  if (ageMs < LUNGE_OUT_MS) {
+    const t = ageMs / LUNGE_OUT_MS;
+    return 1 - (1 - t) * (1 - t);
+  }
+  const t = (ageMs - LUNGE_OUT_MS) / LUNGE_BACK_MS;
+  const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  return 1 - eased;
+}
+
+/** 各角色定位的移动表现参数：倾斜上限 3-5°（rad）、颠簸幅度 1-2px、颠簸半周期。 */
+function getRolePresentationMotion(role: EnemyConfig["role"]): { leanMaxRad: number; bobPx: number; bobMs: number } {
+  if (role === "fast") {
+    return { leanMaxRad: Phaser.Math.DegToRad(5), bobPx: 2, bobMs: 95 };
+  }
+  if (role === "tank") {
+    return { leanMaxRad: Phaser.Math.DegToRad(3), bobPx: 1, bobMs: 160 };
+  }
+  if (role === "elite_pressure") {
+    return { leanMaxRad: Phaser.Math.DegToRad(3), bobPx: 1, bobMs: 200 };
+  }
+  return { leanMaxRad: Phaser.Math.DegToRad(3.5), bobPx: 1.5, bobMs: 120 };
 }
 
 /** 击杀碎屑配色：精英金色，其余按敌种贴近本体色调。 */
