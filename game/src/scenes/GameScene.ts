@@ -25,6 +25,16 @@ const DEBUG_DAMAGE_AMOUNT = 18;
 const DEBUG_HEAL_AMOUNT = 25;
 const DEBUG_BOSS_DAMAGE_AMOUNT = 700;
 const INSIGHT_RECOVERY_AMOUNT = 20;
+// ── 墨染江山（moran_ink_zone）表现层常量：技能实现归并行代理，此处仅做表现接入 ──
+/** 技能 id 的匹配键（用 includes 兼容 "moran" 前缀的变体 id）。 */
+const MORAN_SKILL_ID_KEY = "moran";
+const MORAN_SKILL_ID = "moran_ink_zone";
+/** 施放墨晕最短间隔：防止高频施放时全屏墨晕闪烁叠加。 */
+const MORAN_INK_RIPPLE_MIN_INTERVAL_MS = 1500;
+/** 无 skill_cast 事件时的兜底墨晕节奏（假定冷却循环约 8s）。 */
+const MORAN_FALLBACK_RIPPLE_INTERVAL_MS = 8000;
+/** 进阶演出事件/快照双通道去重窗口。 */
+const MORAN_ADVANCE_FX_DEDUP_MS = 1500;
 // ── P3 HUD 顶栏布局常量（960×56 横带，内容垂直中心 y=33）──────────────
 const HUD_STRIP_HEIGHT = 56;
 const HUD_DEPTH_STRIP = 91;
@@ -144,6 +154,13 @@ export class GameScene extends Phaser.Scene {
   private kills = 0;
   private innerPower = "0/24";
   private debugInsightShowcaseIndex = 0;
+  // ── 墨染江山表现层状态（事件 + 快照双通道，防御并行代理实现差异）──
+  private moranCastEventSeen = false;
+  private moranKnownUnlocked = false;
+  private nextMoranFallbackRippleAtMs = 0;
+  private moranInkRippleCooldownUntilMs = 0;
+  private moranAdvanceFxPrev = false;
+  private lastMoranAdvanceFxAtMs = -10000;
 
   constructor() {
     super(SCENE_KEYS.game);
@@ -157,6 +174,12 @@ export class GameScene extends Phaser.Scene {
     this.stageScrollX = 0;
     this.stageScrollY = 0;
     this.debugInsightShowcaseIndex = 0;
+    this.moranCastEventSeen = false;
+    this.moranKnownUnlocked = false;
+    this.nextMoranFallbackRippleAtMs = 0;
+    this.moranInkRippleCooldownUntilMs = 0;
+    this.moranAdvanceFxPrev = false;
+    this.lastMoranAdvanceFxAtMs = -10000;
     this.heroLevel = 1;
     this.kills = 0;
     this.innerPower = "0/24";
@@ -290,7 +313,8 @@ export class GameScene extends Phaser.Scene {
       const healHero = (): void => this.applyDebugHeal();
       const enableP0ArtShowcase = (): void => this.enableP0ArtShowcaseForDebug();
       const startInsightArtShowcase = (): void => this.startInsightArtShowcaseForDebug();
-      const spawnEnemyShowcase = (): void => this.spawnEnemyShowcaseForDebug();
+      // F4：直接授予墨染江山 Lv1（内部附赠 showcase 木桩便于验证领域表现）
+      const grantMoranSkill = (): void => this.grantMoranSkillForDebug();
       const spawnBoss = (): void => this.spawnBossForDebug();
       const damageBoss = (): void => this.applyDebugBossDamage();
       let debugKey: Phaser.Input.Keyboard.Key | undefined;
@@ -298,7 +322,7 @@ export class GameScene extends Phaser.Scene {
         debugKey = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK);
         debugKey.on("down", toggleDebug);
         keyboard.on("keydown-F3", enableP0ArtShowcase);
-        keyboard.on("keydown-F4", spawnEnemyShowcase);
+        keyboard.on("keydown-F4", grantMoranSkill);
         keyboard.on("keydown-F5", startInsightArtShowcase);
         keyboard.on("keydown-F6", startInsight);
         keyboard.on("keydown-F7", startDeath);
@@ -315,7 +339,7 @@ export class GameScene extends Phaser.Scene {
         debugKey?.off("down", toggleDebug);
         if (import.meta.env.DEV) {
           keyboard.off("keydown-F3", enableP0ArtShowcase);
-          keyboard.off("keydown-F4", spawnEnemyShowcase);
+          keyboard.off("keydown-F4", grantMoranSkill);
           keyboard.off("keydown-F5", startInsightArtShowcase);
           keyboard.off("keydown-F6", startInsight);
           keyboard.off("keydown-F7", startDeath);
@@ -342,6 +366,24 @@ export class GameScene extends Phaser.Scene {
     });
     const unsubscribeInsightSelected = eventBus.on<{ optionId?: string; cardId?: string }>("insight_option_selected", (payload) => {
       this.applyInsightSelection(payload.optionId ?? payload.cardId ?? "");
+    });
+    // ── 墨染江山①：施放表现 —— 订阅 SkillSystem 既有 skill_cast 事件（zone cast 若实现方单独发事件，
+    //    也会伴随/替代 skill_cast；均无则 updateMoranPresentation 的冷却循环兜底接管）。防御性订阅。
+    const unsubscribeMoranCast = eventBus.on<{ skillId?: string }>("skill_cast", (payload) => {
+      if (typeof payload?.skillId === "string" && payload.skillId.includes(MORAN_SKILL_ID_KEY)) {
+        this.moranCastEventSeen = true;
+        this.playMoranCastInkRipple();
+      }
+    });
+    // ── 墨染江山②：进阶演出 —— 监听既有 skill_advanced 事件；事件丢失时由快照 advanced 跳变兜底。
+    const unsubscribeMoranAdvanced = eventBus.on<{ skillId?: string }>("skill_advanced", (payload) => {
+      if (typeof payload?.skillId === "string" && payload.skillId.includes(MORAN_SKILL_ID_KEY)) {
+        this.playMoranAdvancePerformance();
+      }
+    });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      unsubscribeMoranCast();
+      unsubscribeMoranAdvanced();
     });
     // 色温叙事：精英预警压暗泛朱砂；精英被击杀/消失或兜底计时后回落。
     const unsubscribeEliteWarning = eventBus.on<{ warningSeconds?: number }>("enemy_elite_warning_started", (payload) => {
@@ -431,6 +473,7 @@ export class GameScene extends Phaser.Scene {
 
     if (this.skillSystem && getScreenState(this) === "game") {
       this.latestSkillSnapshot = this.skillSystem.update(activeDeltaMs);
+      this.updateMoranPresentation();
     }
 
     if (this.progressionSystem && getScreenState(this) === "game") {
@@ -1100,6 +1143,126 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // ── 墨染江山（moran_ink_zone）表现层 ─────────────────────────────────
+  // 机制（领域伤害/减速/持续判定）归技能系统代理；此处只做：施放墨晕涟漪、进阶演出、图标映射。
+
+  /**
+   * 施放瞬间：屏幕边缘墨晕涟漪（复用 InkWipe 快速版，入 250ms / 褪 400ms）。
+   * InkWipe 暂无覆盖率参数，按全幅快速处理；控制技能不加相机震动，避免打扰感。
+   * WebGL 专属；Canvas 渲染器 inkWipeIn 返回 false 静默跳过，异常不阻断施放主流程。
+   */
+  private playMoranCastInkRipple(): void {
+    if (!this.scene.isActive() || getScreenState(this) !== "game") {
+      return;
+    }
+    if (this.getVfxDensityScale() <= 0) {
+      return;
+    }
+    if (this.elapsedMs < this.moranInkRippleCooldownUntilMs) {
+      return;
+    }
+    this.moranInkRippleCooldownUntilMs = this.elapsedMs + MORAN_INK_RIPPLE_MIN_INTERVAL_MS;
+    try {
+      inkWipeIn(this, {
+        mode: "center",
+        durationMs: 250,
+        onComplete: () => {
+          inkWipeOut(this, { mode: "center", durationMs: 400 });
+        }
+      });
+    } catch {
+      // 墨晕失败静默：技能施放主流程不受影响
+    }
+  }
+
+  /**
+   * 进阶/进化演出：hitStop(100) + 英雄脚下圆形墨晕扩散（Graphics 墨圈 alpha 扩散 500ms）
+   * + JuiceSystem.goldBurst；技能槽图标/金框由 updateSkillSlots 走现有进阶槽样式自动刷新。
+   * 事件与快照双通道触发，用去重窗口防止演出叠加。
+   */
+  private playMoranAdvancePerformance(): void {
+    if (!this.scene.isActive() || getScreenState(this) !== "game") {
+      // 顿悟场景中选择进阶时本场景处于暂停态：跳过即时演出，
+      // 由 resume 后 updateMoranPresentation 的快照跳变通道补播。
+      return;
+    }
+    if (this.elapsedMs - this.lastMoranAdvanceFxAtMs < MORAN_ADVANCE_FX_DEDUP_MS) {
+      return;
+    }
+    this.lastMoranAdvanceFxAtMs = this.elapsedMs;
+
+    const juice = JuiceSystem.get(this);
+    juice.hitStop(100);
+    const { x, y } = this.getHeroScreenPosition();
+    const footY = y + 20;
+    // 墨圈：近黑墨底 + 墨青描边，alpha 扩散淡出（低 VFX 设置下仅保留金屑）。
+    if (this.getVfxDensityScale() > 0) {
+      const inkRing = this.add.circle(x, footY, 28, 0x0a0f0c, 0.34)
+        .setStrokeStyle(3, 0x39d6b5, 0.62)
+        .setDepth(64);
+      this.tweens.add({
+        targets: inkRing,
+        scale: 4.4,
+        alpha: 0,
+        duration: 500,
+        ease: "Cubic.easeOut",
+        onComplete: () => inkRing.destroy()
+      });
+    }
+    juice.goldBurst(x, footY - 8, 24);
+    this.latestSkillSnapshot = this.skillSystem?.getSnapshot();
+    this.updateSkillSlots();
+  }
+
+  /**
+   * 每帧兜底通道（防御并行代理实现差异）：
+   * ① 施放 —— 若从未收到 moran 的 skill_cast 事件，按冷却循环节奏补墨晕涟漪；
+   * ② 进阶 —— 快照 advanced 跳变（覆盖事件丢失 / 暂停中进阶 / Lv5 直达进阶等路径）。
+   */
+  private updateMoranPresentation(): void {
+    const slots = this.latestSkillSnapshot?.skillSlots ?? [];
+    const moranSlot = slots.find((slot) => String(slot.skillId).includes(MORAN_SKILL_ID_KEY));
+    if (!moranSlot) {
+      this.moranKnownUnlocked = false;
+      this.moranAdvanceFxPrev = false;
+      return;
+    }
+
+    if (!this.moranKnownUnlocked) {
+      this.moranKnownUnlocked = true;
+      // 解锁后短暂等待首次施放事件；确认无事件通道后再进入兜底节奏。
+      this.nextMoranFallbackRippleAtMs = this.elapsedMs + 2200;
+    }
+    if (!this.moranCastEventSeen && this.elapsedMs >= this.nextMoranFallbackRippleAtMs) {
+      this.nextMoranFallbackRippleAtMs = this.elapsedMs + MORAN_FALLBACK_RIPPLE_INTERVAL_MS;
+      this.playMoranCastInkRipple();
+    }
+
+    if (moranSlot.advanced && !this.moranAdvanceFxPrev) {
+      this.playMoranAdvancePerformance();
+    }
+    this.moranAdvanceFxPrev = moranSlot.advanced;
+  }
+
+  /** F4 调试：直接授予 moran_ink_zone Lv1（防御性调用 SkillSystem 现有授予 API），并放 showcase 木桩便于验证领域效果。 */
+  private grantMoranSkillForDebug(): void {
+    if (getScreenState(this) !== "game") {
+      return;
+    }
+    const granter = this.skillSystem as unknown as {
+      unlockSkill?: (skillId: string, level?: number) => boolean;
+      setSkillLevel?: (skillId: string, level: number) => boolean;
+    } | undefined;
+    const unlocked = granter?.unlockSkill?.(MORAN_SKILL_ID, 1) ?? false;
+    if (!unlocked) {
+      // 已解锁或 id 未注册（技能代理尚未合入）时静默；setSkillLevel 兜底尝试一次
+      granter?.setSkillLevel?.(MORAN_SKILL_ID, 1);
+    }
+    this.latestSkillSnapshot = this.skillSystem?.getSnapshot();
+    this.updateSkillSlots();
+    this.spawnEnemyShowcaseForDebug();
+  }
+
   private drawHero(): void {
     const centerX = this.scale.width / 2;
     const centerY = this.getHeroScreenY();
@@ -1767,7 +1930,7 @@ export class GameScene extends Phaser.Scene {
       }
 
       setSkillSlotFrameState(frame, true, slot.advanced);
-      const iconAssetId = getHudSkillIconAssetId(slot.skillId, slot.advanced);
+      const iconAssetId = getHudSkillIconAssetId(this, slot.skillId, slot.advanced);
       if (icon && this.textures.exists(iconAssetId)) {
         icon.setTexture(iconAssetId).setDisplaySize(44, 44).setVisible(true);
       } else {
@@ -2421,7 +2584,23 @@ function getShortSkillName(displayName: string): string {
   return displayName.slice(0, 2);
 }
 
-function getHudSkillIconAssetId(skillId: SkillId, advanced: boolean): string {
+function getHudSkillIconAssetId(scene: Phaser.Scene, skillId: SkillId, advanced: boolean): string {
+  // 墨染江山（moran_ink_zone，并行代理注册的 zone 技能）：防御性映射，
+  // 纹理缺失时依次退回普通图标 / icon_scroll，最终仍由调用方 textures.exists 兜底隐藏。
+  if (String(skillId).includes(MORAN_SKILL_ID_KEY)) {
+    const advancedKey = "ui_icon_skill_moran_advanced";
+    const normalKey = "ui_icon_skill_moran";
+    if (advanced && scene.textures.exists(advancedKey)) {
+      return advancedKey;
+    }
+    if (scene.textures.exists(normalKey)) {
+      return normalKey;
+    }
+    if (scene.textures.exists("icon_scroll")) {
+      return "icon_scroll";
+    }
+    return advanced ? advancedKey : normalKey;
+  }
   if (skillId === "huifeng_dart") {
     return advanced ? "ui_icon_skill_huifeng_advanced" : "ui_icon_skill_huifeng";
   }
@@ -2436,9 +2615,12 @@ function getFirstExistingHudSkillIconAssetId(scene: Phaser.Scene): string | unde
     "ui_icon_skill_yulong",
     "ui_icon_skill_huifeng",
     "ui_icon_skill_zhenshan",
+    "ui_icon_skill_moran",
     "ui_icon_skill_yulong_advanced",
     "ui_icon_skill_huifeng_advanced",
-    "ui_icon_skill_zhenshan_advanced"
+    "ui_icon_skill_zhenshan_advanced",
+    "ui_icon_skill_moran_advanced",
+    "icon_scroll"
   ].find((assetId) => scene.textures.exists(assetId));
 }
 
@@ -2472,7 +2654,8 @@ function setSkillSlotFrameState(
 function isAdvanceKeyId(value: string): value is AdvanceKeyId {
   return value === "sword_manual_page"
     || value === "hidden_weapon_pouch"
-    || value === "inner_force_manual";
+    || value === "inner_force_manual"
+    || value === "pine_soot_inkstick";
 }
 
 const KILL_MILESTONES: Array<{ count: number; label: string }> = [

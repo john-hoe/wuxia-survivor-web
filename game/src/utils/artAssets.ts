@@ -37,6 +37,11 @@ import vfxEliteWarningUrl from "../assets/vfx/vfx_elite_warning.png";
 import vfxEnemyDieUrl from "../assets/vfx/vfx_enemy_die.png";
 import vfxHeroHurtFlashUrl from "../assets/vfx/vfx_hero_hurt_flash.png";
 import vfxHitLightUrl from "../assets/vfx/vfx_hit_light.png";
+import vfxInkSplatUrl from "../assets/vfx/vfx_ink_splat.png";
+import vfxInkStroke1Url from "../assets/vfx/vfx_ink_stroke_1.png";
+import vfxInkStroke2Url from "../assets/vfx/vfx_ink_stroke_2.png";
+import vfxInkStroke3Url from "../assets/vfx/vfx_ink_stroke_3.png";
+import vfxInkStroke4Url from "../assets/vfx/vfx_ink_stroke_4.png";
 import vfxInnerMagnetTrailUrl from "../assets/vfx/vfx_inner_magnet_trail.png";
 import vfxInsightBurstUrl from "../assets/vfx/vfx_insight_burst.png";
 import vfxScriptureRevealUrl from "../assets/vfx/vfx_scripture_reveal.png";
@@ -75,6 +80,8 @@ import uiIconSkillYulongUrl from "../assets/ui/sw-art-015/ui_icon_skill_yulong.p
 import uiIconSkillYulongAdvancedUrl from "../assets/ui/sw-art-015/ui_icon_skill_yulong_advanced.png";
 import uiIconSkillZhenshanUrl from "../assets/ui/sw-art-015/ui_icon_skill_zhenshan.png";
 import uiIconSkillZhenshanAdvancedUrl from "../assets/ui/sw-art-015/ui_icon_skill_zhenshan_advanced.png";
+import uiIconSkillMoranUrl from "../assets/ui/ui_icon_skill_moran.png";
+import uiIconSkillMoranAdvancedUrl from "../assets/ui/ui_icon_skill_moran_advanced.png";
 import uiBadgeDuplicateUrl from "../assets/ui/sw-art-016/ui_badge_duplicate.png";
 import uiBadgePityUrl from "../assets/ui/sw-art-016/ui_badge_pity.png";
 import uiButtonDisabledUrl from "../assets/ui/sw-art-016/ui_button_disabled.png";
@@ -168,6 +175,11 @@ export const artAssetUrls = {
   vfx_enemy_die: vfxEnemyDieUrl,
   vfx_hero_hurt_flash: vfxHeroHurtFlashUrl,
   vfx_hit_light: vfxHitLightUrl,
+  vfx_ink_splat: vfxInkSplatUrl,
+  vfx_ink_stroke_1: vfxInkStroke1Url,
+  vfx_ink_stroke_2: vfxInkStroke2Url,
+  vfx_ink_stroke_3: vfxInkStroke3Url,
+  vfx_ink_stroke_4: vfxInkStroke4Url,
   vfx_inner_magnet_trail: vfxInnerMagnetTrailUrl,
   vfx_insight_burst: vfxInsightBurstUrl,
   vfx_scripture_reveal: vfxScriptureRevealUrl,
@@ -206,6 +218,8 @@ export const artAssetUrls = {
   ui_icon_skill_yulong_advanced: uiIconSkillYulongAdvancedUrl,
   ui_icon_skill_zhenshan: uiIconSkillZhenshanUrl,
   ui_icon_skill_zhenshan_advanced: uiIconSkillZhenshanAdvancedUrl,
+  ui_icon_skill_moran: uiIconSkillMoranUrl,
+  ui_icon_skill_moran_advanced: uiIconSkillMoranAdvancedUrl,
   ui_badge_duplicate: uiBadgeDuplicateUrl,
   ui_badge_pity: uiBadgePityUrl,
   ui_button_disabled: uiButtonDisabledUrl,

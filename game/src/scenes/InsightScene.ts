@@ -301,6 +301,14 @@ function getInsightIconAssetId(option: InsightOption): string | undefined {
   if (option.iconKey === "skill_zhenshan_wave" || option.applyEffectId.includes("zhenshan_palm")) {
     return "ui_icon_skill_zhenshan";
   }
+  // 墨染江山（moran_ink_zone）：iconKey 含 "moran" 或 applyEffectId 含 "moran_ink_zone"。
+  // 纹理是否存在的防御由调用方 createInsightCard 的 textures.exists 统一兜底（缺失退化为圆点占位）。
+  if (option.iconKey.includes("moran") || option.applyEffectId.includes("moran_ink_zone")) {
+    const isAdvanced = option.iconKey.includes("advanced")
+      || option.applyEffectId.includes("advance_moran_ink_zone")
+      || option.category === "skill_advance";
+    return isAdvanced ? "ui_icon_skill_moran_advanced" : "ui_icon_skill_moran";
+  }
   if (option.iconKey === "advance_key_sword_manual_page") {
     return "ui_icon_advance_sword_manual_page";
   }

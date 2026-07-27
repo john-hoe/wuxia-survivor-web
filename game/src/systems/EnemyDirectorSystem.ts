@@ -98,6 +98,14 @@ type EnemyRuntime = {
   hitOffsetY: number;
   hitOffsetAgeMs: number;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
+  /**
+   * 墨染江山·最小减速通道（本字段为 zone 技能新增的唯一状态）：
+   * slowFactor 移速倍率（1 = 无减速），slowMsRemaining 剩余减速时长，
+   * 计时自然到期即恢复，领域消失后不再续期即自动清除。
+   * 写入入口：eventBus "enemy_slow_requested"（SkillSystem 桥接，GameScene 零改动）。
+   */
+  slowFactor: number;
+  slowMsRemaining: number;
 };
 
 type EliteWarningRuntime = {
@@ -161,11 +169,16 @@ export class EnemyDirectorSystem {
   private lastSpawnSide: SpawnSide | "none" = "none";
   private sameSpawnSideStreak = 0;
   private readonly spawnedEnemyIds = new Set<EnemyId>();
+  /** 减速请求事件退订函数（enemy_slow_requested → applySlow 桥接） */
+  private readonly unsubscribeSlowRequest: () => void;
 
   constructor(private readonly scene: Phaser.Scene, private readonly options: EnemyDirectorOptions) {
     this.config = options.config ?? combat001DirectorConfig;
     this.nextEliteSpawnSeconds = this.config.firstEliteSeconds;
     this.initialViewportClamp = window.innerWidth <= 768 ? "mobile" : "desktop";
+    this.unsubscribeSlowRequest = eventBus.on("enemy_slow_requested", (payload) => {
+      this.handleSlowRequest(payload);
+    });
     eventBus.emit("wave_state_changed", {
       state: this.currentState,
       waveTimeSeconds: options.getElapsedSeconds()
@@ -211,6 +224,7 @@ export class EnemyDirectorSystem {
   }
 
   destroy(): void {
+    this.unsubscribeSlowRequest();
     for (const enemy of this.enemies) {
       enemy.view.destroy();
     }
@@ -338,6 +352,44 @@ export class EnemyDirectorSystem {
     return true;
   }
 
+  /**
+   * 墨染江山减速入口（最小通道）：对单个敌人写入临时减速状态。
+   * 已处于减速中时取更强减速倍率与更长剩余时长；计时到期在 updateEnemies 中自动恢复。
+   */
+  applySlow(runtimeId: number, factor: number, durationMs: number): boolean {
+    const enemy = this.enemies.find((candidate) => candidate.runtimeId === runtimeId);
+    if (!enemy || durationMs <= 0) {
+      return false;
+    }
+
+    const clampedFactor = Phaser.Math.Clamp(factor, 0.1, 1);
+    enemy.slowFactor = enemy.slowMsRemaining > 0 ? Math.min(enemy.slowFactor, clampedFactor) : clampedFactor;
+    enemy.slowMsRemaining = Math.max(enemy.slowMsRemaining, durationMs);
+    eventBus.emit("enemy_slowed", {
+      runtimeId: enemy.runtimeId,
+      enemyId: enemy.config.id,
+      factor: roundForDebug(enemy.slowFactor),
+      durationMs: roundForDebug(enemy.slowMsRemaining)
+    });
+    return true;
+  }
+
+  /** eventBus "enemy_slow_requested" 桥接：防御性解析负载后转发 applySlow。 */
+  private handleSlowRequest(payload: unknown): void {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const request = payload as { runtimeId?: unknown; factor?: unknown; durationMs?: unknown };
+    if (typeof request.runtimeId !== "number" || !Number.isFinite(request.runtimeId)) {
+      return;
+    }
+    const factor = typeof request.factor === "number" && Number.isFinite(request.factor) ? request.factor : 1;
+    const durationMs = typeof request.durationMs === "number" && Number.isFinite(request.durationMs)
+      ? request.durationMs
+      : 0;
+    this.applySlow(request.runtimeId, factor, durationMs);
+  }
+
   private spawnTowardTarget(segment: ResolvedWaveSegment): void {
     if (this.enemies.length >= segment.aliveCap) {
       // Keep one interval buffered so dropping below cap trickles spawns instead of bursting.
@@ -435,6 +487,8 @@ export class EnemyDirectorSystem {
       hitOffsetX: 0,
       hitOffsetY: 0,
       hitOffsetAgeMs: HIT_OFFSET_SETTLE_MS,
+      slowFactor: 1,
+      slowMsRemaining: 0,
       view
     };
     this.nextRuntimeId += 1;
@@ -482,7 +536,11 @@ export class EnemyDirectorSystem {
         enemy.directionRefreshMs = 100;
       }
 
-      const chaseScale = enemy.knockbackMsRemaining > 0 ? KNOCKBACK_CHASE_DAMPING : 1;
+      enemy.slowMsRemaining = Math.max(0, enemy.slowMsRemaining - deltaMs);
+      if (enemy.slowMsRemaining <= 0) {
+        enemy.slowFactor = 1;
+      }
+      const chaseScale = (enemy.knockbackMsRemaining > 0 ? KNOCKBACK_CHASE_DAMPING : 1) * enemy.slowFactor;
       enemy.worldX += enemy.directionX * enemy.config.moveSpeed * chaseScale * deltaSeconds;
       enemy.worldY += enemy.directionY * enemy.config.moveSpeed * chaseScale * deltaSeconds;
       enemy.hitSquashMs = Math.max(0, enemy.hitSquashMs - deltaMs);

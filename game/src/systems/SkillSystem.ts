@@ -78,6 +78,23 @@ type WaveRuntime = {
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
 };
 
+/** 墨染江山·墨痕领域：世界锚定地面 DoT 控制场，视觉走共享墨层 RenderTexture，无逐领域视图对象。 */
+type ZoneRuntime = {
+  runtimeId: number;
+  skillId: SkillId;
+  worldX: number;
+  worldY: number;
+  radius: number;
+  /** 每跳伤害 */
+  damage: number;
+  slowPercent: number;
+  tickIntervalMs: number;
+  tickTimerMs: number;
+  ageMs: number;
+  durationMs: number;
+  advanced: boolean;
+};
+
 type VfxRuntime = {
   view: Phaser.GameObjects.Arc | Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
   worldX: number;
@@ -103,6 +120,8 @@ export type SkillSystemSnapshot = {
   skills: string;
   projectilesAlive: number;
   orbitalsAlive: number;
+  /** 墨痕领域存活数（可选：GameScene 兜底快照字面量无需补齐，消费方按 0 处理） */
+  zonesAlive?: number;
   activeVfx: number;
   skillHitsLast10s: number;
   skillDpsLast10s: number;
@@ -125,6 +144,25 @@ const DART_GHOST_INTERVAL_MS = 70;
 const MAX_DART_GHOSTS = 24;
 /** 暴击判定：实际伤害 ≥ 该技能当前配置期望伤害的倍数（方案五·伤害数字分层） */
 const CRIT_DAMAGE_RATIO = 2;
+/** 墨染江山·领域并发上限（冷却 3.6-4.5s > 持续 3.5-4s，常态单领域，进阶/低压时可短暂双领域） */
+const MAX_ZONES = 2;
+/** 墨层渐褪时长：最后一片领域消失后整层 alpha 线性衰减并销毁 */
+const INK_LAYER_FADE_MS = 650;
+/** 减速宽限：每跳续期 tick + 宽限，领域消失后敌人短时自愈 */
+const ZONE_SLOW_GRACE_MS = 260;
+/** 墨层 RenderTexture 深度：地面道具之上、敌人（8-9）与投射物（14）之下 */
+const INK_LAYER_DEPTH = 2;
+/** 墨笔触纹理（256×256，跨代理约定键，未注册时走程序化兜底纹理） */
+const INK_STROKE_TEXTURES = ["vfx_ink_stroke_1", "vfx_ink_stroke_2", "vfx_ink_stroke_3", "vfx_ink_stroke_4"];
+/** 施放瞬间序列帧（6 帧 96×96） */
+const INK_SPLAT_TEXTURE = "vfx_ink_splat";
+/** 程序化兜底墨渍纹理（笔触美术缺失时生成一次复用） */
+const INK_FALLBACK_TEXTURE = "moran_ink_fallback";
+/** 墨点 hitSpark 复用 JuiceSystem 程序化点纹理，深色 NORMAL 混合（不要 ADD 亮色） */
+const INK_HIT_DOT_TEXTURE = "juice_dot";
+/** 配色：墨 / 进阶芥金墨 / Lv3+ 墨缘泛青（tint 乘算微调） */
+const INK_TINT_ADVANCED = 0xa99a20;
+const INK_TINT_CYAN_EDGE = 0x9fc4b4;
 
 export class SkillSystem {
   private readonly skills = new Map<SkillId, SkillRuntime>();
@@ -132,6 +170,7 @@ export class SkillSystem {
   private readonly projectiles: ProjectileRuntime[] = [];
   private readonly orbitals: OrbitalRuntime[] = [];
   private readonly waves: WaveRuntime[] = [];
+  private readonly zones: ZoneRuntime[] = [];
   private readonly vfx: VfxRuntime[] = [];
   private readonly hitSamples: HitSample[] = [];
   private readonly dartGhosts: Phaser.GameObjects.Sprite[] = [];
@@ -139,7 +178,14 @@ export class SkillSystem {
   private nextProjectileId = 1;
   private nextOrbitalId = 1;
   private nextWaveId = 1;
+  private nextZoneId = 1;
   private hitSfxCooldownMs = 0;
+  /** 共享地面墨层：屏幕尺寸 RenderTexture，记录其像素 (0,0) 对应的世界坐标，逐帧随镜头对齐 */
+  private inkLayer?: Phaser.GameObjects.RenderTexture;
+  private inkLayerWorldX = 0;
+  private inkLayerWorldY = 0;
+  /** stamp 用暂存 Image（不入显示列表，复用避免逐次分配） */
+  private inkScratch?: Phaser.GameObjects.Image;
 
   constructor(private readonly scene: Phaser.Scene, private readonly options: SkillSystemOptions) {
     // 提前实例化 JuiceSystem，确保拖尾粒子纹理已生成
@@ -168,12 +214,15 @@ export class SkillSystem {
         this.castProjectileSkillIfReady(runtime, targets);
       } else if (skillConfigs[skillId].kind === "aoe") {
         this.castWaveSkillIfReady(runtime);
+      } else if (skillConfigs[skillId].kind === "zone") {
+        this.castZoneSkillIfReady(runtime, targets);
       }
     }
 
     this.updateProjectiles(clampedDeltaMs, targets);
     this.updateOrbitals(clampedDeltaMs, targets);
     this.updateWaves(clampedDeltaMs, targets);
+    this.updateZones(clampedDeltaMs, targets);
     this.updateVfx(clampedDeltaMs);
     this.ageHitSamples(clampedDeltaMs);
     return this.getSnapshot();
@@ -189,7 +238,8 @@ export class SkillSystem {
       skills: this.formatSkills(),
       projectilesAlive: this.projectiles.length,
       orbitalsAlive: this.orbitals.length,
-      activeVfx: this.vfx.length + this.waves.length,
+      zonesAlive: this.zones.length,
+      activeVfx: this.vfx.length + this.waves.length + this.zones.length,
       skillHitsLast10s: this.hitSamples.length,
       skillDpsLast10s: Math.round((totalDamage / dpsWindowSeconds) * 10) / 10,
       advancedSkills: this.formatAdvancedSkills(),
@@ -237,9 +287,14 @@ export class SkillSystem {
     for (const ghost of this.dartGhosts) {
       ghost.destroy();
     }
+    this.inkLayer?.destroy();
+    this.inkLayer = undefined;
+    this.inkScratch?.destroy();
+    this.inkScratch = undefined;
     this.projectiles.length = 0;
     this.orbitals.length = 0;
     this.waves.length = 0;
+    this.zones.length = 0;
     this.vfx.length = 0;
     this.dartGhosts.length = 0;
     this.hitSamples.length = 0;
@@ -346,7 +401,8 @@ export class SkillSystem {
     const requiredKeys: Record<SkillId, AdvanceKeyId> = {
       yulong_sword_qi: "sword_manual_page",
       huifeng_dart: "hidden_weapon_pouch",
-      zhenshan_palm: "inner_force_manual"
+      zhenshan_palm: "inner_force_manual",
+      moran_ink_zone: "pine_soot_inkstick"
     };
     for (const skillId of skillOrder) {
       this.unlockSkill(skillId, 5);
@@ -498,6 +554,310 @@ export class SkillSystem {
     this.waves.push(wave);
     this.updateWorldAnchoredView(wave.view, wave.worldX, wave.worldY);
     JuiceSystem.get(this.scene).heavyHit();
+  }
+
+  // ---------- 墨染江山 · 墨痕领域（kind "zone"） ----------
+
+  private castZoneSkillIfReady(runtime: SkillRuntime, targets: CombatTargetSnapshot[]): void {
+    if (runtime.cooldownMs > 0 || this.zones.length >= MAX_ZONES) {
+      return;
+    }
+
+    const profile = this.getZoneProfile(runtime);
+    const heroWorld = this.options.getHeroWorld();
+    // 首选敌人最密集处（密度中心），无有效目标时墨落少侠脚下作防御性领域
+    const center = this.pickZoneCenter(targets, profile.radius, profile.range) ?? heroWorld;
+    const zone: ZoneRuntime = {
+      runtimeId: this.nextZoneId,
+      skillId: runtime.skillId,
+      worldX: center.x,
+      worldY: center.y,
+      radius: profile.radius,
+      damage: profile.damage,
+      slowPercent: profile.slowPercent,
+      tickIntervalMs: profile.tickIntervalMs,
+      tickTimerMs: 0,
+      ageMs: 0,
+      durationMs: profile.durationMs,
+      advanced: runtime.advanced
+    };
+    this.nextZoneId += 1;
+    this.zones.push(zone);
+    this.stampInkStrokes(zone, profile.strokeCount, runtime.level);
+    this.createInkSplatVfx(zone);
+    runtime.cooldownMs = profile.cooldownMs;
+    this.options.playSfx(runtime.advanced ? "skill_cast_advanced" : "skill_cast");
+    eventBus.emit("skill_cast", {
+      skillId: runtime.skillId,
+      displayName: this.getRuntimeDisplayName(runtime),
+      level: runtime.level,
+      radius: profile.radius,
+      durationMs: profile.durationMs,
+      advanced: runtime.advanced
+    });
+    eventBus.emit("skill_zone_spawned", {
+      zoneRuntimeId: zone.runtimeId,
+      skillId: runtime.skillId,
+      level: runtime.level,
+      worldX: zone.worldX,
+      worldY: zone.worldY,
+      radius: zone.radius,
+      durationMs: zone.durationMs,
+      slowPercent: zone.slowPercent,
+      advanced: zone.advanced
+    });
+  }
+
+  /**
+   * 密度中心选点：仅以英雄 range 范围内的目标为候选，单趟 O(n²) 邻域计数取最密点，
+   * 返回其邻域质心（领域圆心不被单个敌人带偏）。仅施放瞬间调用（≥3.6s 一次），120 敌约 1.4 万次距离比较，开销可忽略。
+   */
+  private pickZoneCenter(targets: CombatTargetSnapshot[], radius: number, range: number): Point | undefined {
+    const heroWorld = this.options.getHeroWorld();
+    const candidates = targets.filter((target) => (
+      Math.hypot(target.worldX - heroWorld.x, target.worldY - heroWorld.y) <= range
+    ));
+    if (candidates.length === 0) {
+      return undefined;
+    }
+
+    let best: { target: CombatTargetSnapshot; members: CombatTargetSnapshot[] } | undefined;
+    for (const candidate of candidates) {
+      const members = candidates.filter((other) => (
+        Math.hypot(other.worldX - candidate.worldX, other.worldY - candidate.worldY) <= radius
+      ));
+      if (!best || members.length > best.members.length) {
+        best = { target: candidate, members };
+      }
+    }
+    if (!best) {
+      return undefined;
+    }
+
+    const sum = best.members.reduce(
+      (acc, member) => ({ x: acc.x + member.worldX, y: acc.y + member.worldY }),
+      { x: 0, y: 0 }
+    );
+    return {
+      x: sum.x / best.members.length,
+      y: sum.y / best.members.length
+    };
+  }
+
+  /** 领域主循环：老化/跳伤害+续减速/到期移除；墨层逐帧对齐镜头，无存活领域时整层渐褪后销毁。 */
+  private updateZones(deltaMs: number, targets: CombatTargetSnapshot[]): void {
+    for (let index = this.zones.length - 1; index >= 0; index -= 1) {
+      const zone = this.zones[index];
+      zone.ageMs += deltaMs;
+      zone.tickTimerMs -= deltaMs;
+      // 每 tick 只遍历一次敌人列表；施放瞬间（tickTimerMs=0）立即跳第一次
+      while (zone.tickTimerMs <= 0 && zone.ageMs <= zone.durationMs) {
+        zone.tickTimerMs += zone.tickIntervalMs;
+        this.tickZone(zone, targets);
+      }
+
+      if (zone.ageMs >= zone.durationMs) {
+        this.zones.splice(index, 1);
+        eventBus.emit("skill_zone_expired", { zoneRuntimeId: zone.runtimeId });
+      }
+    }
+
+    if (!this.inkLayer) {
+      return;
+    }
+    this.syncInkLayerPosition();
+    if (this.zones.length === 0) {
+      const nextAlpha = this.inkLayer.alpha - deltaMs / INK_LAYER_FADE_MS;
+      if (nextAlpha <= 0) {
+        this.inkLayer.destroy();
+        this.inkLayer = undefined;
+      } else {
+        this.inkLayer.setAlpha(nextAlpha);
+      }
+    }
+  }
+
+  /** 单次跳变：域内敌人走标准技能伤害流；存活敌人经 eventBus 桥接续减速（EnemyDirector 最小通道）。 */
+  private tickZone(zone: ZoneRuntime, targets: CombatTargetSnapshot[]): void {
+    for (const target of targets) {
+      if (Math.hypot(target.worldX - zone.worldX, target.worldY - zone.worldY) > zone.radius + target.collisionRadius) {
+        continue;
+      }
+
+      this.applySkillDamage(zone.skillId, target, zone.damage, {
+        zoneRuntimeId: zone.runtimeId,
+        source: zone.advanced ? "ink_zone_advanced" : "ink_zone"
+      });
+      if (isEnemyTarget(target)) {
+        eventBus.emit("enemy_slow_requested", {
+          runtimeId: target.runtimeId,
+          factor: 1 - zone.slowPercent,
+          durationMs: zone.tickIntervalMs + ZONE_SLOW_GRACE_MS,
+          source: zone.skillId
+        });
+      }
+    }
+  }
+
+  /** 共享墨层：懒创建/尺寸漂移重建；施放时 alpha 复位（渐褪中途新墨落地即恢复）。 */
+  private ensureInkLayer(): Phaser.GameObjects.RenderTexture | undefined {
+    const width = Math.max(1, this.scene.scale.width);
+    const height = Math.max(1, this.scene.scale.height);
+    if (this.inkLayer && (this.inkLayer.width !== width || this.inkLayer.height !== height)) {
+      this.inkLayer.destroy();
+      this.inkLayer = undefined;
+    }
+    if (!this.inkLayer) {
+      const heroWorld = this.options.getHeroWorld();
+      const heroScreen = this.options.getHeroScreen();
+      this.inkLayer = this.scene.add.renderTexture(0, 0, width, height)
+        .setOrigin(0, 0)
+        .setDepth(INK_LAYER_DEPTH);
+      // 墨层像素 (0,0) 锚定的世界坐标：与 stageScroll 同一套 heroScreen + world - heroWorld 换算
+      this.inkLayerWorldX = heroWorld.x - heroScreen.x;
+      this.inkLayerWorldY = heroWorld.y - heroScreen.y;
+    }
+    this.inkLayer.setAlpha(0.95);
+    this.syncInkLayerPosition();
+    return this.inkLayer;
+  }
+
+  private syncInkLayerPosition(): void {
+    if (!this.inkLayer) {
+      return;
+    }
+    const { x, y } = this.worldToScreen(this.inkLayerWorldX, this.inkLayerWorldY);
+    this.inkLayer.setPosition(x, y);
+  }
+
+  /**
+   * 挥毫落墨：随机 1-2 张笔触以随机旋转/缩放 stamp 到共享墨层（世界坐标 → 墨层本地坐标）。
+   * 纹理缺失时降级到程序化墨渍纹理；Lv3+ 墨缘泛青 tint、进阶芥金 tint（乘算在深色墨上保持低饱和）。
+   */
+  private stampInkStrokes(zone: ZoneRuntime, strokeCount: number, level: number): void {
+    const layer = this.ensureInkLayer();
+    if (!layer) {
+      return;
+    }
+
+    const artKeys = INK_STROKE_TEXTURES.filter((key) => this.scene.textures.exists(key));
+    const fallbackKey = artKeys.length === 0 ? this.ensureInkFallbackTexture() : undefined;
+    if (artKeys.length === 0 && !fallbackKey) {
+      return;
+    }
+
+    const scratch = this.obtainInkScratch();
+    const localX = zone.worldX - this.inkLayerWorldX;
+    const localY = zone.worldY - this.inkLayerWorldY;
+    const tint = zone.advanced ? INK_TINT_ADVANCED : level >= 3 ? INK_TINT_CYAN_EDGE : 0xffffff;
+    const count = Phaser.Math.Clamp(Math.floor(strokeCount), 1, 2);
+    for (let index = 0; index < count; index += 1) {
+      const textureKey = artKeys.length > 0 ? Phaser.Math.RND.pick(artKeys) : fallbackKey;
+      if (!textureKey) {
+        continue;
+      }
+      // 笔触 256×256 覆盖领域直径，随机伸缩让每片墨痕形态不重复；第二道相对第一道交叉 ~90°
+      const scale = ((zone.radius * 2) / 256) * Phaser.Math.FloatBetween(0.95, 1.18);
+      scratch.setTexture(textureKey);
+      scratch.setPosition(
+        localX + (index > 0 ? Phaser.Math.Between(-14, 14) : 0),
+        localY + (index > 0 ? Phaser.Math.Between(-14, 14) : 0)
+      );
+      scratch.setRotation(Phaser.Math.FloatBetween(0, Math.PI * 2) + index * Math.PI / 2);
+      scratch.setScale(scale);
+      scratch.setAlpha(zone.advanced ? 0.96 : 0.92);
+      // RenderTexture.draw 对 GameObject 使用其自身 alpha/tint（x/y 缺省取对象坐标），tint 需设在对象上
+      scratch.setTint(tint);
+      layer.draw(scratch);
+    }
+  }
+
+  /** 程序化兜底墨渍：不规则深墨斑块，生成一次全局复用（防御笔触纹理未注册）。 */
+  private ensureInkFallbackTexture(): string | undefined {
+    if (this.scene.textures.exists(INK_FALLBACK_TEXTURE)) {
+      return INK_FALLBACK_TEXTURE;
+    }
+
+    const graphics = this.scene.add.graphics();
+    graphics.fillStyle(0x1a1f1a, 0.9);
+    graphics.fillEllipse(128, 128, 196, 172);
+    graphics.fillEllipse(96, 108, 128, 96);
+    graphics.fillEllipse(164, 150, 116, 104);
+    graphics.fillStyle(0x111511, 0.85);
+    graphics.fillEllipse(128, 128, 128, 112);
+    graphics.fillEllipse(182, 96, 42, 30);
+    graphics.fillEllipse(70, 168, 36, 26);
+    graphics.generateTexture(INK_FALLBACK_TEXTURE, 256, 256);
+    graphics.destroy();
+    return this.scene.textures.exists(INK_FALLBACK_TEXTURE) ? INK_FALLBACK_TEXTURE : undefined;
+  }
+
+  private obtainInkScratch(): Phaser.GameObjects.Image {
+    if (!this.inkScratch || !this.inkScratch.active) {
+      this.inkScratch?.destroy();
+      this.inkScratch = new Phaser.GameObjects.Image(this.scene, 0, 0, Phaser.Math.RND.pick(INK_STROKE_TEXTURES));
+      this.inkScratch.setOrigin(0.5);
+    }
+    return this.inkScratch;
+  }
+
+  /**
+   * 施放瞬间墨迹迸发：vfx_ink_splat 序列帧（一次性动画播完销毁，沿用 bindOneShotDestroy 模式）；
+   * 纹理缺失时降级为深色扩散环。baseScale 由 updateVfx 乘算，不被缩放曲线覆盖。
+   */
+  private createInkSplatVfx(zone: ZoneRuntime): void {
+    const { x: screenX, y: screenY } = this.worldToScreen(zone.worldX, zone.worldY);
+    if (this.scene.textures.exists(INK_SPLAT_TEXTURE)) {
+      const baseScale = (zone.radius * 2.1) / 96;
+      const view = this.scene.add.sprite(screenX, screenY, INK_SPLAT_TEXTURE)
+        .setDepth(7)
+        .setScale(baseScale)
+        .setBlendMode(Phaser.BlendModes.NORMAL);
+      if (zone.advanced) {
+        view.setTint(INK_TINT_ADVANCED);
+      }
+      view.setData("spriteArt", true);
+      view.setData("baseScale", baseScale);
+      const animationKey = getArtAnimationKey(INK_SPLAT_TEXTURE);
+      if (this.scene.anims.exists(animationKey)) {
+        view.play(animationKey);
+        this.bindOneShotDestroy(view);
+      }
+      this.vfx.push({ view, worldX: zone.worldX, worldY: zone.worldY, ageMs: 0, durationMs: 480, type: "hit" });
+      return;
+    }
+
+    const fill = this.scene.add.circle(0, 0, zone.radius * 0.42, 0x1a1f1a, 0.4);
+    const rim = this.scene.add.circle(0, 0, zone.radius * 0.42, 0x000000, 0)
+      .setStrokeStyle(3, zone.advanced ? INK_TINT_ADVANCED : 0x1a1f1a, 0.8);
+    const view = this.scene.add.container(screenX, screenY, [fill, rim])
+      .setDepth(7);
+    this.vfx.push({ view, worldX: zone.worldX, worldY: zone.worldY, ageMs: 0, durationMs: 300, type: "hit" });
+  }
+
+  /**
+   * 墨点 hitSpark 替代（仅墨染江山）：JuiceSystem 程序化点纹理 tint 深墨/芥金，
+   * NORMAL 混合小规模迸发，不走 ADD 亮色。emitter 一次性，自动延时销毁。
+   */
+  private createInkHitSpark(screenX: number, screenY: number, advanced: boolean): void {
+    if (!this.scene.textures.exists(INK_HIT_DOT_TEXTURE)) {
+      return;
+    }
+
+    const emitter = this.scene.add.particles(screenX, screenY, INK_HIT_DOT_TEXTURE, {
+      speed: { min: 18, max: 78 },
+      lifespan: 300,
+      scale: { start: 0.62, end: 0 },
+      alpha: { start: 0.8, end: 0 },
+      tint: advanced ? [0xa99a20, 0x8a7d1c, 0x5c5416] : [0x1a1f1a, 0x2c332c, 0x111511],
+      blendMode: Phaser.BlendModes.NORMAL,
+      emitting: false
+    });
+    emitter.setDepth(18);
+    emitter.explode(4);
+    this.scene.time.delayedCall(600, () => {
+      emitter.destroy();
+    });
   }
 
   private updateProjectiles(deltaMs: number, targets: CombatTargetSnapshot[]): void {
@@ -678,14 +1038,23 @@ export class SkillSystem {
         : runtime?.advanced || isCrit
           ? "crit"
           : "normal";
-    juice.hitSpark(result.screenX, result.screenY, isBossTarget);
+    const isInkZoneHit = metadata.source === "ink_zone" || metadata.source === "ink_zone_advanced";
+    if (isInkZoneHit) {
+      // 墨染江山：小规模深色墨点替代亮色 hitSpark
+      this.createInkHitSpark(result.screenX, result.screenY, runtime?.advanced === true);
+    } else {
+      juice.hitSpark(result.screenX, result.screenY, isBossTarget);
+    }
     juice.damageNumber(
       result.screenX,
       result.screenY,
       result.amount,
       damageKind
     );
-    this.createHitVfx(result.worldX, result.worldY);
+    if (!isInkZoneHit) {
+      // 亮色 ADD 命中闪光与墨韵威胁语义冲突，墨染江山不触发
+      this.createHitVfx(result.worldX, result.worldY);
+    }
     this.playThrottledHitSfx();
     eventBus.emit("skill_hit", {
       skillId,
@@ -904,12 +1273,42 @@ export class SkillSystem {
     };
   }
 
+  /**
+   * 墨染江山数值形态：基础形态全部读 data/skills.ts 配置；
+   * 进阶「金墨江山」——每跳伤害 +4、冷却 3300、半径 +50%、减速 50%（Lv5 之上再放大）。
+   */
+  private getZoneProfile(runtime: SkillRuntime): {
+    damage: number;
+    cooldownMs: number;
+    range: number;
+    radius: number;
+    durationMs: number;
+    tickIntervalMs: number;
+    slowPercent: number;
+    strokeCount: number;
+  } {
+    const level = this.getLevelConfig(runtime);
+    return {
+      damage: runtime.advanced ? level.damage + 4 : level.damage,
+      cooldownMs: runtime.advanced ? 3300 : (level.cooldownMs ?? 4500),
+      range: level.range ?? 640,
+      radius: runtime.advanced ? Math.round((level.radius ?? 90) * 1.5) : (level.radius ?? 90),
+      durationMs: level.durationMs ?? 3500,
+      tickIntervalMs: level.tickIntervalMs ?? 500,
+      slowPercent: runtime.advanced ? 0.5 : (level.slowPercent ?? 0.3),
+      strokeCount: level.strokeCount ?? 1
+    };
+  }
+
   private getCooldownMs(runtime: SkillRuntime): number {
     if (skillConfigs[runtime.skillId].kind === "projectile") {
       return this.getProjectileProfile(runtime).cooldownMs;
     }
     if (skillConfigs[runtime.skillId].kind === "aoe") {
       return this.getWaveProfile(runtime).cooldownMs;
+    }
+    if (skillConfigs[runtime.skillId].kind === "zone") {
+      return this.getZoneProfile(runtime).cooldownMs;
     }
     return 0;
   }
@@ -925,6 +1324,9 @@ export class SkillSystem {
     }
     if (kind === "aoe") {
       return this.getWaveProfile(runtime).damage;
+    }
+    if (kind === "zone") {
+      return this.getZoneProfile(runtime).damage;
     }
     return 0;
   }
@@ -1169,7 +1571,8 @@ export class SkillSystem {
             ? 0.82 + progress * 0.75
             : 1 - progress * 0.28;
       vfx.view.setAlpha(alpha * (spriteArt ? 1 : vfx.type === "hit" ? 0.55 : 0.9));
-      vfx.view.setScale(scale);
+      // baseScale：art 尺寸换算基数（墨迹迸发等需要 >1 的基础缩放），缺省 1 不影响既有 vfx
+      vfx.view.setScale(getNumericData(vfx.view, "baseScale", 1) * scale);
 
       if (vfx.ageMs >= vfx.durationMs) {
         vfx.view.destroy();
@@ -1244,6 +1647,9 @@ export class SkillSystem {
     }
     if (keyId === "inner_force_manual") {
       return "内劲心法";
+    }
+    if (keyId === "pine_soot_inkstick") {
+      return "松烟墨锭";
     }
     return "剑谱残页";
   }

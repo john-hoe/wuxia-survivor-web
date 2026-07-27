@@ -1,7 +1,7 @@
-export type SkillTag = "aimed" | "orbit" | "aoe" | "pierce" | "defense" | "knockback";
-export type SkillKind = "projectile" | "orbit" | "aoe";
-export type SkillId = "yulong_sword_qi" | "huifeng_dart" | "zhenshan_palm";
-export type AdvanceKeyId = "sword_manual_page" | "hidden_weapon_pouch" | "inner_force_manual";
+export type SkillTag = "aimed" | "orbit" | "aoe" | "pierce" | "defense" | "knockback" | "control";
+export type SkillKind = "projectile" | "orbit" | "aoe" | "zone";
+export type SkillId = "yulong_sword_qi" | "huifeng_dart" | "zhenshan_palm" | "moran_ink_zone";
+export type AdvanceKeyId = "sword_manual_page" | "hidden_weapon_pouch" | "inner_force_manual" | "pine_soot_inkstick";
 
 export type SkillLevelConfig = {
   level: number;
@@ -15,6 +15,14 @@ export type SkillLevelConfig = {
   knockback?: number;
   rotationSpeedDegPerSecond?: number;
   perEnemyHitCooldownMs?: number;
+  /** zone 专用：领域存续时长（墨染江山） */
+  durationMs?: number;
+  /** zone 专用：伤害跳变间隔（每跳一次伤害+刷新减速） */
+  tickIntervalMs?: number;
+  /** zone 专用：减速比例 0-1（0.3 = 敌人移速降至 70%） */
+  slowPercent?: number;
+  /** zone 专用：施放时 stamp 的墨笔触数（Lv3+ 双道交叉） */
+  strokeCount?: number;
 };
 
 export type SkillAdvancementConfig = {
@@ -37,7 +45,8 @@ export type SkillConfig = {
 export const skillOrder: SkillId[] = [
   "yulong_sword_qi",
   "huifeng_dart",
-  "zhenshan_palm"
+  "zhenshan_palm",
+  "moran_ink_zone"
 ];
 
 export const skillConfigs: Record<SkillId, SkillConfig> = {
@@ -208,6 +217,88 @@ export const skillConfigs: Record<SkillId, SkillConfig> = {
         cooldownMs: 2300,
         radius: 150,
         knockback: 54
+      }
+    ]
+  },
+  /**
+   * 墨染江山（moran_ink_zone，kind "zone"）——墨痕领域·地面 DoT 控制场。
+   * 每隔 cooldownMs 在敌人最密集处挥毫，留下 radius 墨痕领域，持续 durationMs，
+   * 域内敌人每 tickIntervalMs 跳一次 damage 并附带 slowPercent 减速（领域消失后短时自愈）。
+   * 形态分级：Lv1-2 单道墨痕；Lv3-4 双道交叉 + 半径 +30% + 墨缘泛青；Lv5/进阶「金墨江山」
+   * 墨芯芥金 + 半径 +50% + 减速 50%（进阶形态数值见 SkillSystem.getZoneProfile）。
+   *
+   * 【跨代理对接 · GameScene 由表现层代理维护】
+   * 1. F4 调试键：GameScene F 系 debug 键中新增 F4 → skillSystem.unlockSkill("moran_ink_zone", 1)。
+   * 2. GameScene 局部函数 isAdvanceKeyId 需将 "pine_soot_inkstick" 加入白名单，
+   *    否则顿悟池中的「松烟墨锭」信物无法被 collectAdvanceKey 接收。
+   */
+  moran_ink_zone: {
+    id: "moran_ink_zone",
+    displayName: "墨染江山",
+    kind: "zone",
+    maxLevel: 5,
+    tags: ["aoe", "control"],
+    advancement: {
+      requiredLevel: 5,
+      requiredKeyId: "pine_soot_inkstick",
+      displayName: "金墨江山",
+      description: "墨痕进阶为金墨领域，范围与减速大幅提升"
+    },
+    levels: [
+      {
+        level: 1,
+        damage: 6,
+        cooldownMs: 4500,
+        range: 640,
+        radius: 90,
+        durationMs: 3500,
+        tickIntervalMs: 500,
+        slowPercent: 0.3,
+        strokeCount: 1
+      },
+      {
+        level: 2,
+        damage: 8,
+        cooldownMs: 4300,
+        range: 650,
+        radius: 96,
+        durationMs: 3600,
+        tickIntervalMs: 500,
+        slowPercent: 0.3,
+        strokeCount: 1
+      },
+      {
+        level: 3,
+        damage: 10,
+        cooldownMs: 4100,
+        range: 670,
+        radius: 117,
+        durationMs: 3700,
+        tickIntervalMs: 500,
+        slowPercent: 0.32,
+        strokeCount: 2
+      },
+      {
+        level: 4,
+        damage: 13,
+        cooldownMs: 3900,
+        range: 690,
+        radius: 124,
+        durationMs: 3800,
+        tickIntervalMs: 500,
+        slowPercent: 0.35,
+        strokeCount: 2
+      },
+      {
+        level: 5,
+        damage: 16,
+        cooldownMs: 3600,
+        range: 720,
+        radius: 130,
+        durationMs: 4000,
+        tickIntervalMs: 500,
+        slowPercent: 0.4,
+        strokeCount: 2
       }
     ]
   }

@@ -171,6 +171,7 @@ export function createInsightOptions(
   if (getOwnedSkillIds(skillState).length < skillState.maxSkillSlots) {
     options.push(createUnlockOption("huifeng_dart", skillState));
     options.push(createUnlockOption("zhenshan_palm", skillState));
+    options.push(createUnlockOption("moran_ink_zone", skillState));
   }
 
   const nextYulongLevel = getNextSkillLevel(skillState, "yulong_sword_qi");
@@ -410,6 +411,10 @@ function getSkillIconKey(skillId: SkillId): string {
   if (skillId === "huifeng_dart") {
     return "skill_huifeng_dart";
   }
+  if (skillId === "moran_ink_zone") {
+    // 跨代理约定图标：ui_icon_skill_moran；进阶选项自动派生 ui_icon_skill_moran_advanced
+    return "ui_icon_skill_moran";
+  }
   return "skill_zhenshan_wave";
 }
 
@@ -419,6 +424,9 @@ function getUnlockDescription(skillId: SkillId): string {
   }
   if (skillId === "zhenshan_palm") {
     return "定时震退近敌";
+  }
+  if (skillId === "moran_ink_zone") {
+    return "墨痕覆地，伤敌减速";
   }
   return "剑气自动索敌";
 }
@@ -430,6 +438,9 @@ function getUpgradeDescription(skillId: SkillId): string {
   if (skillId === "zhenshan_palm") {
     return "掌风范围扩大";
   }
+  if (skillId === "moran_ink_zone") {
+    return "墨域更广更浓";
+  }
   return "剑气更锋利";
 }
 
@@ -439,6 +450,9 @@ function getAdvanceKeyTitle(keyId: AdvanceKeyId): string {
   }
   if (keyId === "inner_force_manual") {
     return "内劲心法";
+  }
+  if (keyId === "pine_soot_inkstick") {
+    return "松烟墨锭";
   }
   return "剑谱残页";
 }
