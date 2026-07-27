@@ -1709,6 +1709,45 @@ export const artManifest: ArtManifestItem[] = [
     fallback: "shape",
     required: true,
     tags: ["ui", "icon", "vfx", "p3"]
+  },
+  {
+    id: "ui_scroll_paper",
+    type: "ui",
+    path: "ui/ui_scroll_paper.png",
+    width: 600,
+    height: 220,
+    frames: 1,
+    frameRate: 0,
+    usage: "卷轴抽卡 横卷纸面中段（九宫格横向拉伸底）",
+    fallback: "shape",
+    required: true,
+    tags: ["ui", "scripture", "scroll", "gacha", "paper", "p3"]
+  },
+  {
+    id: "ui_scroll_rod",
+    type: "ui",
+    path: "ui/ui_scroll_rod.png",
+    width: 48,
+    height: 240,
+    frames: 1,
+    frameRate: 0,
+    usage: "卷轴抽卡 木轴（芥金轴头，左右各一）",
+    fallback: "shape",
+    required: true,
+    tags: ["ui", "scripture", "scroll", "gacha", "rod", "p3"]
+  },
+  {
+    id: "ui_scroll_cord",
+    type: "ui",
+    path: "ui/ui_scroll_cord.png",
+    width: 60,
+    height: 20,
+    frames: 1,
+    frameRate: 0,
+    usage: "卷轴抽卡 系卷红绳",
+    fallback: "shape",
+    required: true,
+    tags: ["ui", "scripture", "scroll", "gacha", "cord", "p3"]
   }
 ];
 

@@ -1,4 +1,10 @@
 import Phaser from "phaser";
+import {
+  consumeInkSweepRevealPending,
+  inkWipeIn,
+  inkWipeOut,
+  markInkSweepRevealPending
+} from "../fx/InkWipe";
 
 /**
  * 全局视觉常量 —— 「墨金宣纸」配色体系 + 字体栈。
@@ -59,20 +65,38 @@ export const FONT_MONO =
 
 /** 场景淡入（墨黑）。每个 UI 场景 create() 末尾调用一次即可。 */
 export function fadeIn(scene: Phaser.Scene, ms = 250): void {
+  // 若上一场以斜锋扫墨换场（transitionTo），此处反向扫墨收回，墨痕同源无缝衔接
+  if (consumeInkSweepRevealPending() && inkWipeOut(scene, { mode: "sweep", durationMs: 850 })) {
+    return;
+  }
   scene.cameras.main.fadeIn(ms, 10, 10, 10);
 }
 
 /**
- * 统一转场：淡出后再 scene.start，替代硬切。
+ * 统一转场：B 斜锋扫墨（左上 → 右下）墨满后再 scene.start，替代硬切与旧 fadeOut。
+ * 入墨默认 1150ms；目标场景 create() 里的 fadeIn 会做反向扫墨收回（出墨 850ms）。
+ * Canvas 渲染器兜底：退回原 200ms 相机 fadeOut。
  * 注意：仅适用于 scene.start 语义的场景切换；pause/resume 语义请自行处理。
  */
 export function transitionTo(
   scene: Phaser.Scene,
   key: string,
   data?: Record<string, unknown>,
-  ms = 200
+  ms = 1150
 ): void {
-  scene.cameras.main.fadeOut(ms, 10, 10, 10);
+  const inkStarted = inkWipeIn(scene, {
+    mode: "sweep",
+    durationMs: ms,
+    onComplete: () => {
+      // 墨满换场：标记一次反向扫墨收回，由目标场景的 fadeIn 消费
+      markInkSweepRevealPending();
+      scene.scene.start(key, data);
+    }
+  });
+  if (inkStarted) {
+    return;
+  }
+  scene.cameras.main.fadeOut(200, 10, 10, 10);
   scene.cameras.main.once(
     Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE,
     () => {

@@ -5,6 +5,7 @@ import { DeathTransitionScene } from "./scenes/DeathTransitionScene";
 import { GameScene } from "./scenes/GameScene";
 import { InsightScene } from "./scenes/InsightScene";
 import { MenuScene } from "./scenes/MenuScene";
+import { MeridianScene } from "./scenes/MeridianScene";
 import { PauseScene } from "./scenes/PauseScene";
 import { ResultScene } from "./scenes/ResultScene";
 import { ScriptureScene } from "./scenes/ScriptureScene";
@@ -31,7 +32,8 @@ const config: Phaser.Types.Core.GameConfig = {
     SettingsScene,
     DeathTransitionScene,
     ResultScene,
-    ScriptureScene
+    ScriptureScene,
+    MeridianScene
   ]
 };
 

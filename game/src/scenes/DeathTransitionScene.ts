@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import type { RunSummary } from "../types";
+import { inkWipeIn, inkWipeOut } from "../fx/InkWipe";
 import { createArtPanel, getSafePanelWidth } from "../ui/ArtPanel";
 import { spacedText } from "../ui/minimalTheme";
 import { FONT_BODY, FONT_TITLE, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
@@ -115,7 +116,20 @@ export class DeathTransitionScene extends Phaser.Scene {
       this.input.keyboard?.off("keydown-SPACE", skipAfterGuard);
     });
 
-    fadeIn(this, 300);
+    // A 圆墨中晕过渡（替代原 fadeIn 淡入）：墨滴自中心晕开覆屏 → 满墨稍驻 → 反向收回，
+    // 露出上方降饱和/压边/文字演出。Canvas 渲染器兜底原 300ms 淡入。
+    const inkStarted = inkWipeIn(this, {
+      mode: "center",
+      durationMs: 1000,
+      onComplete: () => {
+        this.time.delayedCall(200, () => {
+          inkWipeOut(this, { mode: "center", durationMs: 900 });
+        });
+      }
+    });
+    if (!inkStarted) {
+      fadeIn(this, 300);
+    }
   }
 
   private finish(): void {

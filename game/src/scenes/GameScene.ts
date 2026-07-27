@@ -4,6 +4,7 @@ import type { WeatherKind } from "../data/gameConfig";
 import type { InsightOption, PendingInsight } from "../data/progression";
 import { isSkillId, type AdvanceKeyId, type SkillId } from "../data/skills";
 import { BossSystem, type BossDefeatSummary, type BossSystemSnapshot } from "../systems/BossSystem";
+import { inkWipeIn, inkWipeOut } from "../fx/InkWipe";
 import { EnemyDirectorSystem, type EnemyDirectorSnapshot } from "../systems/EnemyDirectorSystem";
 import { HeroHealthSystem, type DamageResult, type HeroHealthSnapshot } from "../systems/HeroHealthSystem";
 import { HeroMovementSystem, type HeroMovementSnapshot } from "../systems/HeroMovementSystem";
@@ -331,6 +332,13 @@ export class GameScene extends Phaser.Scene {
       this.bossSystem?.requestSpawn("director");
       this.latestBoss = this.bossSystem?.getSnapshot();
       this.updateBossHud();
+    });
+    // Boss 出场：A 圆墨中晕快速版（700ms 入 + 400ms 褪），叠加在现有压暗/震屏之前。防御性订阅，不动其他逻辑。
+    const unsubscribeBossIntroInk = eventBus.on("boss_intro_started", () => {
+      this.playBossIntroInkWipe();
+    });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      unsubscribeBossIntroInk();
     });
     const unsubscribeInsightSelected = eventBus.on<{ optionId?: string; cardId?: string }>("insight_option_selected", (payload) => {
       this.applyInsightSelection(payload.optionId ?? payload.cardId ?? "");
@@ -1069,6 +1077,27 @@ export class GameScene extends Phaser.Scene {
       duration: active ? 700 : 900,
       ease: "Sine.easeInOut"
     });
+  }
+
+  /**
+   * Boss 登场墨晕（表现层叠加）：圆墨自中心晕开覆屏后快速收回，与现有压暗/震屏并行。
+   * WebGL 专属；Canvas 渲染器下 inkWipeIn 返回 false 静默跳过，异常不阻断 Boss 出场主流程。
+   */
+  private playBossIntroInkWipe(): void {
+    if (!this.scene.isActive()) {
+      return;
+    }
+    try {
+      inkWipeIn(this, {
+        mode: "center",
+        durationMs: 700,
+        onComplete: () => {
+          inkWipeOut(this, { mode: "center", durationMs: 400 });
+        }
+      });
+    } catch {
+      // 墨晕失败静默：Boss 出场主流程（压暗/震屏/血条）不受影响
+    }
   }
 
   private drawHero(): void {

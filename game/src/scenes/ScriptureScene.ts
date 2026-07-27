@@ -8,7 +8,7 @@ import {
   addMinimalTitle,
   type MinimalRowHandle
 } from "../ui/minimalTheme";
-import { fadeIn, FONT_BODY, FONT_MONO, FONT_TITLE, PALETTE } from "../ui/visualConstants";
+import { fadeIn, FONT_BODY, FONT_MONO, FONT_TITLE, PALETTE, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getAudioSystem, getRunSummary, getSaveData, setSaveData } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
@@ -89,6 +89,32 @@ const TEN_RESULT_SLOT_LAYOUTS = [
   { slotX: 243.8, slotY: -4.7, labelX: 247.2, labelY: 42.5 },
   { slotX: 308.3, slotY: -4.7, labelX: 312.5, labelY: 43.3 }
 ] as const;
+
+/** 卷轴式结果演出：纸面尺寸 / 木轴参数 / 展开与合拢时长（方向D d-scripture 原型）。 */
+const SCROLL_RESULT_LAYOUT = {
+  y: 420,
+  paperHeight: 150,
+  singlePaperWidth: 560,
+  tenPaperWidth: 780,
+  rodWidth: 24,
+  /** 轴身超出纸面上下缘的长度 */
+  rodOverhang: 8,
+  /** 展开到位后轴心超出纸面左右缘的距离 */
+  rodBeyondEdge: 9,
+  openMs: 380,
+  closeMs: 260,
+  /** 落墨前的全黑墨色 */
+  inkTint: 0x1a1f1a
+} as const;
+
+type ScrollRig = {
+  container: Phaser.GameObjects.Container;
+  paper: Phaser.GameObjects.Image;
+  leftRod: Phaser.GameObjects.Image;
+  rightRod: Phaser.GameObjects.Image;
+  width: number;
+  rodOffset: number;
+};
 
 const META_UPGRADES: MetaUpgradeDefinition[] = [
   {
@@ -225,6 +251,9 @@ export class ScriptureScene extends Phaser.Scene {
   private selectedLayoutHandle?: LayoutTunerHandle;
   private revealTimers: Phaser.Time.TimerEvent[] = [];
   private tenRevealEntries: TenRevealEntry[] = [];
+  private scrollRig?: ScrollRig;
+  private resultContent?: Phaser.GameObjects.Container;
+  private resultClosing = false;
 
   constructor() {
     super(SCENE_KEYS.scripture);
@@ -250,6 +279,9 @@ export class ScriptureScene extends Phaser.Scene {
   private renderView(): void {
     this.content?.destroy(true);
     this.resultPanel = undefined;
+    this.scrollRig = undefined;
+    this.resultContent = undefined;
+    this.resultClosing = false;
     this.debugOverlay = undefined;
     this.pullButtons = [];
     this.statusText = undefined;
@@ -331,38 +363,6 @@ export class ScriptureScene extends Phaser.Scene {
       ease: Phaser.Math.Easing.Sine.InOut
     });
     value.once(Phaser.GameObjects.Events.DESTROY, () => pulse.remove());
-  }
-
-  /**
-   * 分区小标题：FONT_BODY 13px 次级色文字 + 左右 1px 芥金 hairline 延伸。
-   * 返回对象数组，由调用方决定挂到 content 还是结果面板；backing 用于压住面板描边。
-   */
-  private createSectionHeaderObjects(
-    label: string,
-    centerX: number,
-    y: number,
-    totalWidth: number,
-    options?: { backing?: boolean }
-  ): Phaser.GameObjects.GameObject[] {
-    const text = this.add.text(centerX, y, label, {
-      color: PALETTE.textSecondary,
-      fontFamily: FONT_BODY,
-      fontSize: "13px"
-    }).setOrigin(0.5).setResolution(2);
-    const objects: Phaser.GameObjects.GameObject[] = [];
-    if (options?.backing) {
-      objects.push(this.add.rectangle(centerX, y, text.displayWidth + 16, 16, PALETTE.panelBg, 0.92));
-    }
-    objects.push(text);
-    const gap = 10;
-    const lineWidth = Math.floor(totalWidth / 2 - text.displayWidth / 2 - gap);
-    if (lineWidth > 0) {
-      objects.push(
-        this.add.rectangle(centerX - text.displayWidth / 2 - gap - lineWidth / 2, y, lineWidth, 1, PALETTE.accentGold, 0.35),
-        this.add.rectangle(centerX + text.displayWidth / 2 + gap + lineWidth / 2, y, lineWidth, 1, PALETTE.accentGold, 0.35)
-      );
-    }
-    return objects;
   }
 
   private drawMetaView(): void {
@@ -676,55 +676,288 @@ export class ScriptureScene extends Phaser.Scene {
     });
     this.destroyLayoutTunerOverlay();
     this.resultPanel?.destroy(true);
+    this.resultClosing = false;
+    this.scrollRig = undefined;
+    this.resultContent = undefined;
     this.pendingLayoutTargets = [];
     this.resultHiddenObjects.forEach((gameObject) => gameObject.setVisible(false));
     this.clearRevealState();
     const isTen = results.length > 1;
-    const panelWidth = isTen ? getSafePanelWidth(this, 800) : getSafePanelWidth(this, 640, 80);
-    const panelHeight = 140;
-    const y = 424;
-    const panelKey = isTen ? "ui_panel_scripture_result_ten" : "ui_panel_scripture_result_single";
-    // 面板底防御链：专用结果贴图 → ui_panel_modal 九宫格 → 描金矩形
-    let background: Phaser.GameObjects.Image | Phaser.GameObjects.NineSlice | Phaser.GameObjects.Rectangle;
-    if (this.textures.exists(panelKey)) {
-      background = this.add.image(0, 0, panelKey).setDisplaySize(panelWidth, panelHeight);
-    } else if (this.textures.exists("ui_panel_modal")) {
-      background = this.add.nineslice(0, 0, "ui_panel_modal", undefined, panelWidth, panelHeight, 45, 45, 45, 45).setOrigin(0.5);
-    } else {
-      background = this.add.rectangle(0, 0, panelWidth, panelHeight, 0x11140f, 0.93).setStrokeStyle(2, 0xd6c28d, 0.72);
-    }
-    background.setInteractive(new Phaser.Geom.Rectangle(0, 0, panelWidth, panelHeight), Phaser.Geom.Rectangle.Contains);
-    if (background.input) {
-      background.input.cursor = "pointer";
-    }
-    background.on(Phaser.Input.Events.POINTER_DOWN, () => this.dismissResultPanel());
-    const children: Phaser.GameObjects.GameObject[] = [background];
-    // 分区小标题"所得"：压在面板顶边上（backing 遮描边），样式同"掉落概览"
-    children.push(...this.createSectionHeaderObjects("所得", 0, -66, 200, { backing: true }));
+    const paperWidth = isTen
+      ? getSafePanelWidth(this, SCROLL_RESULT_LAYOUT.tenPaperWidth)
+      : getSafePanelWidth(this, SCROLL_RESULT_LAYOUT.singlePaperWidth, 80);
+    const paperHeight = SCROLL_RESULT_LAYOUT.paperHeight;
+    const headerY = -(paperHeight / 2 + 26);
 
+    // 卷轴演出骨架：纸面（贴图或程序化兜底）+ 左右木轴 + 全卷点击收回热区
+    const rig = this.createScrollRig(paperWidth, paperHeight);
+    this.scrollRig = rig;
+
+    // "所得"小标题：卷面上方小字（不再压面板顶边）
+    const header = this.add.text(0, headerY, "所得", {
+      color: PALETTE.legacyGoldCss,
+      fontFamily: FONT_TITLE,
+      fontSize: "15px",
+      letterSpacing: 8
+    }).setOrigin(0.5).setResolution(2);
+
+    const contentChildren: Phaser.GameObjects.GameObject[] = [header];
     if (isTen) {
-      children.push(...this.createTenResultCards(results));
-      children.push(this.createSkipRevealText(panelWidth));
+      contentChildren.push(...this.createTenResultCards(results));
+      contentChildren.push(this.createSkipRevealText(paperWidth));
     } else {
-      children.push(...this.createSingleResultCard(results[0]));
+      contentChildren.push(...this.createSingleResultCard(results[0]));
     }
-    children.push(this.createResultContinueText(panelWidth));
+    contentChildren.push(this.createResultContinueText(paperWidth));
+    this.resultContent = this.add.container(0, 0, contentChildren);
 
-    this.resultPanel = this.add.container(this.scale.width / 2, y, children);
+    this.resultPanel = this.add.container(this.scale.width / 2, SCROLL_RESULT_LAYOUT.y, [rig.container, this.resultContent]);
     this.content?.add(this.resultPanel);
     this.refreshLayoutTunerOverlay();
+
+    // 展开：纸面自中央向左右拉开，两轴同步外滚（380ms Cubic.out）
+    const state = { t: 0 };
+    const openTween = this.tweens.add({
+      targets: state,
+      t: 1,
+      duration: SCROLL_RESULT_LAYOUT.openMs,
+      ease: Phaser.Math.Easing.Cubic.Out,
+      onUpdate: () => this.applyScrollOpen(rig, state.t),
+      onComplete: () => this.applyScrollOpen(rig, 1)
+    });
+    rig.container.once(Phaser.GameObjects.Events.DESTROY, () => openTween.remove());
     if (isTen) {
-      this.startTenReveal(results);
+      // 展开到位后按既有错峰节奏逐槽翻面（跳过逻辑不变）
+      this.revealTimers.push(this.time.delayedCall(SCROLL_RESULT_LAYOUT.openMs, () => this.startTenReveal(results)));
     }
   }
 
+  /** 结果关闭：内容淡出，卷轴向中合拢收回（260ms）后再销毁面板。 */
   private dismissResultPanel(): void {
+    if (!this.resultPanel || this.resultClosing) {
+      return;
+    }
     this.destroyLayoutTunerOverlay();
     this.clearRevealState();
+    const rig = this.scrollRig;
+    if (!rig) {
+      this.teardownResultPanel();
+      return;
+    }
+    this.resultClosing = true;
+    if (this.resultContent) {
+      this.tweens.add({
+        targets: this.resultContent,
+        alpha: 0,
+        duration: 180,
+        ease: Phaser.Math.Easing.Linear
+      });
+    }
+    const state = { t: 1 };
+    const closeTween = this.tweens.add({
+      targets: state,
+      t: 0,
+      duration: SCROLL_RESULT_LAYOUT.closeMs,
+      ease: Phaser.Math.Easing.Cubic.In,
+      onUpdate: () => this.applyScrollOpen(rig, Math.max(state.t, 0.004)),
+      onComplete: () => this.teardownResultPanel()
+    });
+    rig.container.once(Phaser.GameObjects.Events.DESTROY, () => closeTween.remove());
+  }
+
+  private teardownResultPanel(): void {
+    this.resultClosing = false;
+    this.scrollRig = undefined;
+    this.resultContent = undefined;
     this.resultPanel?.destroy(true);
     this.resultPanel = undefined;
     this.pendingLayoutTargets = [];
     this.resultHiddenObjects.forEach((gameObject) => gameObject.setVisible(true));
+  }
+
+  /** 组装卷轴：纸面 Image（可裁宽）+ 左右木轴 + 点击收回热区，初始为合拢态。 */
+  private createScrollRig(paperWidth: number, paperHeight: number): ScrollRig {
+    const paperKey = this.ensureScrollPaperTexture(Math.round(paperWidth), paperHeight);
+    const rodKey = this.ensureScrollRodTexture(paperHeight);
+    const rodHeight = paperHeight + SCROLL_RESULT_LAYOUT.rodOverhang * 2 + 14;
+    const paper = this.add.image(0, 0, paperKey).setDisplaySize(paperWidth, paperHeight);
+    const leftRod = this.add.image(0, 0, rodKey).setDisplaySize(SCROLL_RESULT_LAYOUT.rodWidth, rodHeight);
+    const rightRod = this.add.image(0, 0, rodKey).setDisplaySize(SCROLL_RESULT_LAYOUT.rodWidth, rodHeight);
+    const hit = this.add.rectangle(0, 0, paperWidth + 72, rodHeight + 24, 0xffffff, 0.001)
+      .setInteractive({ useHandCursor: true });
+    hit.on(Phaser.Input.Events.POINTER_DOWN, () => this.dismissResultPanel());
+    const container = this.add.container(0, 0, [paper, leftRod, rightRod, hit]);
+    const rig: ScrollRig = {
+      container,
+      paper,
+      leftRod,
+      rightRod,
+      width: paperWidth,
+      rodOffset: SCROLL_RESULT_LAYOUT.rodBeyondEdge
+    };
+    this.applyScrollOpen(rig, 0.004);
+    return rig;
+  }
+
+  /** 展开进度 t（0→1）：纸面以中心裁宽实现"展开"感，两轴从中心叠合随 t 外滚分离。 */
+  private applyScrollOpen(rig: ScrollRig, t: number): void {
+    const ratio = Phaser.Math.Clamp(t, 0.004, 1);
+    const frame = rig.paper.frame;
+    const cropWidth = Math.max(1, frame.width * ratio);
+    rig.paper.setCrop((frame.width - cropWidth) / 2, 0, cropWidth, frame.height);
+    const rodX = (rig.width * ratio) / 2 + rig.rodOffset * ratio;
+    rig.leftRod.setX(-rodX);
+    rig.rightRod.setX(rodX);
+  }
+
+  /** 纸面贴图：优先并行代理注册的 ui_scroll_paper；缺失时程序化生成圆角纸色兜底。 */
+  private ensureScrollPaperTexture(width: number, height: number): string {
+    if (this.textures.exists("ui_scroll_paper")) {
+      return "ui_scroll_paper";
+    }
+    const key = `gen_scroll_paper_${width}x${height}`;
+    if (!this.textures.exists(key)) {
+      this.createFallbackPaperTexture(key, width, height);
+    }
+    return key;
+  }
+
+  /** 木轴贴图：优先 ui_scroll_rod；缺失时程序化生成棕色圆柱 + 芥金轴头兜底。 */
+  private ensureScrollRodTexture(paperHeight: number): string {
+    if (this.textures.exists("ui_scroll_rod")) {
+      return "ui_scroll_rod";
+    }
+    const rodHeight = paperHeight + SCROLL_RESULT_LAYOUT.rodOverhang * 2 + 14;
+    const key = `gen_scroll_rod_${SCROLL_RESULT_LAYOUT.rodWidth}x${rodHeight}`;
+    if (!this.textures.exists(key)) {
+      this.createFallbackRodTexture(key, SCROLL_RESULT_LAYOUT.rodWidth, rodHeight);
+    }
+    return key;
+  }
+
+  /** 兜底纸面：#f2ecdc 圆角微渐变 + 两端轴影 + 纸丝横纹 + 芥金细描边。 */
+  private createFallbackPaperTexture(key: string, width: number, height: number): void {
+    const g = this.add.graphics();
+    // 纵向微渐变（上略亮、下略沉）
+    g.fillGradientStyle(0xf6f0e0, 0xf6f0e0, 0xe9ddba, 0xe9ddba, 1);
+    g.fillRoundedRect(0, 0, width, height, 4);
+    // 左右两端轴卷压影
+    const shade = Math.min(56, Math.floor(width * 0.1));
+    g.fillGradientStyle(0x5a4018, 0x5a4018, 0x5a4018, 0x5a4018, 0.16, 0, 0.16, 0);
+    g.fillRect(0, 0, shade, height);
+    g.fillGradientStyle(0x5a4018, 0x5a4018, 0x5a4018, 0x5a4018, 0, 0.16, 0, 0.16);
+    g.fillRect(width - shade, 0, shade, height);
+    // 宣纸细丝
+    g.lineStyle(1, 0x8a6f3c, 0.05);
+    for (let y = 5; y < height - 3; y += 5) {
+      g.lineBetween(6, y, width - 6, y);
+    }
+    // 上高光 / 下暗影
+    g.fillStyle(0xfffdf2, 0.55);
+    g.fillRect(3, 1, width - 6, 1);
+    g.fillStyle(0x8a6f3c, 0.22);
+    g.fillRect(3, height - 2, width - 6, 1);
+    // 芥金细描边
+    g.lineStyle(1, 0xa99a20, 0.3);
+    g.strokeRoundedRect(0.5, 0.5, width - 1, height - 1, 4);
+    g.generateTexture(key, width, height);
+    g.destroy();
+  }
+
+  /** 兜底木轴：深棕圆柱（左暗→中亮→右暗）+ 上下芥金轴头圆珠。 */
+  private createFallbackRodTexture(key: string, width: number, height: number): void {
+    const g = this.add.graphics();
+    const bodyInset = 3;
+    const bodyW = width - bodyInset * 2;
+    // 轴身底色 + 水平圆柱光泽
+    g.fillStyle(0x4a3423, 1);
+    g.fillRoundedRect(bodyInset, 9, bodyW, height - 18, bodyW / 2);
+    g.fillGradientStyle(0x160f09, 0x6a4c32, 0x160f09, 0x6a4c32, 1);
+    g.fillRect(bodyInset + 1, 10, bodyW / 2 - 1, height - 20);
+    g.fillGradientStyle(0x6a4c32, 0x241a10, 0x6a4c32, 0x241a10, 1);
+    g.fillRect(bodyInset + bodyW / 2, 10, bodyW / 2 - 1, height - 20);
+    // 轴身中线高光
+    g.fillStyle(0x8a6844, 0.5);
+    g.fillRect(width / 2 - 2, 12, 2, height - 24);
+    // 芥金轴头（上 / 下圆珠 + 高光点）
+    [7, height - 7].forEach((cy) => {
+      g.fillStyle(0x8a7018, 1);
+      g.fillCircle(width / 2, cy, 6);
+      g.fillStyle(0xd8bd55, 1);
+      g.fillCircle(width / 2, cy, 4.6);
+      g.fillStyle(0xf0d98a, 1);
+      g.fillCircle(width / 2 - 1.4, cy - 1.6, 1.7);
+    });
+    g.generateTexture(key, width, height);
+    g.destroy();
+  }
+
+  /**
+   * 单抽落墨：图标先全黑（墨色）→ alpha 0→1 + 微缩放 Back.easeOut，墨色 200ms 内褪为显色；
+   * 名称/明细错峰落墨；稀有度闪光、elite/epic goldBurst、保底粒子沿用原反馈链。
+   */
+  private revealSingleResultInk(
+    result: ScripturePullResult,
+    slot: Phaser.GameObjects.Container,
+    title: Phaser.GameObjects.Text,
+    postRevealObjects: Array<Phaser.GameObjects.Text | Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle>
+  ): void {
+    slot.setAlpha(1);
+    const icon = slot.getData("icon") as Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle | undefined;
+    if (icon) {
+      const baseScaleX = icon.scaleX;
+      const baseScaleY = icon.scaleY;
+      icon.setVisible(true);
+      icon.setAlpha(0).setScale(baseScaleX * 0.82, baseScaleY * 0.82);
+      this.tweens.add({
+        targets: icon,
+        alpha: 1,
+        scaleX: baseScaleX,
+        scaleY: baseScaleY,
+        duration: 340,
+        ease: Phaser.Math.Easing.Back.Out
+      });
+      if (icon instanceof Phaser.GameObjects.Image) {
+        icon.setTint(SCROLL_RESULT_LAYOUT.inkTint);
+        const inkFrom = Phaser.Display.Color.IntegerToColor(SCROLL_RESULT_LAYOUT.inkTint);
+        const inkTo = Phaser.Display.Color.IntegerToColor(0xffffff);
+        const mix = { t: 0 };
+        this.tweens.add({
+          targets: mix,
+          t: 1,
+          duration: 200,
+          delay: 90,
+          ease: Phaser.Math.Easing.Linear,
+          onUpdate: () => {
+            const c = Phaser.Display.Color.Interpolate.ColorWithColor(inkFrom, inkTo, 100, Math.floor(mix.t * 100));
+            icon.setTint(Phaser.Display.Color.GetColor(c.r, c.g, c.b));
+          },
+          onComplete: () => (icon as Phaser.GameObjects.Image).clearTint()
+        });
+      }
+    }
+    [title, ...postRevealObjects].forEach((gameObject, index) => {
+      gameObject.setVisible(true);
+      gameObject.setAlpha(0).setScale(0.94);
+      this.tweens.add({
+        targets: gameObject,
+        alpha: 1,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 300,
+        delay: 60 + index * 60,
+        ease: Phaser.Math.Easing.Back.Out
+      });
+    });
+    const juice = JuiceSystem.get(this);
+    juice.rarityFlash(result.reward.rarity);
+    if (result.reward.rarity === "elite" || result.reward.rarity === "epic") {
+      const world = this.getSlotWorldPosition(slot);
+      juice.goldBurst(world.x, world.y, 42);
+    }
+    if (result.pityTriggered) {
+      this.revealTimers.push(this.time.delayedCall(420, () => this.addPityFx(slot, title)));
+    }
   }
 
   /** 清理进行中的揭示动画状态（定时器/十连条目/翻面 Tween）。 */
@@ -809,6 +1042,8 @@ export class ScriptureScene extends Phaser.Scene {
     const slot = this.createTunableRewardSlot("single.rewardSlot", result.reward.iconKey, result.reward.rarity, -261.8, 1.4, 58, 82);
     objects.push(slot);
     this.setSlotIconVisible(slot, false);
+    // 卷轴展开期间整槽隐藏，展开到位后落墨显现
+    slot.setAlpha(0);
 
     const rarityText = `${RARITY_LABELS[result.reward.rarity]}  ${result.reward.title} x${result.reward.amount}`;
     const title = this.registerLayoutTunerTarget("single.title", this.add.text(-185.7, 0, rarityText, {
@@ -848,14 +1083,9 @@ export class ScriptureScene extends Phaser.Scene {
     }
 
     postRevealObjects.forEach((gameObject) => gameObject.setVisible(false));
-    this.revealTimers.push(this.time.delayedCall(280, () => {
-      this.flipSlot(slot, result.reward.rarity, true, () => {
-        title.setVisible(true);
-        postRevealObjects.forEach((gameObject) => gameObject.setVisible(true));
-        if (result.pityTriggered) {
-          this.addPityFx(slot, title);
-        }
-      });
+    // 卷轴展开到位后落墨显现（保底粒子/稀有度反馈在 revealSingleResultInk 内承接）
+    this.revealTimers.push(this.time.delayedCall(SCROLL_RESULT_LAYOUT.openMs + 90, () => {
+      this.revealSingleResultInk(result, slot, title, postRevealObjects);
     }));
 
     return objects;
@@ -892,6 +1122,8 @@ export class ScriptureScene extends Phaser.Scene {
     const slot = this.createTunableRewardSlot(`${prefix}.slot`, result.reward.iconKey, result.reward.rarity, slotX, slotY, 40, 52);
     objects.push(slot);
     this.setSlotIconVisible(slot, false);
+    // 卷轴展开期间整槽隐藏，翻面揭示时再亮起
+    slot.setAlpha(0);
     const label = result.duplicate ? "补偿" : result.pityTriggered ? "保底" : RARITY_LABELS[result.reward.rarity];
     const labelText = this.registerLayoutTunerTarget(`${prefix}.label`, this.add.text(labelX, labelY, label, {
       color: result.duplicate || result.pityTriggered ? "#f6d472" : RARITY_COLORS[result.reward.rarity],
@@ -926,6 +1158,11 @@ export class ScriptureScene extends Phaser.Scene {
         return;
       }
       getAudioSystem(this).playPlaceholder("ui_click");
+      // 「局外成长」路由到经脉图场景（墨晕 B 转场）；本页保留翻阅秘籍视图
+      if (view === "meta") {
+        transitionTo(this, SCENE_KEYS.meridian, { returnTo: "scripture" });
+        return;
+      }
       this.activeView = view;
       this.renderView();
     });
@@ -1051,6 +1288,7 @@ export class ScriptureScene extends Phaser.Scene {
       return;
     }
     entry.revealed = true;
+    entry.slot.setAlpha(1);
     if (instant) {
       this.tweens.killTweensOf(entry.slot);
       entry.slot.setScale(1, 1);
@@ -1070,9 +1308,9 @@ export class ScriptureScene extends Phaser.Scene {
     });
   }
 
-  /** 跳过热区：立即补全所有未揭示格。 */
+  /** 跳过热区：卷面上方右侧小字；立即补全所有未揭示格。 */
   private createSkipRevealText(panelWidth: number): Phaser.GameObjects.Text {
-    const text = this.add.text(panelWidth / 2 - 56, -84, "跳过", {
+    const text = this.add.text(panelWidth / 2 - 30, -(SCROLL_RESULT_LAYOUT.paperHeight / 2 + 26), "跳过", {
       color: "#d6c28d",
       fontFamily: FONT_BODY,
       fontSize: "15px",
@@ -1123,7 +1361,7 @@ export class ScriptureScene extends Phaser.Scene {
   }
 
   private createResultContinueText(_panelWidth: number): Phaser.GameObjects.Text {
-    const text = this.add.text(0, -84, "继续", {
+    const text = this.add.text(0, SCROLL_RESULT_LAYOUT.paperHeight / 2 + 24, "继续", {
       color: "#f7f0d0",
       fontFamily: FONT_BODY,
       fontSize: "16px",

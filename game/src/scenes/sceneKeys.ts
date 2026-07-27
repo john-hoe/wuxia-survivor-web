@@ -7,5 +7,6 @@ export const SCENE_KEYS = {
   settings: "SettingsScene",
   deathTransition: "DeathTransitionScene",
   result: "ResultScene",
-  scripture: "ScriptureScene"
+  scripture: "ScriptureScene",
+  meridian: "MeridianScene"
 } as const;

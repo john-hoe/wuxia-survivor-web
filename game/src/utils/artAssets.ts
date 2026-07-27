@@ -128,6 +128,9 @@ import iconScrollUrl from "../assets/ui/icon_scroll.png";
 import iconSfxUrl from "../assets/ui/icon_sfx.png";
 import iconSwordUrl from "../assets/ui/icon_sword.png";
 import titleBannerUrl from "../assets/ui/title_banner.png";
+import uiScrollPaperUrl from "../assets/ui/ui_scroll_paper.png";
+import uiScrollRodUrl from "../assets/ui/ui_scroll_rod.png";
+import uiScrollCordUrl from "../assets/ui/ui_scroll_cord.png";
 
 export const artAssetUrls = {
   bamboo_edge_cluster: bambooEdgeClusterUrl,
@@ -256,6 +259,9 @@ export const artAssetUrls = {
   icon_sfx: iconSfxUrl,
   icon_sword: iconSwordUrl,
   title_banner: titleBannerUrl,
+  ui_scroll_paper: uiScrollPaperUrl,
+  ui_scroll_rod: uiScrollRodUrl,
+  ui_scroll_cord: uiScrollCordUrl,
   wood_stake_flag: woodStakeFlagUrl
 } satisfies Record<string, string>;
 
