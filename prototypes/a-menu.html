@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>方向A · 主菜单 · 青石山道</title>
+<link rel="stylesheet" href="a-common.css">
+<style>
+  /* ---------- 布局 ---------- */
+  .menu-panel{
+    left:245px; top:106px; width:470px; height:322px;
+    padding:46px 0 0;
+  }
+  .menu-plaque{ top:54px; }
+  .menu-plaque h1{ font-size:46px; letter-spacing:10px; padding-left:10px; }
+  .menu-plaque .seal{ width:25px; height:25px; font-size:16px; }
+
+  /* ---------- 统计行 ---------- */
+  .stats{
+    display:flex; justify-content:center; align-items:center;
+  }
+  .stat{ display:flex; align-items:center; gap:8px; padding:0 26px; }
+  .stat + .stat{ border-left:1px solid rgba(26,31,26,.14); }
+  .stat img{ width:17px; height:17px; }
+  .stat .k{ font-size:11.5px; color:var(--sub); letter-spacing:2px; }
+  .stat .v{ font:700 15px 'Noto Serif SC',serif; color:var(--ink); letter-spacing:.5px; }
+
+  .menu-panel .div{ margin:15px 46px 6px; }
+
+  /* ---------- 菜单行 ---------- */
+  .mrows{ margin:0 34px; }
+  .mrow{
+    position:relative; height:53px;
+    display:flex; align-items:center; justify-content:center;
+    border-bottom:1px solid rgba(26,31,26,.12);
+  }
+  .mrow:last-child{ border-bottom:none; }
+  .mtxt{
+    position:relative; z-index:2;
+    font-family:'Ma Shan Zheng',serif; font-size:24px;
+    letter-spacing:9px; padding-left:9px;
+    color:#31362e; line-height:1;
+  }
+  /* 主 CTA · hover 态示范 */
+  .mrow.hot .mtxt{ color:#10150e; font-size:25px; }
+  .mrow.hot .mtxt::after{
+    content:''; position:absolute; left:4%; right:4%; bottom:-6px; height:2.5px;
+    background:linear-gradient(90deg,transparent,#8a7a20 20%,#d8c061 50%,#8a7a20 80%,transparent);
+    border-radius:2px;
+  }
+  .mrow .wash{
+    position:absolute; left:50%; top:50%; z-index:1;
+    width:255px; height:40px; transform:translate(-50%,-50%);
+    background:radial-gradient(50% 50% at 50% 50%, rgba(125,155,118,.38), rgba(125,155,118,0) 74%);
+  }
+  .mrow .bi{ position:absolute; left:58px; top:50%; transform:translateY(-50%); z-index:2; }
+
+  /* ---------- 少侠 ---------- */
+  .hero{ left:50%; bottom:10px; transform:translateX(-50%) scale(1.28); transform-origin:bottom center; }
+  .herosh{ left:50%; bottom:12px; transform:translateX(-50%); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="scene">
+    <div class="sky"></div>
+    <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png">
+    <div class="ground"></div>
+    <img class="bamboo b2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png">
+    <img class="bamboo b4" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png">
+    <img class="bamboo b1" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png">
+    <img class="bamboo b3" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png">
+    <div class="vignette"></div>
+  </div>
+
+  <div class="panel menu-panel">
+    <span class="corner c-tl"><svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M31 3.5 H3.5 V31" stroke="#a8912f" stroke-width="2.3"/><path d="M22.5 9.5 H9.5 V22.5" stroke="#a8912f" stroke-width="1.6"/><path d="M16.5 14.5 H13.5 V17.5" stroke="#a8912f" stroke-width="1.3"/></svg></span>
+    <span class="corner c-tr"><svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M31 3.5 H3.5 V31" stroke="#a8912f" stroke-width="2.3"/><path d="M22.5 9.5 H9.5 V22.5" stroke="#a8912f" stroke-width="1.6"/><path d="M16.5 14.5 H13.5 V17.5" stroke="#a8912f" stroke-width="1.3"/></svg></span>
+    <span class="corner c-bl"><svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M31 3.5 H3.5 V31" stroke="#a8912f" stroke-width="2.3"/><path d="M22.5 9.5 H9.5 V22.5" stroke="#a8912f" stroke-width="1.6"/><path d="M16.5 14.5 H13.5 V17.5" stroke="#a8912f" stroke-width="1.3"/></svg></span>
+    <span class="corner c-br"><svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M31 3.5 H3.5 V31" stroke="#a8912f" stroke-width="2.3"/><path d="M22.5 9.5 H9.5 V22.5" stroke="#a8912f" stroke-width="1.6"/><path d="M16.5 14.5 H13.5 V17.5" stroke="#a8912f" stroke-width="1.3"/></svg></span>
+
+    <div class="stats">
+      <div class="stat"><img class="inkicon" src="../game/src/assets/ui/icon_coin.png"><span class="k">铜钱</span><span class="v">0</span></div>
+      <div class="stat"><img class="inkicon" src="../game/src/assets/ui/icon_hourglass.png"><span class="k">最高存活</span><span class="v">0s</span></div>
+      <div class="stat"><img class="inkicon" src="../game/src/assets/ui/icon_kill.png"><span class="k">最高击杀</span><span class="v">0</span></div>
+    </div>
+
+    <div class="div"><i></i></div>
+
+    <nav class="mrows">
+      <div class="mrow hot"><span class="wash"></span><span class="bi"></span><span class="mtxt">开始闯荡</span></div>
+      <div class="mrow"><span class="mtxt">翻阅秘籍</span></div>
+      <div class="mrow"><span class="mtxt">设置</span></div>
+    </nav>
+  </div>
+
+  <div class="plaque menu-plaque"><h1>青石山道</h1><span class="seal">侠</span></div>
+
+  <div class="herosh"></div>
+  <div class="hero"><img src="../game/src/assets/sprites/hero_shaoxia_idle.png"></div>
+</div>
+</body>
+</html>

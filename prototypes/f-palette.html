@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>小样 F · 技能特效配色语义板</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ background:#0a0f0c; }
+  body{
+    min-height:100%;
+    display:flex; flex-direction:column; align-items:center;
+    font-family:'Noto Sans SC',sans-serif; color:#e8e2d2;
+    padding:34px 24px 40px;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- 页眉 ---------- */
+  header{ text-align:center; margin-bottom:26px; }
+  header h1{
+    font-family:'Ma Shan Zheng','Kaiti SC','STKaiti',serif; font-weight:400;
+    font-size:38px; letter-spacing:6px; color:#f0ead8;
+  }
+  header h1 .seal{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:30px; height:30px; margin-left:12px; vertical-align:6px;
+    background:linear-gradient(155deg,#c53a30 0%,#b03028 55%,#9c2820 100%);
+    color:#fdf4e2; font-size:19px; letter-spacing:0;
+    border-radius:4px; transform:rotate(-3deg) translateY(1px);
+    box-shadow:inset 0 0 4px rgba(255,235,210,.35), inset 0 -2px 3px rgba(90,10,5,.4), 0 1px 2px rgba(20,26,18,.35);
+  }
+  header p{ margin-top:10px; font-size:12.5px; letter-spacing:2.5px; color:#8a8578; }
+
+  /* ---------- 三列 ---------- */
+  .board{ display:flex; gap:20px; }
+  .col{
+    width:344px; padding:14px 12px 14px;
+    background:#101713;
+    border:1px solid rgba(169,154,32,.18); border-radius:8px;
+  }
+  .col .chead{ display:flex; align-items:center; gap:10px; margin-bottom:11px; }
+  .chead .dot{
+    flex:0 0 auto; width:14px; height:14px; border-radius:50%;
+    box-shadow:0 0 8px 1px currentColor;
+  }
+  .chead .name{
+    font-family:'Ma Shan Zheng','Kaiti SC','STKaiti',serif;
+    font-size:23px; letter-spacing:3px; line-height:1;
+  }
+  .chead .sem{
+    margin-left:auto; flex:0 0 auto;
+    font-size:10.5px; letter-spacing:1.5px; color:#a99a20;
+    border:1px solid rgba(169,154,32,.4); border-radius:4px;
+    padding:3px 9px;
+  }
+
+  /* ---------- 特效示范舞台 ---------- */
+  .fx{
+    position:relative; width:320px; height:190px; margin:0 auto;
+    overflow:hidden; border-radius:4px;
+    outline:1px solid rgba(169,154,32,.14);
+    background:
+      radial-gradient(120% 90% at 50% 10%, #131b15 0%, #0b110d 55%, #060a08 100%);
+  }
+  .fx .grid{
+    position:absolute; left:0; right:0; bottom:0; height:56px;
+    background:url('../game/src/assets/backgrounds/ground_qingshi_base.png') repeat;
+    background-size:150px; opacity:.28;
+    -webkit-mask-image:linear-gradient(to top,#000 40%,transparent 100%);
+            mask-image:linear-gradient(to top,#000 40%,transparent 100%);
+  }
+
+  /* === 青白剑气 · 剑气条 === */
+  .slash{ position:absolute; left:50%; top:46%; width:0; height:0; transform:rotate(-14deg); }
+  .slash .glow{
+    position:absolute; left:-132px; top:-16px; width:264px; height:32px;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(124,196,245,.55), rgba(124,196,245,0) 72%);
+    filter:blur(6px);
+  }
+  .slash .mid{
+    position:absolute; left:-126px; top:-5px; width:252px; height:10px;
+    background:linear-gradient(90deg, rgba(191,232,255,0) 0%, #7cc4f5 22%, #bfe8ff 50%, #7cc4f5 78%, rgba(191,232,255,0) 100%);
+    clip-path:polygon(0 50%, 7% 0, 93% 0, 100% 50%, 93% 100%, 7% 100%);
+    filter:blur(2.5px);
+  }
+  .slash .core{
+    position:absolute; left:-118px; top:-1.5px; width:236px; height:3px;
+    background:linear-gradient(90deg, rgba(234,247,255,0) 0%, #eaf7ff 20%, #ffffff 50%, #eaf7ff 80%, rgba(234,247,255,0) 100%);
+    clip-path:polygon(0 50%, 5% 0, 95% 0, 100% 50%, 95% 100%, 5% 100%);
+    filter:blur(.4px);
+  }
+  .slash .speed{
+    position:absolute; height:1px; background:rgba(191,232,255,.38);
+    filter:blur(.4px);
+  }
+  .slash .sp1{ left:-96px; top:-14px; width:150px; }
+  .slash .sp2{ left:-64px; top:13px;  width:120px; }
+  .slash .tip{
+    position:absolute; left:104px; top:-7px; width:14px; height:14px; border-radius:50%;
+    background:radial-gradient(50% 50% at 50% 50%, #ffffff, rgba(191,232,255,.65) 42%, rgba(191,232,255,0) 74%);
+    filter:blur(1px);
+  }
+  .fx .label{
+    position:absolute; left:10px; bottom:8px;
+    font-size:10px; letter-spacing:2px; color:rgba(232,226,210,.4);
+  }
+
+  /* === 金红掌风 · 掌风弧 === */
+  .palm{ position:absolute; left:50%; top:52%; width:0; height:0; }
+  .palm .ring{
+    position:absolute; left:-92px; top:-92px; width:184px; height:184px; border-radius:50%;
+    background:conic-gradient(from 309deg,
+      rgba(209,80,46,0) 0deg, rgba(209,80,46,0) 14deg,
+      rgba(209,80,46,.55) 38deg, #f0a35e 62deg,
+      #ffe9c9 86deg, rgba(255,233,201,0) 112deg, rgba(255,233,201,0) 360deg);
+    -webkit-mask-image:radial-gradient(circle, transparent 55%, #000 61%);
+            mask-image:radial-gradient(circle, transparent 55%, #000 61%);
+    filter:blur(1.6px) drop-shadow(0 0 16px rgba(240,163,94,.45));
+  }
+  .palm .ring.echo{
+    transform:rotate(-32deg) scale(1.12); opacity:.28; filter:blur(4px);
+  }
+  .palm .heart{
+    position:absolute; left:-33px; top:-4px; width:66px; height:30px;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(255,233,201,.65), rgba(240,163,94,0) 72%);
+    filter:blur(5px);
+  }
+  .palm .ember{ position:absolute; border-radius:50%; background:#ffcf8f; filter:blur(.8px); }
+  .palm .e1{ left:58px;  top:-64px; width:3px; height:3px; opacity:.9; }
+  .palm .e2{ left:82px;  top:-34px; width:2px; height:2px; opacity:.7; }
+  .palm .e3{ left:30px;  top:-80px; width:2.5px; height:2.5px; opacity:.8; }
+  .palm .e4{ left:96px;  top:-4px;  width:2px; height:2px; opacity:.55; }
+
+  /* === 紫黑邪毒 · 毒雾团 === */
+  .venom{ position:absolute; left:50%; top:48%; width:0; height:0; }
+  .venom .blob{
+    position:absolute; border-radius:50%;
+  }
+  .venom .b1{
+    left:-80px; top:-50px; width:152px; height:106px;
+    background:radial-gradient(50% 50% at 46% 52%, rgba(138,95,191,.9), rgba(90,58,128,.42) 58%, rgba(90,58,128,0) 76%);
+    filter:blur(6px);
+  }
+  .venom .b2{
+    left:-30px; top:-64px; width:106px; height:84px;
+    background:radial-gradient(50% 50% at 52% 46%, rgba(104,70,148,.85), rgba(54,32,76,.4) 60%, rgba(54,32,76,0) 78%);
+    filter:blur(7px);
+  }
+  .venom .b3{
+    left:-98px; top:-22px; width:98px; height:66px;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(64,38,92,.9), rgba(36,18,51,.45) 62%, rgba(36,18,51,0) 80%);
+    filter:blur(6px);
+  }
+  .venom .eye{
+    left:-22px; top:-42px; width:46px; height:34px;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(196,160,255,.95), rgba(138,95,191,.4) 52%, rgba(138,95,191,0) 76%);
+    filter:blur(5px);
+  }
+  .venom .wisp{
+    position:absolute; height:9px; border-radius:50%;
+    background:linear-gradient(90deg, rgba(138,95,191,0), rgba(138,95,191,.5), rgba(138,95,191,0));
+    filter:blur(2.5px);
+  }
+  .venom .w1{ left:-104px; top:-64px; width:88px; transform:rotate(-24deg); }
+  .venom .w2{ left:22px;   top:22px;  width:76px; transform:rotate(18deg); }
+  .venom .spore{ position:absolute; border-radius:50%; background:#b78fff; filter:blur(.6px); }
+  .venom .s1{ left:-58px; top:-58px; width:2.5px; height:2.5px; opacity:.85; }
+  .venom .s2{ left:44px;  top:-12px; width:2px;   height:2px;   opacity:.7; }
+  .venom .s3{ left:10px;  top:34px;  width:2.5px; height:2.5px; opacity:.75; }
+
+  /* ---------- 色值标注 ---------- */
+  .chips{
+    display:grid; grid-template-columns:1fr 1fr; gap:6px 10px;
+    margin-top:11px; padding:10px 2px 0;
+    border-top:1px solid rgba(169,154,32,.14);
+  }
+  .chip{ display:flex; align-items:center; gap:8px; }
+  .chip i{
+    flex:0 0 auto; width:30px; height:18px; border-radius:3px;
+    border:1px solid rgba(232,226,210,.16);
+  }
+  .chip .role{ font-size:10.5px; color:#8a8578; letter-spacing:1px; width:22px; }
+  .chip .hex{ font:500 11.5px ui-monospace,'SF Mono',Menlo,monospace; color:#c8c2b2; letter-spacing:.5px; }
+
+  /* ---------- 语义说明 ---------- */
+  .desc{ margin-top:10px; padding:0 2px; }
+  .desc .use{
+    font:600 12px 'Noto Serif SC',serif; letter-spacing:1.5px; color:#d8c990;
+  }
+  .desc p{
+    margin-top:5px; font-size:11.5px; line-height:1.75; color:#9a958a;
+  }
+  .desc p b{ color:#c8c2b2; font-weight:500; }
+
+  /* ---------- 页脚原则条 ---------- */
+  footer{
+    margin-top:26px; max-width:1064px;
+    display:flex; align-items:center; gap:14px;
+    font-size:11.5px; letter-spacing:1px; color:#6a7568;
+  }
+  footer::before,footer::after{
+    content:''; flex:1; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(169,154,32,.3),transparent);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>技能特效 · 配色语义<span class="seal">色</span></h1>
+  <p>看色即懂属性 —— 方案二「剑意墨韵」地基件 · 深色底三系并排</p>
+</header>
+
+<div class="board">
+
+  <!-- ============ 青白剑气 ============ -->
+  <section class="col">
+    <div class="chead">
+      <span class="dot" style="color:#bfe8ff;background:#bfe8ff"></span>
+      <span class="name" style="color:#cfefff">青白剑气</span>
+      <span class="sem">外功剑招</span>
+    </div>
+    <div class="fx">
+      <div class="grid"></div>
+      <div class="slash">
+        <span class="glow"></span>
+        <span class="mid"></span>
+        <span class="core"></span>
+        <span class="speed sp1"></span>
+        <span class="speed sp2"></span>
+        <span class="tip"></span>
+      </div>
+      <span class="label">特效形态 · 剑气条</span>
+    </div>
+    <div class="chips">
+      <div class="chip"><i style="background:#eaf7ff"></i><span class="role">芯</span><span class="hex">#eaf7ff</span></div>
+      <div class="chip"><i style="background:#bfe8ff"></i><span class="role">主</span><span class="hex">#bfe8ff</span></div>
+      <div class="chip"><i style="background:#7cc4f5"></i><span class="role">晕</span><span class="hex">#7cc4f5</span></div>
+      <div class="chip"><i style="background:#3f6f9e"></i><span class="role">影</span><span class="hex">#3f6f9e</span></div>
+    </div>
+    <div class="desc">
+      <span class="use">适用语义 · 外功剑招</span>
+      <p>普攻飞剑 / 剑气 / 剑阵类技能统一用色。<b>冷色 = 利刃</b>，白芯表锋芒、青晕表剑势；与暖金掌风形成攻守对照。</p>
+    </div>
+  </section>
+
+  <!-- ============ 金红掌风 ============ -->
+  <section class="col">
+    <div class="chead">
+      <span class="dot" style="color:#f0a35e;background:#f0a35e"></span>
+      <span class="name" style="color:#f5c48f">金红掌风</span>
+      <span class="sem">内功掌法</span>
+    </div>
+    <div class="fx">
+      <div class="grid"></div>
+      <div class="palm">
+        <span class="ring echo"></span>
+        <span class="ring"></span>
+        <span class="heart"></span>
+        <span class="ember e1"></span>
+        <span class="ember e2"></span>
+        <span class="ember e3"></span>
+        <span class="ember e4"></span>
+      </div>
+      <span class="label">特效形态 · 掌风弧</span>
+    </div>
+    <div class="chips">
+      <div class="chip"><i style="background:#ffe9c9"></i><span class="role">芯</span><span class="hex">#ffe9c9</span></div>
+      <div class="chip"><i style="background:#f0a35e"></i><span class="role">主</span><span class="hex">#f0a35e</span></div>
+      <div class="chip"><i style="background:#d1502e"></i><span class="role">焰</span><span class="hex">#d1502e</span></div>
+      <div class="chip"><i style="background:#7a2318"></i><span class="role">影</span><span class="hex">#7a2318</span></div>
+    </div>
+    <div class="desc">
+      <span class="use">适用语义 · 内功掌法</span>
+      <p>掌法 / 拳掌 / 内劲爆发类技能统一用色。<b>暖色 = 气血内劲</b>，金芯表内力、红焰表灼热；近身爆发一眼可辨。</p>
+    </div>
+  </section>
+
+  <!-- ============ 紫黑邪毒 ============ -->
+  <section class="col">
+    <div class="chead">
+      <span class="dot" style="color:#8a5fbf;background:#8a5fbf"></span>
+      <span class="name" style="color:#b79ae0">紫黑邪毒</span>
+      <span class="sem">精英 / Boss 邪术</span>
+    </div>
+    <div class="fx">
+      <div class="grid"></div>
+      <div class="venom">
+        <span class="blob b3"></span>
+        <span class="blob b1"></span>
+        <span class="blob b2"></span>
+        <span class="blob eye"></span>
+        <span class="wisp w1"></span>
+        <span class="wisp w2"></span>
+        <span class="spore s1"></span>
+        <span class="spore s2"></span>
+        <span class="spore s3"></span>
+      </div>
+      <span class="label">特效形态 · 毒雾团</span>
+    </div>
+    <div class="chips">
+      <div class="chip"><i style="background:#b78fff"></i><span class="role">芯</span><span class="hex">#b78fff</span></div>
+      <div class="chip"><i style="background:#8a5fbf"></i><span class="role">主</span><span class="hex">#8a5fbf</span></div>
+      <div class="chip"><i style="background:#5a3a80"></i><span class="role">雾</span><span class="hex">#5a3a80</span></div>
+      <div class="chip"><i style="background:#241233"></i><span class="role">影</span><span class="hex">#241233</span></div>
+    </div>
+    <div class="desc">
+      <span class="use">适用语义 · 精英 / Boss 邪术</span>
+      <p>敌方高威胁弹幕 / 毒潭 / 诅咒统一用色。<b>紫黑 = 不可碰</b>，亮紫芯表邪力凝聚；全游戏唯一威胁色，余光即辨。</p>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <span>用色原则：玩家技能 冷青（剑）／ 暖金（掌）二分，敌方威胁一律紫黑 —— 同屏不混色相，满屏弹幕「看色即懂」 ｜ 对应方案二「配色语义」× 方案五「危险色统一」</span>
+</footer>
+
+</body>
+</html>

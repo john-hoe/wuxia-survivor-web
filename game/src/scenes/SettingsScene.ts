@@ -1,8 +1,9 @@
 import Phaser from "phaser";
+import { feedbackSettingsDefaults, shakeScaleLevels } from "../data/gameConfig";
 import type { GameSettings } from "../types";
 import { saveSystem } from "../systems/SaveSystem";
-import { createArtPanel, getSafePanelWidth } from "../ui/ArtPanel";
-import { createIconButton } from "../ui/UiButton";
+import { addMinimalBackdrop, addMinimalBackRow, addMinimalTitle, spacedText } from "../ui/minimalTheme";
+import { FONT_MONO, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getAudioSystem, getSaveData, setSaveData } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
@@ -12,21 +13,76 @@ type SettingsSceneData = {
   returnTo?: "menu" | "pause";
 };
 
-const SETTINGS_ROW_WIDTH = 552;
-const SETTINGS_ROW_HEIGHT = 46;
-const SETTINGS_LABEL_OFFSET_X = -190;
-const SETTINGS_LABEL_FONT_SIZE = "18px";
-const SETTINGS_VALUE_FONT_SIZE = "16px";
-const SETTINGS_TOGGLE_VALUE_OFFSET_X = 70;
-const SETTINGS_TOGGLE_OFFSET_X = 170;
-const SETTINGS_VOLUME_VALUE_OFFSET_X = -40;
-const SETTINGS_SLIDER_OFFSET_X = 150;
-const SETTINGS_SLIDER_WIDTH = 210;
+type VolumeKey = "musicVolume" | "sfxVolume";
+type ToggleKey = "muted" | "lowVfxMode" | "damageNumbers";
+
+type SliderRefs = {
+  graphics: Phaser.GameObjects.Graphics;
+  valueText: Phaser.GameObjects.Text;
+  trackX: number;
+  trackY: number;
+  trackWidth: number;
+};
+
+type ToggleRefs = {
+  capsule: Phaser.GameObjects.Graphics;
+  knob: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
+};
+
+/** 震屏强度三档分段控件引用：三个小字选项 + 一条选中下划线。 */
+type ShakeSegmentRefs = {
+  optionTexts: Phaser.GameObjects.Text[];
+  underline: Phaser.GameObjects.Graphics;
+  centersX: number[];
+  y: number;
+};
+
+/**
+ * 方向 C「极简碑林」：去面板化，内容浮于氛围底之上。
+ * 氛围底 / 书法标题 / 左下返回行由共享 minimalTheme 模块统一绘制；
+ * 本场景只保留滑杆 / 胶囊开关 / 三档分段三个自绘控件（按 C 规格重画），
+ * 行区 540 宽居中，行高 54（7 行纵向节奏，底部避让返回行），图标 20×20 置于标签左侧。
+ */
+const TITLE_Y = 58;
+const FIRST_ROW_Y = 150;
+const ROW_HEIGHT = 54;
+const ROW_LABEL_OFFSET_X = -270;
+const ROW_LABEL_FONT_SIZE = "16px";
+const ROW_LABEL_FONT = "'Noto Serif SC', 'Songti SC', 'SimSun', serif";
+const ROW_ICON_SIZE = 20;
+const ROW_ICON_GAP = 8;
+const SLIDER_CENTER_OFFSET_X = 86;
+const SLIDER_WIDTH = 248;
+const SLIDER_KNOB_RADIUS = 7;
+const SLIDER_VALUE_OFFSET_X = 228;
+const SLIDER_VALUE_FONT_SIZE = "13px";
+const TOGGLE_CENTER_OFFSET_X = 250;
+const TOGGLE_WIDTH = 40;
+const TOGGLE_HEIGHT = 20;
+const TOGGLE_INSET = 3;
+const TOGGLE_KNOB_RADIUS = 7;
+const TOGGLE_KNOB_TRAVEL = TOGGLE_WIDTH / 2 - TOGGLE_INSET - TOGGLE_KNOB_RADIUS;
+const TOGGLE_SLIDE_MS = 100;
+const SEGMENT_FONT_SIZE = "13px";
+const SEGMENT_OPTION_WIDTH = 56;
+const SEGMENT_GROUP_RIGHT_OFFSET_X = 270;
+const SEGMENT_UNDERLINE_WIDTH = 20;
+const SEGMENT_UNDERLINE_OFFSET_Y = 13;
+const SEGMENT_HIT_HEIGHT = 36;
+const SHAKE_OPTION_LABELS = ["无", "弱", "标准"] as const;
+const CONTENT_FADE_MS = 120;
 
 export class SettingsScene extends Phaser.Scene {
   private returnTo: "menu" | "pause" = "menu";
   private settings?: GameSettings;
   private controls?: Phaser.GameObjects.Container;
+  private sliders: Partial<Record<VolumeKey, SliderRefs>> = {};
+  private toggles: Partial<Record<ToggleKey, ToggleRefs>> = {};
+  private fullscreenToggle?: ToggleRefs;
+  private shakeSegments?: ShakeSegmentRefs;
+  private activeSliderKey?: VolumeKey;
 
   constructor() {
     super(SCENE_KEYS.settings);
@@ -41,157 +97,416 @@ export class SettingsScene extends Phaser.Scene {
     const saveData = getSaveData(this);
     this.settings = { ...saveData.settings };
     const centerX = this.scale.width / 2;
-    const panelCenterY = this.scale.height / 2 + 16;
+    const centerY = this.scale.height / 2;
 
-    this.add.rectangle(centerX, this.scale.height / 2, this.scale.width, this.scale.height, 0x0f1512, 1);
-    createArtPanel(this, "ui_panel_settings", centerX, panelCenterY, getSafePanelWidth(this, 700), 500, 0x11140f, 0.92);
-    this.add.text(centerX, 119, "设置", {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "36px",
-      fontStyle: "bold"
-    }).setOrigin(0.5);
-    createIconButton(this, centerX + 272, 119, "ui_icon_back", () => this.returnBack());
+    // 墨底压暗 + 共享氛围底（竹丛/远亭/雾气/暗角），无面板
+    this.add.rectangle(centerX, centerY, this.scale.width, this.scale.height, 0x050705, 0.66);
+    addMinimalBackdrop(this);
+    addMinimalTitle(this, "设置", TITLE_Y, 46, "设");
+
+    // 滑杆拖拽：DOWN 命中行后由场景级 MOVE/UP 持续驱动
+    this.input.on(Phaser.Input.Events.POINTER_MOVE, this.handleSliderDrag, this);
+    this.input.on(Phaser.Input.Events.POINTER_UP, this.endSliderDrag, this);
+    this.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, this.endSliderDrag, this);
+    // 全屏事件来自系统级 ScaleManager，场景关闭时必须摘除
+    this.scale.on(Phaser.Scale.Events.ENTER_FULLSCREEN, this.syncFullscreenToggle, this);
+    this.scale.on(Phaser.Scale.Events.LEAVE_FULLSCREEN, this.syncFullscreenToggle, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.input.off(Phaser.Input.Events.POINTER_MOVE, this.handleSliderDrag, this);
+      this.input.off(Phaser.Input.Events.POINTER_UP, this.endSliderDrag, this);
+      this.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, this.endSliderDrag, this);
+      this.scale.off(Phaser.Scale.Events.ENTER_FULLSCREEN, this.syncFullscreenToggle, this);
+      this.scale.off(Phaser.Scale.Events.LEAVE_FULLSCREEN, this.syncFullscreenToggle, this);
+    });
 
     this.renderControls();
+    fadeIn(this);
   }
 
   private renderControls(): void {
     this.controls?.destroy(true);
+    this.sliders = {};
+    this.toggles = {};
+    this.fullscreenToggle = undefined;
+    this.shakeSegments = undefined;
+    this.activeSliderKey = undefined;
     this.controls = this.add.container(0, 0);
 
-    this.addToggleRow("静音", "muted", 182);
-    this.addToggleRow("低 VFX", "lowVfxMode", 236);
-    this.addVolumeRow("主音量", "masterVolume", 290);
-    this.addVolumeRow("音乐音量", "musicVolume", 344);
-    this.addVolumeRow("音效音量", "sfxVolume", 398);
+    this.addVolumeRow("音乐", "musicVolume", FIRST_ROW_Y, "icon_music");
+    this.addVolumeRow("音效", "sfxVolume", FIRST_ROW_Y + ROW_HEIGHT, "icon_sfx");
+    this.addToggleRow("静音", "muted", FIRST_ROW_Y + ROW_HEIGHT * 2, "icon_mute");
+    this.addToggleRow("低特效", "lowVfxMode", FIRST_ROW_Y + ROW_HEIGHT * 3, "icon_lowvfx");
+    this.addToggleRow("伤害飘字", "damageNumbers", FIRST_ROW_Y + ROW_HEIGHT * 4, "icon_kill");
+    this.addShakeScaleRow(FIRST_ROW_Y + ROW_HEIGHT * 5, "icon_sfx");
+    this.addFullscreenRow(FIRST_ROW_Y + ROW_HEIGHT * 6);
+
+    // C 规格：左下角「← 返回」（语义不变：menu 来→transitionTo menu；pause 来→resume pause）
+    const backRow = addMinimalBackRow(this, () => this.returnBack());
+    this.controls.add(backRow.container);
+
+    // 视图切换：content 容器 120ms 淡入
+    this.controls.setAlpha(0);
+    this.tweens.add({
+      targets: this.controls,
+      alpha: 1,
+      duration: CONTENT_FADE_MS,
+      ease: Phaser.Math.Easing.Linear
+    });
   }
 
-  private addRowBackground(y: number): void {
+  /** 行图标：20×20 摆在标签左侧 8px 处；纹理缺失（并行代理未就绪）时不显示。 */
+  private addRowIcon(iconKey: string | undefined, y: number): void {
+    if (!iconKey || !this.textures.exists(iconKey)) {
+      return;
+    }
     const centerX = this.scale.width / 2;
-    const rowWidth = getSafePanelWidth(this, SETTINGS_ROW_WIDTH, 80);
-    this.addToControls(this.add.rectangle(centerX, y, rowWidth, SETTINGS_ROW_HEIGHT, 0x102019, 0.78).setStrokeStyle(1, 0x6fcfb8, 0.32));
+    const iconX = centerX + ROW_LABEL_OFFSET_X - ROW_ICON_GAP - ROW_ICON_SIZE / 2;
+    this.addToControls(this.add.image(iconX, y, iconKey).setDisplaySize(ROW_ICON_SIZE, ROW_ICON_SIZE));
   }
 
-  private addToggleRow(label: string, key: "muted" | "lowVfxMode", y: number): void {
+  /** C 规格行标签：衬线 600 + \u2009 大字距（spacedText），米白 92%。 */
+  private addRowLabel(label: string, y: number, iconKey?: string): Phaser.GameObjects.Text {
+    this.addRowIcon(iconKey, y);
+    const centerX = this.scale.width / 2;
+    return this.addToControls(
+      this.add
+        .text(centerX + ROW_LABEL_OFFSET_X, y, spacedText(label), {
+          color: "#f0ead8",
+          fontFamily: ROW_LABEL_FONT,
+          fontSize: ROW_LABEL_FONT_SIZE,
+          // Phaser TextStyle 无 fontWeight 字段；fontStyle 会拼进 CSS font shorthand，"600" 即字重
+          fontStyle: "600"
+        })
+        .setOrigin(0, 0.5)
+        .setAlpha(0.92)
+        .setShadow(0, 1, "rgba(0,0,0,0.5)", 3)
+        .setResolution(2)
+    );
+  }
+
+  private addToggleRow(label: string, key: ToggleKey, y: number, iconKey?: string): void {
     if (!this.settings) {
       return;
     }
     const centerX = this.scale.width / 2;
-    this.addRowBackground(y);
-    const enabled = this.settings[key];
-    if (key === "muted") {
-      this.addSettingIcon("ui_icon_sound", centerX - 250, y, 28, enabled ? 0.42 : 1);
-      this.addSettingIcon("ui_icon_mute", centerX - 214, y, 28, enabled ? 1 : 0.42);
-    } else {
-      this.addSettingIcon("ui_icon_low_vfx", centerX - 234, y, 30, enabled ? 1 : 0.56);
-    }
-    const labelX = centerX + SETTINGS_LABEL_OFFSET_X;
-    this.addToControls(this.add.text(labelX, y, label, {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: SETTINGS_LABEL_FONT_SIZE,
-      fontStyle: "bold"
-    }).setOrigin(0, 0.5));
-    this.addToControls(this.add.text(centerX + SETTINGS_TOGGLE_VALUE_OFFSET_X, y, enabled ? "开" : "关", {
-      color: enabled ? "#9df4cf" : "#b8b7a4",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: SETTINGS_VALUE_FONT_SIZE,
-      fontStyle: "bold"
-    }).setOrigin(0.5));
+    const toggleX = centerX + TOGGLE_CENTER_OFFSET_X;
+    this.addRowLabel(label, y, iconKey);
 
-    const textureKey = enabled ? "ui_toggle_on" : "ui_toggle_off";
-    const control = this.textures.exists(textureKey)
-      ? this.add.image(centerX + SETTINGS_TOGGLE_OFFSET_X, y, textureKey).setDisplaySize(76, 42)
-      : this.add.rectangle(centerX + SETTINGS_TOGGLE_OFFSET_X, y, 76, 42, enabled ? 0x2f7d66 : 0x26352f, 1).setStrokeStyle(2, 0xd6c28d, 0.78);
-    control.setInteractive({ useHandCursor: true });
-    control.on(Phaser.Input.Events.POINTER_DOWN, () => this.updateSetting(key));
-    this.addToControls(control);
+    // C 规格极简双线胶囊开关：40×20，白线框，on 玉色实钮居右 / off 空心钮居左
+    const capsule = this.add.graphics();
+    const knob = this.add.graphics();
+    const refs: ToggleRefs = { capsule, knob, x: toggleX, y };
+    this.toggles[key] = refs;
+    this.addToControls(capsule);
+    this.addToControls(knob);
+    this.drawToggleCapsule(refs);
+    this.drawToggleKnob(refs, this.settings[key]);
+
+    const hitArea = this.add.zone(toggleX, y, TOGGLE_WIDTH + 20, TOGGLE_HEIGHT + 24).setInteractive({ useHandCursor: true });
+    hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => this.updateSetting(key));
+    this.addToControls(hitArea);
   }
 
-  private addVolumeRow(label: string, key: "masterVolume" | "musicVolume" | "sfxVolume", y: number): void {
+  /** C 规格双线胶囊：外框 1px 白 40% + 内框 inset 3px 1px 白 12%；不随 on/off 变色。 */
+  private drawToggleCapsule(refs: ToggleRefs): void {
+    refs.capsule.clear();
+    refs.capsule.lineStyle(1, 0xffffff, 0.4);
+    refs.capsule.strokeRoundedRect(
+      refs.x - TOGGLE_WIDTH / 2,
+      refs.y - TOGGLE_HEIGHT / 2,
+      TOGGLE_WIDTH,
+      TOGGLE_HEIGHT,
+      TOGGLE_HEIGHT / 2
+    );
+    refs.capsule.lineStyle(1, 0xffffff, 0.12);
+    refs.capsule.strokeRoundedRect(
+      refs.x - TOGGLE_WIDTH / 2 + TOGGLE_INSET,
+      refs.y - TOGGLE_HEIGHT / 2 + TOGGLE_INSET,
+      TOGGLE_WIDTH - TOGGLE_INSET * 2,
+      TOGGLE_HEIGHT - TOGGLE_INSET * 2,
+      (TOGGLE_HEIGHT - TOGGLE_INSET * 2) / 2
+    );
+  }
+
+  /** C 规格胶囊钮：on = 玉色实心（PALETTE.hp + 微光晕），off = 1px 白 50% 空心。 */
+  private paintToggleKnob(refs: ToggleRefs, on: boolean): void {
+    refs.knob.clear();
+    if (on) {
+      refs.knob.fillStyle(PALETTE.hp, 0.22);
+      refs.knob.fillCircle(0, 0, TOGGLE_KNOB_RADIUS + 3);
+      refs.knob.fillStyle(PALETTE.hp, 1);
+      refs.knob.fillCircle(0, 0, TOGGLE_KNOB_RADIUS);
+      return;
+    }
+    refs.knob.lineStyle(1, 0xffffff, 0.5);
+    refs.knob.strokeCircle(0, 0, TOGGLE_KNOB_RADIUS);
+  }
+
+  private drawToggleKnob(refs: ToggleRefs, on: boolean): void {
+    this.paintToggleKnob(refs, on);
+    refs.knob.setPosition(refs.x + (on ? TOGGLE_KNOB_TRAVEL : -TOGGLE_KNOB_TRAVEL), refs.y);
+  }
+
+  /** 切换后原位刷新：胶囊重绘 + 滑钮 100ms 滑动 Tween。 */
+  private refreshToggle(key: ToggleKey): void {
+    const refs = this.toggles[key];
+    if (!refs || !this.settings) {
+      return;
+    }
+    const on = this.settings[key];
+    this.drawToggleCapsule(refs);
+    this.slideToggleKnob(refs, on);
+  }
+
+  /** 胶囊开关 knob 滑动 Tween（静音/低特效/伤害飘字/全屏共用），100ms 不变。 */
+  private slideToggleKnob(refs: ToggleRefs, on: boolean): void {
+    this.paintToggleKnob(refs, on);
+    const targetX = refs.x + (on ? TOGGLE_KNOB_TRAVEL : -TOGGLE_KNOB_TRAVEL);
+    this.tweens.killTweensOf(refs.knob);
+    this.tweens.add({
+      targets: refs.knob,
+      x: targetX,
+      duration: TOGGLE_SLIDE_MS,
+      ease: Phaser.Math.Easing.Quadratic.Out
+    });
+  }
+
+  /**
+   * 震屏强度三档分段行：无 / 弱 / 标准三个小字选项右对齐排布（与胶囊右缘对齐），
+   * 选中者芥金 + 下划短线（C 规格极简），点击切换并随 persistSettings 落盘热更。
+   */
+  private addShakeScaleRow(y: number, iconKey?: string): void {
     if (!this.settings) {
       return;
     }
     const centerX = this.scale.width / 2;
-    this.addRowBackground(y);
-    const trackX = centerX + SETTINGS_SLIDER_OFFSET_X;
-    const trackWidth = SETTINGS_SLIDER_WIDTH;
-    const value = this.settings[key];
-    this.addToControls(this.add.text(centerX + SETTINGS_LABEL_OFFSET_X, y, label, {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: SETTINGS_LABEL_FONT_SIZE,
-      fontStyle: "bold"
-    }).setOrigin(0, 0.5));
-    this.addToControls(this.add.text(centerX + SETTINGS_VOLUME_VALUE_OFFSET_X, y, value.toFixed(1), {
-      color: "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: SETTINGS_VALUE_FONT_SIZE
-    }).setOrigin(0.5));
+    this.addRowLabel("震屏强度", y, iconKey);
 
-    this.addToControls(this.createCleanSlider(trackX, y, trackWidth, value));
+    const groupLeft = centerX + SEGMENT_GROUP_RIGHT_OFFSET_X - SEGMENT_OPTION_WIDTH * shakeScaleLevels.length;
+    const centersX = shakeScaleLevels.map((_, index) => groupLeft + SEGMENT_OPTION_WIDTH * (index + 0.5));
+    const underline = this.add.graphics();
+    this.addToControls(underline);
 
-    const hitArea = this.add.zone(trackX, y, trackWidth + 48, 52).setInteractive({ useHandCursor: true });
-    hitArea.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
-      this.setVolumeFromPointer(key, pointer.x, trackX, trackWidth);
+    const optionTexts = shakeScaleLevels.map((level, index) => {
+      const optionText = this.add
+        .text(centersX[index], y, SHAKE_OPTION_LABELS[index], {
+          color: "#f0ead8",
+          fontFamily: ROW_LABEL_FONT,
+          fontSize: SEGMENT_FONT_SIZE,
+          // 与行标签同法：fontStyle "600" 拼进 CSS font shorthand 表字重
+          fontStyle: "600"
+        })
+        .setOrigin(0.5, 0.5)
+        .setResolution(2);
+      this.addToControls(optionText);
+
+      const hitArea = this.add
+        .zone(centersX[index], y, SEGMENT_OPTION_WIDTH - 4, SEGMENT_HIT_HEIGHT)
+        .setInteractive({ useHandCursor: true });
+      hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => this.updateShakeScale(level));
+      this.addToControls(hitArea);
+      return optionText;
+    });
+
+    this.shakeSegments = { optionTexts, underline, centersX, y };
+    this.refreshShakeSegments();
+  }
+
+  /** 点击某一档：写设置、落盘 + settings_changed 热更新，再原位刷新分段样式。 */
+  private updateShakeScale(level: number): void {
+    if (!this.settings || this.settings.shakeScale === level) {
+      return;
+    }
+    this.settings.shakeScale = level;
+    this.persistSettings();
+    this.refreshShakeSegments();
+  }
+
+  /** 分段行原位刷新：选中项芥金 95% + 芥金短下划线，未选米白 45%。 */
+  private refreshShakeSegments(): void {
+    const refs = this.shakeSegments;
+    if (!refs || !this.settings) {
+      return;
+    }
+    const activeIndex = this.currentShakeScaleIndex();
+    refs.optionTexts.forEach((optionText, index) => {
+      const active = index === activeIndex;
+      optionText.setColor(active ? PALETTE.accentGoldCss : "#f0ead8");
+      optionText.setAlpha(active ? 0.95 : 0.45);
+    });
+    refs.underline.clear();
+    const activeCenterX = refs.centersX[activeIndex];
+    refs.underline.lineStyle(2, PALETTE.accentGold, 0.9);
+    refs.underline.lineBetween(
+      activeCenterX - SEGMENT_UNDERLINE_WIDTH / 2,
+      refs.y + SEGMENT_UNDERLINE_OFFSET_Y,
+      activeCenterX + SEGMENT_UNDERLINE_WIDTH / 2,
+      refs.y + SEGMENT_UNDERLINE_OFFSET_Y
+    );
+  }
+
+  /** 当前 shakeScale 的档序；异常值（非三档）时吸附最近档，保证分段总有选中态。 */
+  private currentShakeScaleIndex(): number {
+    const value = this.settings?.shakeScale ?? feedbackSettingsDefaults.shakeScale;
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    shakeScaleLevels.forEach((level, index) => {
+      const distance = Math.abs(value - level);
+      if (distance < nearestDistance) {
+        nearestIndex = index;
+        nearestDistance = distance;
+      }
+    });
+    return nearestIndex;
+  }
+
+  /**
+   * 全屏开关行：样式与静音/低特效一致，状态不落盘，直接映射 ScaleManager。
+   * fullscreen.available === false（如 iframe 无 allowfullscreen）时整行禁用。
+   */
+  private addFullscreenRow(y: number): void {
+    const centerX = this.scale.width / 2;
+    const toggleX = centerX + TOGGLE_CENTER_OFFSET_X;
+    const labelText = this.addRowLabel("全屏", y, "icon_fullscreen");
+
+    const capsule = this.add.graphics();
+    const knob = this.add.graphics();
+    const refs: ToggleRefs = { capsule, knob, x: toggleX, y };
+    this.fullscreenToggle = refs;
+    this.addToControls(capsule);
+    this.addToControls(knob);
+    this.drawToggleCapsule(refs);
+    this.drawToggleKnob(refs, this.scale.isFullscreen);
+
+    if (this.scale.fullscreen.available === false) {
+      labelText.setAlpha(0.35);
+      capsule.setAlpha(0.35);
+      knob.setAlpha(0.35);
+      return;
+    }
+
+    const hitArea = this.add.zone(toggleX, y, TOGGLE_WIDTH + 20, TOGGLE_HEIGHT + 24).setInteractive({ useHandCursor: true });
+    hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      getAudioSystem(this).playPlaceholder("ui_click");
+      // 无头浏览器/权限被拒时会静默失败，开关态由 ENTER/LEAVE 事件回同步
+      this.scale.toggleFullscreen();
     });
     this.addToControls(hitArea);
   }
 
-  private createCleanSlider(x: number, y: number, width: number, value: number): Phaser.GameObjects.Graphics {
-    const knobX = x - width / 2 + value * width;
-    const graphics = this.add.graphics();
-    graphics.fillStyle(0x06100d, 0.92);
-    graphics.fillRoundedRect(x - width / 2, y - 8, width, 16, 8);
-    graphics.lineStyle(2, 0xd6c28d, 0.78);
-    graphics.strokeRoundedRect(x - width / 2, y - 8, width, 16, 8);
-    graphics.fillStyle(0x2f7d66, 0.78);
-    graphics.fillRoundedRect(x - width / 2 + 4, y - 5, Math.max(8, (width - 8) * value), 10, 5);
-    graphics.lineStyle(2, 0xf7f0d0, 0.7);
-    graphics.fillStyle(0xd6c28d, 1);
-    graphics.fillCircle(knobX, y, 13);
-    graphics.strokeCircle(knobX, y, 13);
-    graphics.fillStyle(0x2f7d66, 0.96);
-    graphics.fillCircle(knobX, y, 9);
-    return graphics;
-  }
-
-  private addSettingIcon(textureKey: string, x: number, y: number, size: number, alpha: number): void {
-    if (!this.textures.exists(textureKey)) {
-      this.addToControls(this.add.rectangle(x, y, size, size, 0x102019, 1).setStrokeStyle(1, 0xd6c28d, 0.7));
+  /** ENTER/LEAVE_FULLSCREEN 事件回调：按 ScaleManager 真实状态刷新开关。 */
+  private syncFullscreenToggle(): void {
+    const refs = this.fullscreenToggle;
+    if (!refs) {
       return;
     }
-    this.addToControls(this.add.image(x, y, textureKey).setDisplaySize(size, size).setAlpha(alpha));
+    const on = this.scale.isFullscreen;
+    this.drawToggleCapsule(refs);
+    this.slideToggleKnob(refs, on);
   }
 
-  private updateSetting(key: "muted" | "lowVfxMode"): void {
+  private addVolumeRow(label: string, key: VolumeKey, y: number, iconKey?: string): void {
+    if (!this.settings) {
+      return;
+    }
+    const centerX = this.scale.width / 2;
+    const trackX = centerX + SLIDER_CENTER_OFFSET_X;
+    const trackWidth = SLIDER_WIDTH;
+    const value = this.settings[key];
+    this.addRowLabel(label, y, iconKey);
+    const valueText = this.add
+      .text(centerX + SLIDER_VALUE_OFFSET_X, y, value.toFixed(1), {
+        color: "#ffffff",
+        fontFamily: FONT_MONO,
+        fontSize: SLIDER_VALUE_FONT_SIZE
+      })
+      .setOrigin(0, 0.5)
+      .setAlpha(0.62)
+      .setResolution(2);
+    this.addToControls(valueText);
+
+    const graphics = this.add.graphics();
+    this.drawSlider(graphics, trackX, y, trackWidth, value);
+    this.addToControls(graphics);
+    this.sliders[key] = { graphics, valueText, trackX, trackY: y, trackWidth };
+
+    const hitArea = this.add.zone(trackX, y, trackWidth + 36, 44).setInteractive({ useHandCursor: true });
+    hitArea.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
+      this.activeSliderKey = key;
+      this.applyPointerVolume(key, pointer.x);
+    });
+    this.addToControls(hitArea);
+  }
+
+  /**
+   * 重绘单个滑杆（clear 后按当前值重画轨道/填充/knob），不整页重建。
+   * C 规格：2px 白 30% 细轨 + 2px 白 70% 填充段 + 玉色圆钮（半径 7，PALETTE.hp + 金边）。
+   */
+  private drawSlider(graphics: Phaser.GameObjects.Graphics, x: number, y: number, width: number, value: number): void {
+    const left = x - width / 2;
+    const knobX = left + width * value;
+    graphics.clear();
+    // 细轨：2px 白 30%
+    graphics.fillStyle(0xffffff, 0.3);
+    graphics.fillRect(left, y - 1, width, 2);
+    // 填充段：2px 白 70%
+    graphics.fillStyle(0xffffff, 0.7);
+    graphics.fillRect(left, y - 1, width * value, 2);
+    // 玉色圆钮：PALETTE.hp 填充 + 金描边（附微光晕）
+    graphics.fillStyle(PALETTE.hp, 0.22);
+    graphics.fillCircle(knobX, y, SLIDER_KNOB_RADIUS + 3);
+    graphics.fillStyle(PALETTE.hp, 1);
+    graphics.fillCircle(knobX, y, SLIDER_KNOB_RADIUS);
+    graphics.lineStyle(1, PALETTE.legacyGold, 0.9);
+    graphics.strokeCircle(knobX, y, SLIDER_KNOB_RADIUS);
+  }
+
+  private handleSliderDrag(pointer: Phaser.Input.Pointer): void {
+    if (!this.activeSliderKey || !pointer.isDown) {
+      return;
+    }
+    this.applyPointerVolume(this.activeSliderKey, pointer.x);
+  }
+
+  private endSliderDrag(): void {
+    this.activeSliderKey = undefined;
+  }
+
+  private applyPointerVolume(key: VolumeKey, pointerX: number): void {
+    const slider = this.sliders[key];
+    if (!this.settings || !slider) {
+      return;
+    }
+    const rawValue = Phaser.Math.Clamp((pointerX - (slider.trackX - slider.trackWidth / 2)) / slider.trackWidth, 0, 1);
+    const nextValue = Phaser.Math.Clamp(Number((Math.round(rawValue * 10) / 10).toFixed(1)), 0, 1);
+    if (this.settings[key] === nextValue) {
+      return;
+    }
+    this.settings[key] = nextValue;
+    this.persistSettings(false);
+    this.drawSlider(slider.graphics, slider.trackX, slider.trackY, slider.trackWidth, nextValue);
+    slider.valueText.setText(nextValue.toFixed(1));
+  }
+
+  private updateSetting(key: ToggleKey): void {
     if (!this.settings) {
       return;
     }
     this.settings[key] = !this.settings[key];
     this.persistSettings();
-    this.renderControls();
+    this.refreshToggle(key);
   }
 
-  private setVolumeFromPointer(key: "masterVolume" | "musicVolume" | "sfxVolume", pointerX: number, trackX: number, trackWidth: number): void {
-    if (!this.settings) {
-      return;
-    }
-    const rawValue = Phaser.Math.Clamp((pointerX - (trackX - trackWidth / 2)) / trackWidth, 0, 1);
-    this.settings[key] = Phaser.Math.Clamp(Number((Math.round(rawValue * 10) / 10).toFixed(1)), 0, 1);
-    this.persistSettings();
-    this.renderControls();
-  }
-
-  private persistSettings(): void {
+  private persistSettings(playClick = true): void {
     if (!this.settings) {
       return;
     }
     const saveData = saveSystem.updateSettings(this.settings, getSaveData(this));
     setSaveData(this, saveData);
     getAudioSystem(this).updateSettings(saveData.settings);
-    getAudioSystem(this).playPlaceholder("ui_click");
+    if (playClick) {
+      getAudioSystem(this).playPlaceholder("ui_click");
+    }
     eventBus.emit("settings_changed", { settings: saveData.settings });
   }
 
@@ -204,7 +519,7 @@ export class SettingsScene extends Phaser.Scene {
       return;
     }
 
-    this.scene.start(SCENE_KEYS.menu);
+    transitionTo(this, SCENE_KEYS.menu);
   }
 
   private addToControls<T extends Phaser.GameObjects.GameObject>(gameObject: T): T {

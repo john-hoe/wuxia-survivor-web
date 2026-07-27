@@ -18,7 +18,9 @@ const config: Phaser.Types.Core.GameConfig = {
   height: 540,
   scale: {
     mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    // 吸附整数 CSS 像素，避免亚像素模糊；文本锐度由 Text.setResolution(2) 保证
+    autoRound: true
   },
   scene: [
     BootScene,

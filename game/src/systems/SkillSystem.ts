@@ -1,10 +1,12 @@
 import Phaser from "phaser";
 import { skillConfigs, skillOrder, type AdvanceKeyId, type SkillId, type SkillLevelConfig } from "../data/skills";
+import { enemyConfigs } from "../data/enemies";
 import type { InsightSkillState } from "../data/progression";
 import type { EnemyDamageResult, EnemyTargetSnapshot } from "./EnemyDirectorSystem";
 import type { BossDamageResult, BossTargetSnapshot } from "./BossSystem";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
+import { JuiceSystem } from "./JuiceSystem";
 
 type Point = {
   x: number;
@@ -49,6 +51,7 @@ type ProjectileRuntime = {
   hitEnemyIds: Set<number>;
   advanced: boolean;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
+  trailEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
 };
 
 type OrbitalRuntime = {
@@ -57,6 +60,8 @@ type OrbitalRuntime = {
   angleRad: number;
   advanced: boolean;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
+  trailEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
+  ghostCooldownMs: number;
 };
 
 type WaveRuntime = {
@@ -113,6 +118,13 @@ const HIT_SFX_THROTTLE_MS = 90;
 const WAVE_DURATION_MS = 420;
 const ADVANCE_VFX_DURATION_MS = 900;
 const ADVANCED_YULONG_COOLDOWN_MS = 680;
+/** 投射物拖尾粒子纹理（由 JuiceSystem 程序化生成） */
+const TRAIL_TEXTURE = "juice_spark";
+/** 回风镖残影：生成间隔与全局上限（防泄漏/防爆量） */
+const DART_GHOST_INTERVAL_MS = 70;
+const MAX_DART_GHOSTS = 24;
+/** 暴击判定：实际伤害 ≥ 该技能当前配置期望伤害的倍数（方案五·伤害数字分层） */
+const CRIT_DAMAGE_RATIO = 2;
 
 export class SkillSystem {
   private readonly skills = new Map<SkillId, SkillRuntime>();
@@ -122,6 +134,7 @@ export class SkillSystem {
   private readonly waves: WaveRuntime[] = [];
   private readonly vfx: VfxRuntime[] = [];
   private readonly hitSamples: HitSample[] = [];
+  private readonly dartGhosts: Phaser.GameObjects.Sprite[] = [];
   private readonly orbitalHitCooldowns = new Map<string, number>();
   private nextProjectileId = 1;
   private nextOrbitalId = 1;
@@ -129,6 +142,8 @@ export class SkillSystem {
   private hitSfxCooldownMs = 0;
 
   constructor(private readonly scene: Phaser.Scene, private readonly options: SkillSystemOptions) {
+    // 提前实例化 JuiceSystem，确保拖尾粒子纹理已生成
+    JuiceSystem.get(this.scene);
     this.unlockSkill("yulong_sword_qi", 1);
   }
 
@@ -206,9 +221,11 @@ export class SkillSystem {
 
   destroy(): void {
     for (const projectile of this.projectiles) {
+      projectile.trailEmitter?.destroy();
       projectile.view.destroy();
     }
     for (const orbital of this.orbitals) {
+      orbital.trailEmitter?.destroy();
       orbital.view.destroy();
     }
     for (const wave of this.waves) {
@@ -217,10 +234,14 @@ export class SkillSystem {
     for (const vfx of this.vfx) {
       vfx.view.destroy();
     }
+    for (const ghost of this.dartGhosts) {
+      ghost.destroy();
+    }
     this.projectiles.length = 0;
     this.orbitals.length = 0;
     this.waves.length = 0;
     this.vfx.length = 0;
+    this.dartGhosts.length = 0;
     this.hitSamples.length = 0;
     this.orbitalHitCooldowns.clear();
   }
@@ -445,7 +466,8 @@ export class SkillSystem {
       pierceRemaining: profile.pierce,
       hitEnemyIds: new Set<number>(),
       advanced: runtime.advanced,
-      view: projectileView
+      view: projectileView,
+      trailEmitter: this.createTrailEmitter(projectileView, runtime.advanced)
     };
     this.nextProjectileId += 1;
     this.projectiles.push(projectile);
@@ -475,6 +497,7 @@ export class SkillSystem {
     this.nextWaveId += 1;
     this.waves.push(wave);
     this.updateWorldAnchoredView(wave.view, wave.worldX, wave.worldY);
+    JuiceSystem.get(this.scene).heavyHit();
   }
 
   private updateProjectiles(deltaMs: number, targets: CombatTargetSnapshot[]): void {
@@ -522,6 +545,7 @@ export class SkillSystem {
       this.updateWorldAnchoredView(orbital.view, worldX, worldY);
       orbital.view.setRotation(orbital.angleRad + Math.PI / 4);
       this.tryHitEnemiesWithOrbital(orbital, worldX, worldY, profile, targets);
+      this.spawnDartGhostIfReady(orbital, deltaMs);
     }
   }
 
@@ -639,6 +663,28 @@ export class SkillSystem {
     }
 
     this.hitSamples.push({ ageMs: 0, damage: result.amount });
+    // 打击感反馈：命中火花 + 伤害飘字分层
+    // 档位：Boss 橙 / 精英击杀朱砂弹跳 / 暴击芥金弹跳（进阶技能或伤害≥配置期望 2 倍）/ 普通白字
+    const juice = JuiceSystem.get(this.scene);
+    const isBossTarget = isBossDamageResult(result);
+    const runtime = this.skills.get(skillId);
+    const expectedDamage = runtime ? this.getExpectedSkillDamage(runtime) : 0;
+    const isCrit = expectedDamage > 0 && result.amount >= expectedDamage * CRIT_DAMAGE_RATIO;
+    const isEliteKill = !isBossTarget && result.killed && enemyConfigs[result.enemyId]?.tier === "elite";
+    const damageKind = isBossTarget
+      ? "boss"
+      : isEliteKill
+        ? "elite"
+        : runtime?.advanced || isCrit
+          ? "crit"
+          : "normal";
+    juice.hitSpark(result.screenX, result.screenY, isBossTarget);
+    juice.damageNumber(
+      result.screenX,
+      result.screenY,
+      result.amount,
+      damageKind
+    );
     this.createHitVfx(result.worldX, result.worldY);
     this.playThrottledHitSfx();
     eventBus.emit("skill_hit", {
@@ -680,6 +726,7 @@ export class SkillSystem {
         if (orbital.skillId !== skillId) {
           continue;
         }
+        orbital.trailEmitter?.destroy();
         orbital.view.destroy();
         this.orbitals.splice(index, 1);
       }
@@ -693,6 +740,7 @@ export class SkillSystem {
       if (globalIndex >= 0) {
         this.orbitals.splice(globalIndex, 1);
       }
+      orbital.trailEmitter?.destroy();
       orbital.view.destroy();
       existing.splice(index, 1);
     }
@@ -712,7 +760,9 @@ export class SkillSystem {
         skillId,
         angleRad,
         advanced: runtime.advanced,
-        view
+        view,
+        trailEmitter: this.createTrailEmitter(view, runtime.advanced),
+        ghostCooldownMs: 0
       };
       this.nextOrbitalId += 1;
       this.orbitals.push(orbital);
@@ -721,7 +771,67 @@ export class SkillSystem {
 
   private destroyProjectile(index: number): void {
     const [projectile] = this.projectiles.splice(index, 1);
+    projectile.trailEmitter?.destroy();
     projectile.view.destroy();
+  }
+
+  /** 投射物拖尾：emitter 跟随弹体，进阶版金色尾焰；随弹体销毁，防泄漏。 */
+  private createTrailEmitter(
+    view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite,
+    advanced: boolean
+  ): Phaser.GameObjects.Particles.ParticleEmitter | undefined {
+    if (!this.scene.textures.exists(TRAIL_TEXTURE)) {
+      return undefined;
+    }
+    const emitter = this.scene.add.particles(0, 0, TRAIL_TEXTURE, {
+      follow: view,
+      frequency: 30,
+      lifespan: 200,
+      speed: { min: 8, max: 26 },
+      scale: { start: 0.55, end: 0 },
+      alpha: { start: 0.7, end: 0 },
+      tint: advanced ? [0xf6d472, 0xd8c76a, 0xfff3c4] : [0x9fe8ff, 0x39d6b5, 0xe9fffb],
+      blendMode: Phaser.BlendModes.ADD
+    });
+    emitter.setDepth(13);
+    return emitter;
+  }
+
+  /** 回风镖残影：每 70ms 叠一层 alpha 渐隐残影 sprite（约 2-3 层同屏），240ms 后销毁。 */
+  private spawnDartGhostIfReady(orbital: OrbitalRuntime, deltaMs: number): void {
+    orbital.ghostCooldownMs = Math.max(0, orbital.ghostCooldownMs - deltaMs);
+    if (orbital.ghostCooldownMs > 0 || this.dartGhosts.length >= MAX_DART_GHOSTS) {
+      return;
+    }
+    if (!(orbital.view instanceof Phaser.GameObjects.Sprite) || orbital.view.getData("spriteArt") !== true) {
+      return;
+    }
+
+    orbital.ghostCooldownMs = DART_GHOST_INTERVAL_MS;
+    const view = orbital.view;
+    const ghost = this.scene.add.sprite(view.x, view.y, view.texture.key)
+      .setDepth(14)
+      .setAlpha(0.3)
+      .setRotation(view.rotation)
+      .setScale(view.scaleX, view.scaleY)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.dartGhosts.push(ghost);
+    this.scene.tweens.add({
+      targets: ghost,
+      alpha: 0,
+      scale: 0.6,
+      duration: 240,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        const ghostIndex = this.dartGhosts.indexOf(ghost);
+        if (ghostIndex >= 0) {
+          this.dartGhosts.splice(ghostIndex, 1);
+        }
+        if (ghost.active) {
+          ghost.destroy();
+        }
+      }
+    });
   }
 
   private getLevelConfig(runtime: SkillRuntime): SkillLevelConfig {
@@ -804,6 +914,21 @@ export class SkillSystem {
     return 0;
   }
 
+  /** 该技能当前等级/进阶状态下的配置期望伤害，作为暴击阈值基准（均值 2 倍判暴击）。 */
+  private getExpectedSkillDamage(runtime: SkillRuntime): number {
+    const kind = skillConfigs[runtime.skillId].kind;
+    if (kind === "projectile") {
+      return this.getProjectileProfile(runtime).damage;
+    }
+    if (kind === "orbit") {
+      return this.getOrbitProfile(runtime).damage;
+    }
+    if (kind === "aoe") {
+      return this.getWaveProfile(runtime).damage;
+    }
+    return 0;
+  }
+
   private createYulongProjectileFallback(direction: Point, advanced: boolean): Phaser.GameObjects.Container | Phaser.GameObjects.Sprite {
     if (advanced && this.scene.textures.exists("skill_yulong_advanced_projectile")) {
       const view = this.scene.add.sprite(0, 0, "skill_yulong_advanced_projectile")
@@ -811,8 +936,11 @@ export class SkillSystem {
         .setOrigin(0.5)
         .setScale(0.92)
         .setAlpha(0.98)
-        .setRotation(Math.atan2(direction.y, direction.x))
-        .setBlendMode(Phaser.BlendModes.ADD);
+        .setRotation(Math.atan2(direction.y, direction.x));
+      const animationKey = getArtAnimationKey("skill_yulong_advanced_projectile");
+      if (this.scene.anims.exists(animationKey)) {
+        view.play(animationKey);
+      }
       view.setData("spriteArt", true);
       return view;
     }
@@ -907,6 +1035,7 @@ export class SkillSystem {
       const animationKey = getArtAnimationKey("vfx_hit_light");
       if (this.scene.anims.exists(animationKey)) {
         view.play(animationKey);
+        this.bindOneShotDestroy(view);
       }
       view.setData("spriteArt", true);
       this.vfx.push({ view, worldX, worldY, ageMs: 0, durationMs: 160, type: "hit" });
@@ -929,6 +1058,7 @@ export class SkillSystem {
       const animationKey = getArtAnimationKey("vfx_enemy_die");
       if (this.scene.anims.exists(animationKey)) {
         view.play(animationKey);
+        this.bindOneShotDestroy(view);
       }
       view.setData("spriteArt", true);
       this.vfx.push({ view, worldX, worldY, ageMs: 0, durationMs: 280, type: "die" });
@@ -959,7 +1089,7 @@ export class SkillSystem {
         fontFamily: "system-ui, sans-serif",
         fontSize: "24px",
         fontStyle: "bold"
-      }).setOrigin(0.5);
+      }).setOrigin(0.5).setResolution(2);
       const view = this.scene.add.container(heroScreen.x, heroScreen.y, [burst, text])
         .setDepth(90);
       this.vfx.push({
@@ -982,7 +1112,7 @@ export class SkillSystem {
       fontFamily: "system-ui, sans-serif",
       fontSize: "24px",
       fontStyle: "bold"
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setResolution(2);
     const view = this.scene.add.container(heroScreen.x, heroScreen.y, [ringA, ringB, text])
       .setDepth(90)
       .setBlendMode(Phaser.BlendModes.ADD);
@@ -1003,6 +1133,19 @@ export class SkillSystem {
   private updateWorldAnchoredView(view: Phaser.GameObjects.Components.Transform, worldX: number, worldY: number): void {
     const { x, y } = this.worldToScreen(worldX, worldY);
     view.setPosition(x, y);
+  }
+
+  /** 一次性动画（loop:false）播完即从 vfx 列表移除并销毁；updateVfx 的 alpha 硬切保留作兜底。 */
+  private bindOneShotDestroy(view: Phaser.GameObjects.Sprite): void {
+    view.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+      const vfxIndex = this.vfx.findIndex((entry) => entry.view === view);
+      if (vfxIndex >= 0) {
+        this.vfx.splice(vfxIndex, 1);
+      }
+      if (view.active) {
+        view.destroy();
+      }
+    });
   }
 
   private updateVfx(deltaMs: number): void {

@@ -1,6 +1,6 @@
 import { artManifest, countMissingRequiredAssets } from "../data/artManifest";
 import { audioEvents, countMissingRequiredAudioEvents } from "../data/audio";
-import { debugConfig, stageConfig } from "../data/gameConfig";
+import { debugConfig, feedbackSettingsDefaults, shakeScaleLevels, stageConfig } from "../data/gameConfig";
 import type { ConfigLoadResult, GameConfigBundle, ManifestStats } from "../types";
 
 const NOT_LOADED_RESULT: ConfigLoadResult = {
@@ -79,6 +79,9 @@ function validateConfig(config: GameConfigBundle): string[] {
   }
   if (!config.loadedConfigIds.includes("progression:inner_power")) {
     errors.push("SW-PROG-001 inner power progression config must be loaded");
+  }
+  if (!(shakeScaleLevels as readonly number[]).includes(feedbackSettingsDefaults.shakeScale)) {
+    errors.push("feedbackSettingsDefaults.shakeScale must be one of the shakeScaleLevels presets");
   }
   return errors;
 }

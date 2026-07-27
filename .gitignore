@@ -22,3 +22,4 @@ evidence/
 game/test-results/
 game/.omc/
 game/src/assets/_incoming/
+.asset-gen/

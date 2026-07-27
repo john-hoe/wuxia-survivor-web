@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>青石山道 · 方案三原型对比 + 效果小样</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0f0c; color: #e8e2d2; font-family: 'Noto Sans SC', sans-serif; padding: 48px 32px 96px; }
+  header { text-align: center; margin-bottom: 56px; }
+  header h1 { font-family: 'Ma Shan Zheng', 'Noto Serif SC', serif; font-size: 42px; font-weight: 400; letter-spacing: 6px; color: #f0ead8; }
+  header p { margin-top: 12px; color: #8a8578; font-size: 14px; letter-spacing: 2px; }
+  .direction { max-width: 1280px; margin: 0 auto 72px; }
+  .direction-head { display: flex; align-items: baseline; gap: 18px; border-bottom: 1px solid rgba(169,154,32,.25); padding-bottom: 14px; margin-bottom: 10px; }
+  .direction-head .tag { font-family: 'Ma Shan Zheng', serif; font-size: 30px; letter-spacing: 3px; color: #d8c990; }
+  .direction-head .name { font-size: 15px; color: #e8e2d2; font-weight: 500; }
+  .direction-head .verdict { margin-left: auto; font-size: 12.5px; color: #8a8578; }
+  .direction-desc { font-size: 13px; color: #9a958a; line-height: 1.8; margin-bottom: 22px; max-width: 900px; }
+  .direction-desc b { color: #c8c2b2; font-weight: 500; }
+  .screens { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .screen { background: #101713; border: 1px solid rgba(169,154,32,.18); border-radius: 8px; overflow: hidden; transition: transform .18s ease, border-color .18s ease; }
+  .screen:hover { transform: translateY(-3px); border-color: rgba(169,154,32,.55); }
+  .screen img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; cursor: zoom-in; }
+  .screen .cap { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; font-size: 13px; color: #c8c2b2; }
+  .screen .cap a { color: #a99a20; text-decoration: none; font-size: 12px; border: 1px solid rgba(169,154,32,.4); padding: 2px 10px; border-radius: 4px; }
+  .screen .cap a:hover { background: rgba(169,154,32,.12); }
+  #lightbox { position: fixed; inset: 0; background: rgba(5,8,6,.92); display: none; align-items: center; justify-content: center; z-index: 99; cursor: zoom-out; }
+  #lightbox img { max-width: 94vw; max-height: 92vh; box-shadow: 0 20px 80px rgba(0,0,0,.7); }
+  #lightbox.show { display: flex; }
+</style>
+</head>
+<body>
+<header>
+  <h1>方案三 · 局外成长原型对比</h1>
+  <p>甲 · 经脉图 ｜ 乙 · 武功谱 —— 另附墨晕转场与配色语义小样（底部）。点击图片放大，点「交互原型」看动画</p>
+</header>
+
+<section class="direction">
+  <div class="direction-head">
+    <span class="tag">甲</span><span class="name">经脉图 —— 人体经络剪影，穴位即成长节点</span>
+    <span class="verdict">✅ 武侠语义最强、独一份 ｜ ⚠️ 实现量最大（SVG 经脉+节点系统）</span>
+  </div>
+  <p class="direction-desc">中央简笔人体，三条经络对应三类成长（任督→炼体、冲脉→轻功、带脉→磁石），每经五穴；穴位三态（玉色已通 / 芥金脉动可冲 / 灰未达），点穴位浮出小签（名称/层数/下层效果/价格）。抽卡改为<b>横卷展开</b>：卷轴向两侧滚开，奖励落纸面。</p>
+  <div class="screens">
+    <div class="screen"><img src="d-growth.png" alt="甲 经脉图"><div class="cap"><span>局外成长 · 经脉图</span><a href="d-growth.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="d-scripture.png" alt="甲 卷轴抽卡"><div class="cap"><span>抽卡 · 卷轴展开</span><a href="d-scripture.html" target="_blank">交互原型</a></div></div>
+  </div>
+</section>
+
+<section class="direction">
+  <div class="direction-head">
+    <span class="tag">乙</span><span class="name">武功谱 —— 三列秘籍函套，谱册层数即等级</span>
+    <span class="verdict">✅ 信息最清晰、实现最轻 ｜ ⚠️ 惊艳度略逊于甲</span>
+  </div>
+  <p class="direction-desc">三列立式函套（炼体/轻功/磁石），右侧开口露出的谱册层数就是当前等级；选中函套整列抬升+芥金描边，浮出本层效果与「参悟 · N 铜钱」。抽卡改为<b>签筒求签</b>：晃筒抽签，十连时签扇形展开、绝学签加长上抬。</p>
+  <div class="screens">
+    <div class="screen"><img src="e-growth.png" alt="乙 武功谱"><div class="cap"><span>局外成长 · 武功谱</span><a href="e-growth.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="e-scripture.png" alt="乙 签筒抽卡"><div class="cap"><span>抽卡 · 签筒求签</span><a href="e-scripture.html" target="_blank">交互原型</a></div></div>
+  </div>
+</section>
+
+<section class="direction">
+  <div class="direction-head">
+    <span class="tag">样</span><span class="name">效果小样 —— 墨晕转场 × 技能配色语义（方案四/二配套）</span>
+    <span class="verdict">墨晕三种形态各标注适用场景；配色语义板为后续新技能定调</span>
+  </div>
+  <p class="direction-desc">墨晕转场：A 圆墨中晕（Boss 登场）/ B 斜锋扫墨（场景切换）/ C 三源聚墨（战斗结算），可交互循环播放。配色语义板：青白剑气 / 金红掌风 / 紫黑邪毒，玩家冷青暖金二分、敌方威胁一律紫黑。</p>
+  <div class="screens">
+    <div class="screen"><img src="f-inkwipe.png" alt="墨晕转场小样"><div class="cap"><span>墨晕转场 · 三形态</span><a href="f-inkwipe.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="f-palette.png" alt="配色语义板"><div class="cap"><span>技能配色 · 语义板</span><a href="f-palette.html" target="_blank">交互原型</a></div></div>
+  </div>
+</section>
+
+<div id="lightbox"><img id="lightbox-img" src="" alt=""></div>
+<script>
+  const box = document.getElementById('lightbox');
+  const boxImg = document.getElementById('lightbox-img');
+  document.querySelectorAll('.screen img').forEach(img => {
+    img.addEventListener('click', () => { boxImg.src = img.src; box.classList.add('show'); });
+  });
+  box.addEventListener('click', () => box.classList.remove('show'));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') box.classList.remove('show'); });
+</script>
+</body>
+</html>

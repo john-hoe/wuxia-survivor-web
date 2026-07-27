@@ -1,14 +1,23 @@
 import Phaser from "phaser";
 import type { InsightOption, PendingInsight } from "../data/progression";
 import { createTextButton } from "../ui/UiButton";
+import { fadeIn, FONT_BODY, FONT_TITLE, PALETTE } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getAudioSystem } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
 import { SCENE_KEYS } from "./sceneKeys";
 
+type InsightCardRefs = {
+  optionId: string;
+  container: Phaser.GameObjects.Container;
+  background: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
+  glow: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
+};
+
 export class InsightScene extends Phaser.Scene {
   private selected = false;
   private keyboardOffCallbacks: Array<() => void> = [];
+  private cards: InsightCardRefs[] = [];
 
   constructor() {
     super(SCENE_KEYS.insight);
@@ -17,30 +26,48 @@ export class InsightScene extends Phaser.Scene {
   create(data?: PendingInsight): void {
     this.selected = false;
     this.keyboardOffCallbacks = [];
+    this.cards = [];
     enterScreen(this, "insight");
     const pendingInsight = isPendingInsight(data) ? data : createFallbackInsight();
     this.add.rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width, this.scale.height, 0x0f1512, 0.93);
     if (this.textures.exists("vfx_insight_burst")) {
-      this.add.image(this.scale.width / 2, 158, "vfx_insight_burst")
+      const burst = this.add.image(this.scale.width / 2, 158, "vfx_insight_burst")
         .setDisplaySize(210, 210)
-        .setAlpha(0.44)
+        .setAlpha(0.34)
         .setBlendMode(Phaser.BlendModes.ADD);
+      const baseScale = burst.scaleX;
+      this.tweens.add({
+        targets: burst,
+        rotation: Math.PI * 2,
+        duration: 14000,
+        repeat: -1
+      });
+      this.tweens.add({
+        targets: burst,
+        scaleX: baseScale * 1.1,
+        scaleY: baseScale * 1.1,
+        alpha: 0.48,
+        duration: 1800,
+        yoyo: true,
+        repeat: -1,
+        ease: Phaser.Math.Easing.Sine.InOut
+      });
     }
     this.add.text(this.scale.width / 2, 78, "领悟", {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_TITLE,
       fontSize: "44px",
       fontStyle: "bold"
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setResolution(2);
     this.add.text(this.scale.width / 2, 126, `等级 ${pendingInsight.levelBefore} -> 等级 ${pendingInsight.levelAfter}`, {
-      color: "#d8ead9",
-      fontFamily: "system-ui, sans-serif",
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
       fontSize: "18px"
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setStroke("#101010", 3).setResolution(2);
 
     const cardXs = [230, 480, 730];
     pendingInsight.options.forEach((option, index) => {
-      this.createInsightCard(cardXs[index] ?? (230 + index * 250), option, index + 1);
+      this.createInsightCard(cardXs[index] ?? (230 + index * 250), option, index + 1, index);
     });
 
     const keyboard = this.input.keyboard;
@@ -59,49 +86,97 @@ export class InsightScene extends Phaser.Scene {
       }
       this.keyboardOffCallbacks = [];
     });
+    fadeIn(this);
   }
 
-  private createInsightCard(x: number, option: InsightOption, shortcut: number): void {
+  private createInsightCard(x: number, option: InsightOption, shortcut: number, index: number): void {
+    const children: Phaser.GameObjects.GameObject[] = [];
+    let background: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
+    let glow: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
     if (this.textures.exists("ui_card_insight")) {
-      this.add.image(x, 306, "ui_card_insight")
+      background = this.add.image(0, 0, "ui_card_insight")
         .setDisplaySize(214, 306)
         .setAlpha(0.98);
+      glow = this.add.image(0, 0, "ui_card_insight")
+        .setDisplaySize(214, 306)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0xf6d472)
+        .setAlpha(0);
     } else {
-      this.add.rectangle(x, 306, 210, 250, 0x18251f, 1).setStrokeStyle(2, 0xd6c28d, 0.9);
+      background = this.add.rectangle(0, 0, 210, 250, 0x18251f, 1).setStrokeStyle(2, 0xd6c28d, 0.9);
+      glow = this.add.rectangle(0, 0, 214, 254, 0xf6d472, 0)
+        .setStrokeStyle(2, 0xf6d472, 1)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setAlpha(0);
     }
+    children.push(background, glow);
 
     const iconAssetId = getInsightIconAssetId(option) ?? option.iconKey;
     if (iconAssetId && this.textures.exists(iconAssetId)) {
-      this.add.image(x, 230, iconAssetId).setDisplaySize(58, 58);
+      children.push(this.add.image(0, -76, iconAssetId).setDisplaySize(58, 58));
     } else {
-      this.add.circle(x, 230, 28, 0xd6c28d, 0.9);
+      children.push(this.add.circle(0, -76, 28, 0xd6c28d, 0.9));
     }
 
-    this.add.text(x - 82, 206, `${shortcut}`, {
+    children.push(this.add.text(-82, -100, `${shortcut}`, {
       color: "#14211b",
-      fontFamily: "system-ui, sans-serif",
+      fontFamily: FONT_BODY,
       fontSize: "20px",
       fontStyle: "bold"
-    }).setOrigin(0.5);
-    this.add.text(x, 268, option.title, {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
+    }).setOrigin(0.5).setResolution(2));
+    children.push(this.add.text(0, -38, option.title, {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_TITLE,
       fontSize: getInsightTitleFontSize(option.title),
       fontStyle: "bold"
-    }).setOrigin(0.5);
-    this.add.text(x, 318, wrapVisualText(option.description, 9, 2), {
+    }).setOrigin(0.5).setStroke("#14211b", 4).setResolution(2));
+    children.push(this.add.text(0, 12, wrapVisualText(option.description, 9, 2), {
       color: "#d8ead9",
-      fontFamily: "system-ui, sans-serif",
+      fontFamily: FONT_BODY,
       fontSize: "17px",
       align: "center",
       lineSpacing: 3
-    }).setOrigin(0.5);
-    this.add.text(x, 358, option.typeLabel, {
-      color: "#b9d7c8",
-      fontFamily: "system-ui, sans-serif",
+    }).setOrigin(0.5).setStroke("#14211b", 3).setResolution(2));
+    children.push(this.add.text(0, 52, option.typeLabel, {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
       fontSize: "15px"
-    }).setOrigin(0.5);
-    createTextButton(this, x, 418, "领悟", () => this.selectCard(option.id), 150, 52);
+    }).setOrigin(0.5).setStroke("#14211b", 3).setResolution(2));
+    children.push(createTextButton(this, 0, 112, "领悟", () => this.selectCard(option.id), 150, 52));
+
+    const container = this.add.container(x, 306 + 34, children);
+    container.setSize(214, 306);
+    container.setAlpha(0);
+    container.setInteractive({ useHandCursor: true });
+    const card: InsightCardRefs = { optionId: option.id, container, background, glow };
+    this.cards.push(card);
+
+    // 入场：y+34 → 原位，alpha 0→1，Cubic.easeOut 错落
+    this.tweens.add({
+      targets: container,
+      y: 306,
+      alpha: 1,
+      duration: 420,
+      delay: index * 130,
+      ease: Phaser.Math.Easing.Cubic.Out
+    });
+
+    // 悬停：scale 1.05 + 边框 ADD 发光层淡入
+    container.on(Phaser.Input.Events.POINTER_OVER, () => {
+      if (this.selected) {
+        return;
+      }
+      this.tweens.add({ targets: container, scale: 1.05, duration: 140, ease: Phaser.Math.Easing.Quadratic.Out });
+      this.tweens.add({ targets: glow, alpha: 0.22, duration: 140 });
+    });
+    container.on(Phaser.Input.Events.POINTER_OUT, () => {
+      if (this.selected) {
+        return;
+      }
+      this.tweens.add({ targets: container, scale: 1, duration: 140, ease: Phaser.Math.Easing.Quadratic.Out });
+      this.tweens.add({ targets: glow, alpha: 0, duration: 140 });
+    });
+    container.on(Phaser.Input.Events.POINTER_DOWN, () => this.selectCard(option.id));
   }
 
   private selectCard(cardId: string): void {
@@ -112,6 +187,35 @@ export class InsightScene extends Phaser.Scene {
     this.input.enabled = false;
     getAudioSystem(this).playPlaceholder("insight");
     eventBus.emit("insight_option_selected", { optionId: cardId });
+    const picked = this.cards.find((card) => card.optionId === cardId);
+    this.cards.forEach((card) => {
+      this.tweens.killTweensOf(card.container);
+      this.tweens.killTweensOf(card.glow);
+      if (card === picked) {
+        card.container.setAlpha(1);
+        card.glow.setAlpha(0.32);
+        const tintable = card.background as unknown as { setTintFill?: (tint: number) => void; clearTint?: () => void };
+        tintable.setTintFill?.(0xffffff);
+        this.time.delayedCall(160, () => tintable.clearTint?.());
+      } else {
+        this.tweens.add({ targets: card.container, alpha: 0.25, duration: 260 });
+      }
+    });
+    if (!picked) {
+      this.finishSelection();
+      return;
+    }
+    // 选中确认：scale→1.12 + 白闪，Tween 完成后再走原有 300ms 切场
+    this.tweens.add({
+      targets: picked.container,
+      scale: 1.12,
+      duration: 260,
+      ease: Phaser.Math.Easing.Back.Out,
+      onComplete: () => this.finishSelection()
+    });
+  }
+
+  private finishSelection(): void {
     this.time.delayedCall(300, () => {
       enterScreen(this, "game");
       this.scene.stop(SCENE_KEYS.insight);

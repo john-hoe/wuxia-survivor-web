@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>翻阅秘籍 · 方向B 夜山客栈</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#0a0f0c;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Noto Sans SC',sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .stage {
+    width:960px; height:540px; position:relative; overflow:hidden;
+    background:linear-gradient(180deg,#0c1310 0%,#0e1613 42%,#070c0a 100%);
+  }
+
+  /* ============ 场景层 · 夜山 ============ */
+  .scene { position:absolute; inset:0; }
+  .moon-glow {
+    position:absolute; left:-120px; top:-160px; width:460px; height:420px;
+    background:radial-gradient(circle, rgba(168,196,182,.07), transparent 65%);
+  }
+  .gate {
+    position:absolute; left:130px; bottom:30px; width:700px;
+    opacity:.32; filter:brightness(1.9) saturate(.5) blur(.8px);
+  }
+  .bamboo { position:absolute; bottom:0; height:520px; filter:brightness(.46) saturate(.75) contrast(1.06); }
+  .bamboo.bl { left:-70px; }
+  .bamboo.br { right:-70px; transform:scaleX(-1); }
+  .lamp-glow {
+    position:absolute; left:-60px; top:-140px; width:560px; height:520px;
+    background:radial-gradient(circle at 40% 30%, rgba(212,160,90,.12), rgba(212,160,90,.05) 42%, transparent 68%);
+  }
+  .lantern {
+    position:absolute; left:74px; top:-4px; height:100px;
+    filter:brightness(.95) drop-shadow(0 0 18px rgba(212,120,50,.45));
+  }
+  .firefly { position:absolute; width:3px; height:3px; border-radius:50%;
+    background:#e8d9a0; box-shadow:0 0 6px 1px rgba(232,217,160,.5); }
+  .shade { position:absolute; inset:0;
+    background:linear-gradient(180deg, rgba(6,10,8,.5), rgba(6,10,8,.12) 30%, rgba(6,10,8,.22) 68%, rgba(4,8,6,.58)); }
+  .vignette { position:absolute; inset:0;
+    background:radial-gradient(ellipse 78% 72% at 50% 46%, transparent 52%, rgba(3,6,5,.6)); }
+
+  /* ============ 面板 · 三层结构 ============ */
+  .panel {
+    position:absolute; left:150px; top:16px; width:660px; height:512px;
+    background:linear-gradient(180deg,#1b2620 0%,#16201a 34%,#111a15 100%);
+    border:1px solid rgba(216,201,144,.42);
+    box-shadow:0 24px 60px rgba(0,0,0,.62), 0 0 90px rgba(212,160,90,.06),
+               inset 0 0 40px rgba(0,0,0,.25);
+  }
+  .panel::before {
+    content:''; position:absolute; inset:5px;
+    border:1px solid rgba(216,201,144,.13); pointer-events:none;
+  }
+  .corner { position:absolute; width:20px; height:20px; z-index:3; }
+  .corner.tl { top:6px; left:6px; }
+  .corner.tr { top:6px; right:6px; transform:rotate(90deg); }
+  .corner.br { bottom:6px; right:6px; transform:rotate(180deg); }
+  .corner.bl { bottom:6px; left:6px; transform:rotate(270deg); }
+  .jade-pin {
+    position:absolute; left:50%; top:-5px; width:9px; height:9px; z-index:4;
+    transform:translateX(-50%) rotate(45deg);
+    background:radial-gradient(circle at 35% 30%, #d8ecdc, #7ba086 72%);
+    border:1px solid rgba(216,201,144,.85);
+    box-shadow:0 0 7px rgba(155,190,165,.55), 0 1px 3px rgba(0,0,0,.5);
+  }
+  .side-tag {
+    position:absolute; left:-32px; top:96px;
+    writing-mode:vertical-rl; letter-spacing:8px;
+    font:600 11px 'Noto Serif SC',serif; color:rgba(216,201,144,.6);
+  }
+  .side-tag::before {
+    content:''; display:block; width:4px; height:4px; margin:0 auto 10px;
+    transform:rotate(45deg); background:rgba(216,201,144,.45);
+  }
+  .side-tag::after {
+    content:''; display:block; width:1px; height:34px; margin:10px auto 0;
+    background:linear-gradient(180deg, rgba(216,201,144,.4), transparent);
+  }
+
+  /* 额枋标题区 */
+  .lintel {
+    position:relative; height:62px; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(180deg,#131b16,#101713);
+    border-bottom:1px solid rgba(232,217,160,.38);
+    box-shadow:0 1px 0 rgba(0,0,0,.5), inset 0 1px 0 rgba(232,217,160,.06);
+    gap:18px; padding:0 26px;
+  }
+  .lintel .ll { flex:1; max-width:118px; height:1px;
+    background:linear-gradient(90deg, transparent, rgba(216,201,144,.55)); }
+  .lintel .ll.r { background:linear-gradient(270deg, transparent, rgba(216,201,144,.55)); }
+  .lintel h1 {
+    font:400 33px 'Ma Shan Zheng','Noto Serif SC',serif;
+    color:#d8c990; letter-spacing:6px; line-height:1;
+    text-shadow:0 0 14px rgba(212,160,90,.28), 0 2px 4px rgba(0,0,0,.6);
+    white-space:nowrap;
+  }
+  .seal {
+    width:25px; height:25px; border-radius:4px; flex:none;
+    background:linear-gradient(155deg,#b4342a,#8a211a);
+    color:#f2e8dd; font:400 14px/25px 'Ma Shan Zheng',serif; text-align:center;
+    transform:rotate(-5deg) translateY(1px);
+    box-shadow:inset 0 0 5px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.5);
+  }
+
+  /* ============ 页签 ============ */
+  .tabs { display:flex; justify-content:center; gap:44px; margin-top:14px; }
+  .tab {
+    position:relative; font:600 15px 'Noto Serif SC'; letter-spacing:4px;
+    color:rgba(200,194,178,.5); padding:5px 3px 8px;
+  }
+  .tab.sel { color:#e8d9a0; text-shadow:0 0 10px rgba(212,160,90,.25); }
+  .tab.sel::after {
+    content:''; position:absolute; left:-6px; right:-6px; bottom:0; height:1px;
+    background:linear-gradient(90deg, transparent, #d8c990, transparent);
+  }
+  .tab.sel::before {
+    content:''; position:absolute; left:50%; bottom:-3px; width:5px; height:5px;
+    transform:translateX(-50%) rotate(45deg);
+    background:#d8c990;
+  }
+
+  /* ============ 信息筹码 ============ */
+  .chips { display:flex; justify-content:space-between; margin:16px 26px 0; }
+  .well {
+    background:linear-gradient(180deg,#0c1310,#0e1512);
+    border:1px solid rgba(0,0,0,.55);
+    box-shadow:inset 0 2px 10px rgba(0,0,0,.72), inset 0 -1px 0 rgba(0,0,0,.35),
+               0 1px 0 rgba(232,217,160,.06);
+    border-radius:3px;
+  }
+  .chip {
+    display:flex; align-items:center; gap:9px; padding:8px 16px;
+  }
+  .chip img { width:17px; height:17px; opacity:.9; }
+  .chip .k { font:500 11px 'Noto Sans SC'; color:rgba(200,194,178,.7); letter-spacing:2px; }
+  .chip .v { font:600 16px 'Noto Serif SC'; color:#e8d9a0; font-variant-numeric:tabular-nums; line-height:1; }
+
+  /* ============ 掉落概览凹井 ============ */
+  .drops { margin:14px 26px 0; padding:10px 20px 14px; }
+  .drops .head {
+    display:flex; align-items:center; gap:14px; margin-bottom:6px;
+  }
+  .drops .head .t {
+    font:600 12px 'Noto Serif SC'; color:rgba(216,201,144,.75); letter-spacing:6px; text-indent:6px;
+  }
+  .drops .head .hl { flex:1; height:1px;
+    background:linear-gradient(90deg, transparent, rgba(216,201,144,.22), transparent); }
+  .rr { display:flex; align-items:center; height:36px; }
+  .rr + .rr { border-top:1px solid rgba(216,201,144,.06); }
+  .rr .dot {
+    width:8px; height:8px; border-radius:50%; flex:none; margin-right:12px;
+    background:var(--c); box-shadow:0 0 6px color-mix(in srgb, var(--c) 60%, transparent);
+  }
+  .rr .rname { width:52px; font:600 15px 'Noto Serif SC'; color:var(--c); letter-spacing:3px; }
+  .rr .rdesc { font:400 12px 'Noto Sans SC'; color:rgba(200,194,178,.72); letter-spacing:1px; }
+  .rr .leader { flex:1; margin:0 14px; border-bottom:1px dotted rgba(216,201,144,.22); transform:translateY(-4px); }
+  .rr .rpct { font:600 15px 'Noto Serif SC'; color:#efe8d5; font-variant-numeric:tabular-nums; min-width:44px; text-align:right; }
+
+  .fineprint {
+    margin:10px 26px 0; text-align:center;
+    font:400 11px 'Noto Sans SC'; color:rgba(200,194,178,.55); letter-spacing:2px;
+  }
+
+  /* ============ 按钮 ============ */
+  .actions { display:flex; gap:16px; margin:12px 26px 0; }
+  .btn {
+    flex:1; height:50px; border-radius:4px; cursor:default;
+    display:flex; align-items:center; justify-content:center; gap:9px;
+    font:600 16px 'Noto Serif SC'; letter-spacing:2px;
+  }
+  .btn img { width:16px; height:16px; }
+  .btn-primary {
+    background:linear-gradient(180deg,#6b5a1e,#4a3f16);
+    border:1px solid #8a7430;
+    color:#efe8d5; text-shadow:0 1px 2px rgba(0,0,0,.55);
+    box-shadow:inset 0 1px 0 rgba(232,217,160,.28), inset 0 -2px 4px rgba(0,0,0,.3),
+               0 5px 16px rgba(0,0,0,.5), 0 0 20px rgba(169,143,48,.12);
+  }
+  .btn-primary .price { color:#d8c990; }
+  .btn-ghost {
+    background:rgba(216,201,144,.04);
+    border:1px solid rgba(216,201,144,.42);
+    color:#d8c990;
+    box-shadow:inset 0 1px 0 rgba(232,217,160,.08), 0 4px 12px rgba(0,0,0,.35);
+  }
+  .btn-ghost img { opacity:.85; }
+
+  .back {
+    margin:16px auto 0; width:150px; height:38px;
+    display:flex; align-items:center; justify-content:center;
+    font:600 14px 'Noto Serif SC'; color:rgba(216,201,144,.62); letter-spacing:6px; text-indent:6px;
+    border-top:1px solid rgba(216,201,144,.14); border-bottom:1px solid rgba(216,201,144,.14);
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <!-- 夜山场景 -->
+  <div class="scene">
+    <div class="moon-glow"></div>
+    <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png" alt="">
+    <img class="bamboo bl" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo br" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <div class="lamp-glow"></div>
+    <img class="lantern" src="../game/src/assets/backgrounds/decor_lantern.png" alt="">
+    <span class="firefly" style="left:96px; top:220px; opacity:.45"></span>
+    <span class="firefly" style="left:64px; top:380px; opacity:.3"></span>
+    <span class="firefly" style="right:110px; top:180px; opacity:.4"></span>
+    <span class="firefly" style="right:76px; top:396px; opacity:.35"></span>
+    <div class="shade"></div>
+    <div class="vignette"></div>
+  </div>
+
+  <!-- 主面板 -->
+  <div class="panel">
+    <svg class="corner tl" viewBox="0 0 24 24"><path d="M1.5 22.5 V1.5 H22.5 M5.5 18.5 V5.5 H18.5 M9.5 14.5 V9.5 H14.5" fill="none" stroke="rgba(216,201,144,.7)" stroke-width="1.4"/></svg>
+    <svg class="corner tr" viewBox="0 0 24 24"><path d="M1.5 22.5 V1.5 H22.5 M5.5 18.5 V5.5 H18.5 M9.5 14.5 V9.5 H14.5" fill="none" stroke="rgba(216,201,144,.7)" stroke-width="1.4"/></svg>
+    <svg class="corner br" viewBox="0 0 24 24"><path d="M1.5 22.5 V1.5 H22.5 M5.5 18.5 V5.5 H18.5 M9.5 14.5 V9.5 H14.5" fill="none" stroke="rgba(216,201,144,.7)" stroke-width="1.4"/></svg>
+    <svg class="corner bl" viewBox="0 0 24 24"><path d="M1.5 22.5 V1.5 H22.5 M5.5 18.5 V5.5 H18.5 M9.5 14.5 V9.5 H14.5" fill="none" stroke="rgba(216,201,144,.7)" stroke-width="1.4"/></svg>
+    <i class="jade-pin"></i>
+    <em class="side-tag">百宝</em>
+
+    <header class="lintel">
+      <span class="ll"></span>
+      <h1>翻阅秘籍</h1>
+      <i class="seal">秘</i>
+      <span class="ll r"></span>
+    </header>
+
+    <nav class="tabs">
+      <span class="tab">局外成长</span>
+      <span class="tab sel">翻阅秘籍</span>
+    </nav>
+
+    <div class="chips">
+      <div class="chip well">
+        <img src="../game/src/assets/ui/icon_coin.png" alt="">
+        <span class="k">铜钱</span><span class="v">0</span>
+      </div>
+      <div class="chip well">
+        <img src="../game/src/assets/ui/icon_hourglass.png" alt="">
+        <span class="k">距保底</span><span class="v">20 次</span>
+      </div>
+    </div>
+
+    <section class="drops well">
+      <div class="head">
+        <span class="hl"></span><span class="t">掉落概览</span><span class="hl"></span>
+      </div>
+      <div class="rr" style="--c:#b8b3a4">
+        <i class="dot"></i><span class="rname">普通</span>
+        <span class="rdesc">残页 / 铜钱返还</span>
+        <span class="leader"></span><span class="rpct">65%</span>
+      </div>
+      <div class="rr" style="--c:#7d9b76">
+        <i class="dot"></i><span class="rname">精良</span>
+        <span class="rdesc">外观 / 成长碎片</span>
+        <span class="leader"></span><span class="rpct">25%</span>
+      </div>
+      <div class="rr" style="--c:#a99a20">
+        <i class="dot"></i><span class="rname">上乘</span>
+        <span class="rdesc">稀有心法碎片</span>
+        <span class="leader"></span><span class="rpct">9%</span>
+      </div>
+      <div class="rr" style="--c:#c00000">
+        <i class="dot"></i><span class="rname">绝学</span>
+        <span class="rdesc">称号卷轴</span>
+        <span class="leader"></span><span class="rpct">1%</span>
+      </div>
+    </section>
+
+    <p class="fineprint">20 次内至少 1 个精良或以上 · 重复收藏转为残页</p>
+
+    <div class="actions">
+      <div class="btn btn-primary">
+        <img src="../game/src/assets/ui/icon_scroll.png" alt="">
+        <span>翻阅一次</span><span class="price">· 300 铜钱</span>
+      </div>
+      <div class="btn btn-ghost">
+        <img src="../game/src/assets/ui/icon_scroll.png" alt="">
+        <span>翻阅十次 · 3000 铜钱</span>
+      </div>
+    </div>
+
+    <div class="back">返回</div>
+  </div>
+</div>
+</body>
+</html>

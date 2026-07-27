@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>青石山道 · UI 设计方向对比</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0f0c;
+    color: #e8e2d2;
+    font-family: 'Noto Sans SC', sans-serif;
+    padding: 48px 32px 96px;
+  }
+  header { text-align: center; margin-bottom: 56px; }
+  header h1 { font-family: 'Ma Shan Zheng', 'Noto Serif SC', serif; font-size: 44px; font-weight: 400; letter-spacing: 6px; color: #f0ead8; }
+  header p { margin-top: 12px; color: #8a8578; font-size: 14px; letter-spacing: 2px; }
+  .legend { display: flex; justify-content: center; gap: 32px; margin-top: 24px; font-size: 13px; color: #a99a20; }
+
+  .direction { max-width: 1560px; margin: 0 auto 72px; }
+  .direction-head { display: flex; align-items: baseline; gap: 18px; border-bottom: 1px solid rgba(169,154,32,.25); padding-bottom: 14px; margin-bottom: 10px; }
+  .direction-head .tag {
+    font-family: 'Ma Shan Zheng', serif; font-size: 30px; letter-spacing: 3px; color: #d8c990;
+  }
+  .direction-head .name { font-size: 15px; color: #e8e2d2; font-weight: 500; }
+  .direction-head .verdict { margin-left: auto; font-size: 12.5px; color: #8a8578; }
+  .direction-desc { font-size: 13px; color: #9a958a; line-height: 1.8; margin-bottom: 22px; max-width: 900px; }
+  .direction-desc b { color: #c8c2b2; font-weight: 500; }
+
+  .screens { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  @media (max-width: 1200px) { .screens { grid-template-columns: repeat(2, 1fr); } }
+  .screen { background: #101713; border: 1px solid rgba(169,154,32,.18); border-radius: 8px; overflow: hidden; transition: transform .18s ease, border-color .18s ease; }
+  .screen:hover { transform: translateY(-3px); border-color: rgba(169,154,32,.55); }
+  .screen img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; cursor: zoom-in; }
+  .screen .cap { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; font-size: 13px; color: #c8c2b2; }
+  .screen .cap a { color: #a99a20; text-decoration: none; font-size: 12px; border: 1px solid rgba(169,154,32,.4); padding: 2px 10px; border-radius: 4px; }
+  .screen .cap a:hover { background: rgba(169,154,32,.12); }
+
+  #lightbox {
+    position: fixed; inset: 0; background: rgba(5,8,6,.92); display: none;
+    align-items: center; justify-content: center; z-index: 99; cursor: zoom-out;
+  }
+  #lightbox img { max-width: 94vw; max-height: 92vh; box-shadow: 0 20px 80px rgba(0,0,0,.7); }
+  #lightbox.show { display: flex; }
+</style>
+</head>
+<body>
+<header>
+  <h1>青石山道 · UI 设计方向对比</h1>
+  <p>主菜单 / 翻阅秘籍 / 设置 / 暂停 —— 三个方向，点击图片放大，点「交互原型」看 HTML 版</p>
+  <div class="legend"><span>A · 宣纸画卷</span><span>B · 夜山客栈</span><span>C · 极简碑林</span></div>
+</header>
+
+<section class="direction">
+  <div class="direction-head">
+    <span class="tag">A</span><span class="name">宣纸画卷 —— 亮纸墨字，书卷气最浓</span>
+    <span class="verdict">✅ 辨识度最高、信息最清晰 ｜ ⚠️ 与暗色 HUD 跳跃大、暂停时偏亮</span>
+  </div>
+  <p class="direction-desc">宣纸面板（纸纹肌理 + 深墨线 + 哑光金细框 + 回纹角花）压在暗竹景上形成强对比；标题浓墨书法，选中行以<b>玉璧 + 竹青晕染</b>标记；抽卡概率为碑帖式竖排（色签 + 虚线引导 + 等宽数字）；印章朱砂落款。整体是「摊开的书卷」。</p>
+  <div class="screens">
+    <div class="screen"><img src="a-menu.png" alt="A 主菜单"><div class="cap"><span>主菜单</span><a href="a-menu.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="a-scripture.png" alt="A 翻阅秘籍"><div class="cap"><span>翻阅秘籍</span><a href="a-scripture.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="a-settings.png" alt="A 设置"><div class="cap"><span>设置</span><a href="a-settings.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="a-pause.png" alt="A 暂停"><div class="cap"><span>暂停</span><a href="a-pause.html" target="_blank">交互原型</a></div></div>
+  </div>
+</section>
+
+<section class="direction">
+  <div class="direction-head">
+    <span class="tag">B</span><span class="name">夜山客栈 —— 深色进阶，金玉材质层次</span>
+    <span class="verdict">✅ 与 HUD 最统一、材质感强、风险最小 ｜ ⚠️ 个性不如 A 张扬</span>
+  </div>
+  <p class="direction-desc">保留暗色但做出「面」：三层嵌套面板（外金线 / 墨绿微渐变 / 凹井阴影）+ 通栏额枋标题 + 玉饰 + <b>竖排侧签</b>（少侠 / 百宝 / 调律 / 歇脚）+ 灯笼暖光晕。金只做线与字、玉只做钮与饰，分工克制。</p>
+  <div class="screens">
+    <div class="screen"><img src="b-menu.png" alt="B 主菜单"><div class="cap"><span>主菜单</span><a href="b-menu.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="b-scripture.png" alt="B 翻阅秘籍"><div class="cap"><span>翻阅秘籍</span><a href="b-scripture.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="b-settings.png" alt="B 设置"><div class="cap"><span>设置</span><a href="b-settings.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="b-pause.png" alt="B 暂停"><div class="cap"><span>暂停</span><a href="b-pause.html" target="_blank">交互原型</a></div></div>
+  </div>
+</section>
+
+<section class="direction">
+  <div class="direction-head">
+    <span class="tag">C</span><span class="name">极简碑林 —— 无面板，字浮于景</span>
+    <span class="verdict">✅ 最现代、最自信 ｜ ⚠️ 信息承载弱、抽卡页偏单薄</span>
+  </div>
+  <p class="direction-desc">去掉一切面板，大书法字直接浮在竹林夜色上；菜单行是大字距宋体，<b>毛笔笔触下划线</b>做选中与 hover；印章点睛，底部雾气渐变。靠书法与留白撑气质。</p>
+  <div class="screens">
+    <div class="screen"><img src="c-menu.png" alt="C 主菜单"><div class="cap"><span>主菜单</span><a href="c-menu.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="c-scripture.png" alt="C 翻阅秘籍"><div class="cap"><span>翻阅秘籍</span><a href="c-scripture.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="c-settings.png" alt="C 设置"><div class="cap"><span>设置</span><a href="c-settings.html" target="_blank">交互原型</a></div></div>
+    <div class="screen"><img src="c-pause.png" alt="C 暂停"><div class="cap"><span>暂停</span><a href="c-pause.html" target="_blank">交互原型</a></div></div>
+  </div>
+</section>
+
+<div id="lightbox"><img id="lightbox-img" src="" alt=""></div>
+<script>
+  const box = document.getElementById('lightbox');
+  const boxImg = document.getElementById('lightbox-img');
+  document.querySelectorAll('.screen img').forEach(img => {
+    img.addEventListener('click', () => { boxImg.src = img.src; box.classList.add('show'); });
+  });
+  box.addEventListener('click', () => box.classList.remove('show'));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') box.classList.remove('show'); });
+</script>
+</body>
+</html>

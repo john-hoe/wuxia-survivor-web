@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>小样 F · 墨晕转场 —— 三案并排</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ background:#0a0f0c; }
+  body{
+    min-height:100%;
+    display:flex; flex-direction:column; align-items:center;
+    font-family:'Noto Sans SC',sans-serif; color:#e8e2d2;
+    padding:34px 24px 40px;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- 页眉 ---------- */
+  header{ text-align:center; margin-bottom:26px; }
+  header h1{
+    font-family:'Ma Shan Zheng','Kaiti SC','STKaiti',serif; font-weight:400;
+    font-size:38px; letter-spacing:6px; color:#f0ead8;
+  }
+  header h1 .seal{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:30px; height:30px; margin-left:12px; vertical-align:6px;
+    background:linear-gradient(155deg,#c53a30 0%,#b03028 55%,#9c2820 100%);
+    color:#fdf4e2; font-size:19px; letter-spacing:0;
+    border-radius:4px; transform:rotate(-3deg) translateY(1px);
+    box-shadow:inset 0 0 4px rgba(255,235,210,.35), inset 0 -2px 3px rgba(90,10,5,.4), 0 1px 2px rgba(20,26,18,.35);
+  }
+  header p{ margin-top:10px; font-size:12.5px; letter-spacing:2.5px; color:#8a8578; }
+
+  /* ---------- 三案并排 ---------- */
+  .board{ display:flex; gap:20px; }
+  .panel{
+    width:344px; padding:12px 12px 14px;
+    background:#101713;
+    border:1px solid rgba(169,154,32,.18); border-radius:8px;
+  }
+  .panel .phead{
+    display:flex; align-items:center; gap:10px; margin-bottom:10px;
+  }
+  .phead .tag{
+    flex:0 0 auto; width:26px; height:26px; border-radius:4px;
+    display:flex; align-items:center; justify-content:center;
+    font:700 13px 'Noto Serif SC',serif; color:#d8c990;
+    border:1px solid rgba(169,154,32,.5); background:rgba(169,154,32,.08);
+  }
+  .phead .name{
+    font-family:'Ma Shan Zheng','Kaiti SC','STKaiti',serif;
+    font-size:21px; letter-spacing:2px; color:#e8e2d2; line-height:1;
+  }
+  .phead .name small{
+    font-family:'Noto Sans SC',sans-serif; font-size:10.5px;
+    color:#8a8578; letter-spacing:1px; margin-left:7px;
+  }
+  .phead button{
+    margin-left:auto; flex:0 0 auto;
+    font-family:'Noto Sans SC',sans-serif; font-size:11.5px; letter-spacing:1.5px;
+    color:#a99a20; background:transparent; cursor:pointer;
+    border:1px solid rgba(169,154,32,.4); border-radius:4px;
+    padding:4px 12px;
+  }
+  .phead button:hover{ background:rgba(169,154,32,.12); }
+
+  /* ---------- 演示舞台（假游戏场景 + 墨晕层） ---------- */
+  .demo{
+    position:relative; width:320px; height:180px; margin:0 auto;
+    overflow:hidden; border-radius:4px;
+    outline:1px solid rgba(169,154,32,.14);
+    background:#070c09;
+  }
+  .scene{ position:absolute; inset:0; }
+  .scene .sky{
+    position:absolute; inset:0;
+    background:radial-gradient(130% 100% at 50% -8%, #1b261e 0%, #101911 46%, #070c09 100%);
+  }
+  .scene .gate{ position:absolute; left:50%; top:30px; width:258px; transform:translateX(-50%); opacity:.30; }
+  .scene .ground{
+    position:absolute; left:0; right:0; bottom:0; height:60px;
+    background:url('../game/src/assets/backgrounds/ground_qingshi_base.png') repeat;
+    background-size:150px; opacity:.45;
+    -webkit-mask-image:linear-gradient(to top,#000 52%,transparent 100%);
+            mask-image:linear-gradient(to top,#000 52%,transparent 100%);
+  }
+  .bamboo{ position:absolute; bottom:-2px; pointer-events:none; }
+  .bamboo.b1{ left:-26px; height:170px; opacity:.92; filter:brightness(.85) saturate(.9); }
+  .bamboo.b2{ left:42px;  height:106px; opacity:.34; filter:brightness(.55); }
+  .bamboo.b3{ right:-26px; height:170px; opacity:.92; transform:scaleX(-1); filter:brightness(.85) saturate(.9); }
+  .bamboo.b4{ right:44px; height:102px; opacity:.30; filter:brightness(.5); }
+  .hero{ position:absolute; left:50%; bottom:8px; width:44px; height:44px; overflow:hidden; transform:translateX(-50%); z-index:2; }
+  .hero img{ display:block; width:176px; height:44px; }
+  .herosh{
+    position:absolute; left:50%; bottom:8px; width:40px; height:7px; border-radius:50%;
+    transform:translateX(-50%); z-index:1;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(0,0,0,.5), transparent 75%);
+  }
+  .scene .vignette{
+    position:absolute; inset:0;
+    background:radial-gradient(92% 88% at 50% 44%, transparent 52%, rgba(3,6,4,.62) 100%);
+  }
+  /* 换景层：墨满时亮出（朱砂压暗，示意 Boss 波色温） */
+  .scene.s-alt{
+    opacity:0; transition:opacity .3s ease;
+    filter:brightness(.72) sepia(.4) hue-rotate(-16deg) saturate(1.5);
+  }
+  .demo.alt .s-alt{ opacity:1; }
+  canvas.ink{ position:absolute; inset:0; width:100%; height:100%; z-index:3; pointer-events:none; }
+
+  /* ---------- 适用标注 ---------- */
+  .usecase{
+    display:flex; align-items:baseline; gap:9px;
+    margin-top:11px; padding:8px 10px 0;
+    border-top:1px solid rgba(169,154,32,.14);
+  }
+  .usecase b{
+    flex:0 0 auto; font:600 12px 'Noto Serif SC',serif; letter-spacing:1.5px;
+    color:#d8c990;
+  }
+  .usecase span{ font-size:11px; line-height:1.6; color:#8a8578; }
+
+  /* ---------- 页脚技术条 ---------- */
+  footer{
+    margin-top:26px; max-width:1064px;
+    display:flex; align-items:center; gap:14px;
+    font-size:11.5px; letter-spacing:1px; color:#6a7568;
+  }
+  footer::before,footer::after{
+    content:''; flex:1; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(169,154,32,.3),transparent);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>墨晕转场 · 小样<span class="seal">墨</span></h1>
+  <p>同一画面 · 三种晕染路径并排 —— 封面瞬间换景（朱砂压暗示意 Boss 波），循环演示</p>
+</header>
+
+<div class="board">
+
+  <section class="panel" data-scheme="a">
+    <div class="phead">
+      <span class="tag">A</span>
+      <span class="name">圆墨中晕<small>墨滴中心晕开</small></span>
+      <button type="button">暂 停</button>
+    </div>
+    <div class="demo">
+      <div class="scene s-base">
+        <div class="sky"></div>
+        <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png" alt="">
+        <div class="ground"></div>
+        <img class="bamboo b2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b4" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b1" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b3" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <div class="herosh"></div>
+        <div class="hero"><img src="../game/src/assets/sprites/hero_shaoxia_idle.png" alt=""></div>
+        <div class="vignette"></div>
+      </div>
+      <div class="scene s-alt" aria-hidden="true"></div>
+      <canvas class="ink" width="480" height="270"></canvas>
+    </div>
+    <div class="usecase"><b>Boss 登场</b><span>墨自一点绽放，万众瞩目正中，仪式感最强</span></div>
+  </section>
+
+  <section class="panel" data-scheme="b">
+    <div class="phead">
+      <span class="tag">B</span>
+      <span class="name">斜锋扫墨<small>左上 → 右下</small></span>
+      <button type="button">暂 停</button>
+    </div>
+    <div class="demo">
+      <div class="scene s-base">
+        <div class="sky"></div>
+        <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png" alt="">
+        <div class="ground"></div>
+        <img class="bamboo b2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b4" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b1" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b3" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <div class="herosh"></div>
+        <div class="hero"><img src="../game/src/assets/sprites/hero_shaoxia_idle.png" alt=""></div>
+        <div class="vignette"></div>
+      </div>
+      <div class="scene s-alt" aria-hidden="true"></div>
+      <canvas class="ink" width="480" height="270"></canvas>
+    </div>
+    <div class="usecase"><b>场景切换</b><span>斜锋掠过如挥笔，方向明确，节奏最快</span></div>
+  </section>
+
+  <section class="panel" data-scheme="c">
+    <div class="phead">
+      <span class="tag">C</span>
+      <span class="name">三源聚墨<small>三点晕染汇合</small></span>
+      <button type="button">暂 停</button>
+    </div>
+    <div class="demo">
+      <div class="scene s-base">
+        <div class="sky"></div>
+        <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png" alt="">
+        <div class="ground"></div>
+        <img class="bamboo b2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b4" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b1" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <img class="bamboo b3" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+        <div class="herosh"></div>
+        <div class="hero"><img src="../game/src/assets/sprites/hero_shaoxia_idle.png" alt=""></div>
+        <div class="vignette"></div>
+      </div>
+      <div class="scene s-alt" aria-hidden="true"></div>
+      <canvas class="ink" width="480" height="270"></canvas>
+    </div>
+    <div class="usecase"><b>战斗结算</b><span>三源晕染汇合，由散到聚，余韵收束</span></div>
+  </section>
+
+</div>
+
+<footer>
+  <span>Canvas 双八度值噪声 + 阈值场预计算 ｜ 边缘高频扰动出「飞白」 ｜ 染 1.4s · 停 0.65s · 褪 1.1s ｜ 游戏内落地 = 方案四「墨晕溶解转场」PostFXPipeline（噪声图 + 阈值）</span>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============ 确定性伪随机 + 值噪声 ============ */
+  function mulberry32(a){
+    return function(){
+      a|=0; a=a+0x6D2B79F5|0;
+      var t=Math.imul(a^a>>>15,1|a);
+      t=t+Math.imul(t^t>>>7,61|t)^t;
+      return ((t^t>>>14)>>>0)/4294967296;
+    };
+  }
+  function makeNoise(seed,cx,cy){
+    cy=cy||cx;
+    var sx=cx+2, sy=cy+2, g=new Float32Array(sx*sy), rng=mulberry32(seed);
+    for(var i=0;i<g.length;i++) g[i]=rng();
+    function sm(t){ return t*t*(3-2*t); }
+    function wrap(t){ t=t%1; return t<0?t+1:t; }
+    return function(u,v){
+      u=wrap(u); v=wrap(v);
+      var fx=u*cx, fy=v*cy;
+      var ix=Math.floor(fx), iy=Math.floor(fy);
+      var tx=sm(fx-ix), ty=sm(fy-iy);
+      var p=iy*sx+ix;
+      var v00=g[p], v10=g[p+1], v01=g[p+sx], v11=g[p+sx+1];
+      return v00*(1-tx)*(1-ty)+v10*tx*(1-ty)+v01*(1-tx)*ty+v11*tx*ty;
+    };
+  }
+  var n1=makeNoise(11,6),   // 低频：大块墨势
+      n2=makeNoise(23,16),  // 中频：纸纹纤维
+      n3=makeNoise(37,44),  // 高频：飞白与飞沫
+      n4=makeNoise(53,80);  // 超细：墨内浓淡
+
+  /* ============ 画布与阈值场 ============ */
+  var W=480, H=270, N=W*H;
+
+  function buildField(shapeFn){
+    var f=new Float32Array(N), max=0, x, y, i, v;
+    for(y=0;y<H;y++)for(x=0;x<W;x++){
+      var u=(x+0.5)/W, w=(y+0.5)/H;
+      v=shapeFn(u,w);
+      i=y*W+x; f[i]=v; if(v>max)max=v;
+    }
+    for(i=0;i<N;i++) f[i]/=max;
+    // 排序副本 → 分位数映射：t 直接对应墨面覆盖率，匀速推进
+    var sorted=Float32Array.from(f);
+    sorted.sort();
+    return { f:f, sorted:sorted };
+  }
+  // A · 圆墨中晕：中心距离场 + 噪声破形
+  function shapeA(u,v){
+    var d=Math.hypot(u-0.5,(v-0.52)*1.18)/0.62;
+    return d*0.72 + n1(u,v)*0.28 + n2(u,v)*0.10;
+  }
+  // B · 斜锋扫墨：左上→右下 对角推进
+  function shapeB(u,v){
+    var d=(u*1.04+v*0.96)/2;
+    return d*0.84 + n1(u,v)*0.34 + n2(u,v)*0.10;
+  }
+  // C · 三源聚墨：三点距离场取最小（各自晕染、自然汇合）
+  function shapeC(u,v){
+    var d=Math.min(
+      Math.hypot(u-0.26,(v-0.34)*1.15),
+      Math.hypot(u-0.74,(v-0.30)*1.15),
+      Math.hypot(u-0.50,(v-0.78)*1.15)
+    )/0.40;
+    return d*0.78 + n1(u,v)*0.24 + n2(u,v)*0.08;
+  }
+  var FIELDS={ a:buildField(shapeA), b:buildField(shapeB), c:buildField(shapeC) };
+
+  // 高频辅助场（每像素预取，避免帧内重复采样）
+  var HF=new Float32Array(N), SP=new Float32Array(N), FINE=new Float32Array(N);
+  // 干笔丝：各案沿不同笔向拉伸的条纹噪声（A 斜锋 26° / B 沿扫向 45° / C 反锋 -20°）
+  var ST={ a:new Float32Array(N), b:new Float32Array(N), c:new Float32Array(N) };
+  (function(){
+    var stA=makeNoise(71,3,34), stB=makeNoise(83,3,34), stC=makeNoise(97,3,34);
+    var cosA=Math.cos(0.45), sinA=Math.sin(0.45);
+    var cosB=Math.cos(0.785), sinB=Math.sin(0.785);
+    var cosC=Math.cos(-0.35), sinC=Math.sin(-0.35);
+    for(var y=0;y<H;y++)for(var x=0;x<W;x++){
+      var u=(x+0.5)/W, v=(y+0.5)/H, i=y*W+x;
+      HF[i]=n3(u,v);
+      // 飞沫采样量化到 1/3 分辨率 → 溅点为 3px 小块，缩略后仍可见
+      var qu=Math.floor(u*160)/160, qv=Math.floor(v*90)/90;
+      SP[i]=n3(1-qu+0.37,qv*0.83+0.11);
+      FINE[i]=n4(u,v);
+      ST.a[i]=stA(u*cosA-v*sinA, u*sinA+v*cosA);
+      ST.b[i]=stB(u*cosB-v*sinB, u*sinB+v*cosB);
+      ST.c[i]=stC(u*cosC-v*sinC, u*sinC+v*cosC);
+    }
+  })();
+
+  /* ============ 墨晕渲染 ============ */
+  // t ∈ [0,1]：0=无墨 1=满墨。分位数映射 → t 即覆盖率，物理上合「墨面积匀速生长」。
+  function render(panel,t){
+    t=Math.max(0,Math.min(1,t));
+    var S=panel.field.sorted;
+    var idx=Math.floor(t*(N-1));
+    var thr=S[idx]+0.0008;
+    if(t>=0.995)thr=S[N-1]+0.30;            // 满墨时压实，不留飞白尾丝
+    if(t<=0.002)thr=S[0]-0.2;               // 起始无墨
+    var F=panel.field.f, d=panel.img.data, STK=panel.st;
+    for(var i=0;i<N;i++){
+      var f=F[i], inside=thr-f, a=0;
+      if(inside>0){
+        var m=inside/0.09;                  // 边缘带宽度（阈值场单位）
+        var st=STK[i];
+        if(m>=1){
+          a=240+(FINE[i]-0.5)*22;           // 墨体：纸纹浓淡
+          if(m<1.9&&st>0.58){               // 干笔丝：墨缘内的飞白条纹，越深越淡
+            var g=(st-0.58)/0.42, deep=(1.9-m)/0.9;
+            a*=1-0.8*g*deep;
+          }
+        }else{
+          var k=m*(0.22+1.3*HF[i]);         // 飞白：高频扰动撕出不规则干笔
+          k*=(0.4+0.9*st);                  // 笔向条纹叠入 → 边缘成簇成丝
+          if(k>1)k=1; if(k<0)k=0;
+          a=k*246;
+        }
+      }else if(inside>-0.045){
+        a=30*(1+inside/0.045);              // 水痕灰晕（墨锋外的洇水）
+      }else if(inside>-0.11&&SP[i]>0.958){
+        a=205;                              // 飞沫：前锋前的溅点
+      }
+      var o=i*4;
+      d[o]=13; d[o+1]=16; d[o+2]=20; d[o+3]=a;
+    }
+    panel.ctx.putImageData(panel.img,0,0);
+  }
+
+  /* ============ 时间线：染→停→褪→歇 循环 ============ */
+  var TL={ cover:1400, holdFull:650, reveal:1100, holdEmpty:800 };
+  var CYCLE=TL.cover+TL.holdFull+TL.reveal+TL.holdEmpty;
+
+  var panels=[];
+  document.querySelectorAll(".panel").forEach(function(el,idx){
+    var scheme=el.getAttribute("data-scheme");
+    var demo=el.querySelector(".demo");
+    var base=el.querySelector(".s-base");
+    var alt=el.querySelector(".s-alt");
+    alt.innerHTML=base.innerHTML;           // 换景层 = 同景 + 朱砂滤镜
+    var cv=el.querySelector("canvas.ink");
+    var p={
+      el:el, demo:demo, btn:el.querySelector("button"),
+      ctx:cv.getContext("2d"), img:null, field:FIELDS[scheme], st:ST[scheme],
+      playing:true, start:performance.now()+idx*260, pausedAt:0, alt:false
+    };
+    p.img=p.ctx.createImageData(W,H);
+    panels.push(p);
+    p.btn.addEventListener("click",function(){
+      if(p.playing){
+        p.playing=false; p.pausedAt=(performance.now()-p.start)%CYCLE;
+        p.btn.textContent="播 放";
+      }else{
+        p.playing=true; p.start=performance.now()-p.pausedAt;
+        p.btn.textContent="暂 停";
+      }
+    });
+  });
+
+  function setAlt(p,want){
+    if(p.alt===want)return;
+    p.alt=want; p.demo.classList.toggle("alt",want);
+  }
+  function clamp01(t){ return t<0?0:(t>1?1:t); }
+
+  function tick(now){
+    for(var i=0;i<panels.length;i++){
+      var p=panels[i];
+      if(!p.playing)continue;
+      var el=(now-p.start)%CYCLE, t, alt;
+      if(el<TL.cover){ t=el/TL.cover; alt=false; }
+      else if(el<TL.cover+TL.holdFull){ t=1; alt=true; }
+      else if(el<TL.cover+TL.holdFull+TL.reveal){ t=1-(el-TL.cover-TL.holdFull)/TL.reveal; alt=true; }
+      else { t=0; alt=false; }
+      setAlt(p,alt);
+      render(p,clamp01(t));
+    }
+    requestAnimationFrame(tick);
+  }
+
+  /* ============ 截图定帧：?t=0.55（染） / ?t=r0.4（褪） ============ */
+  var q=new URLSearchParams(location.search), frozen=q.get("t");
+  if(frozen!==null){
+    var rev=false, tv=parseFloat(frozen);
+    if(frozen.charAt(0)==="r"){ rev=true; tv=parseFloat(frozen.slice(1)); }
+    if(isNaN(tv))tv=0;
+    tv=clamp01(tv);
+    panels.forEach(function(p){
+      p.playing=false; p.btn.textContent="播 放";
+      setAlt(p, rev || tv>=0.985);
+      render(p, rev ? 1-tv : tv);
+    });
+  }else{
+    requestAnimationFrame(tick);
+  }
+})();
+</script>
+</body>
+</html>

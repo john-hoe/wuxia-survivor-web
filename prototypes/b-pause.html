@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>暂停 · 方向B 夜山客栈</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#0a0f0c;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Noto Sans SC',sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .stage {
+    width:960px; height:540px; position:relative; overflow:hidden;
+    background:#0d1411;
+  }
+
+  /* ============ 假游戏场景 ============ */
+  .game { position:absolute; inset:0; }
+  .soil {
+    position:absolute; inset:0;
+    background:url('../game/src/assets/backgrounds/ground_qingshi_base.png') repeat;
+    background-size:380px;
+    filter:brightness(.8) saturate(.85);
+  }
+  .soil::after {
+    content:''; position:absolute; inset:0;
+    background:linear-gradient(180deg, rgba(8,12,10,.45), rgba(8,12,10,.08) 40%, rgba(8,12,10,.35));
+  }
+  .gate {
+    position:absolute; left:180px; top:26px; width:600px;
+    opacity:.45; filter:brightness(2.0) saturate(.5) blur(.6px);
+  }
+  .bamboo { position:absolute; bottom:0; height:470px; filter:brightness(.55) saturate(.75) contrast(1.05); }
+  .bamboo.bl { left:-80px; }
+  .bamboo.br { right:-80px; transform:scaleX(-1); }
+  .bamboo.bl2 { left:60px; bottom:130px; height:250px; opacity:.55; filter:brightness(.4) saturate(.7) blur(1px); }
+  .bamboo.br2 { right:60px; bottom:130px; height:250px; opacity:.55; transform:scaleX(-1); filter:brightness(.4) saturate(.7) blur(1px); }
+
+  .unit { position:absolute; overflow:hidden; }
+  .unit img { filter:brightness(1.12); }
+  .unit .shadow {
+    position:absolute; left:50%; bottom:-4px; transform:translateX(-50%);
+    width:78%; height:12px; border-radius:50%;
+    background:radial-gradient(ellipse, rgba(0,0,0,.5), transparent 70%);
+  }
+  .hero-u { left:166px; top:302px; width:118px; height:118px; z-index:4; }
+  .hero-u img { width:472px; height:118px; display:block; }
+  .bandit-u { width:86px; height:86px; z-index:3; }
+  .bandit-u img { width:344px; height:86px; display:block; }
+  .bandit-a { left:36px; top:392px; }
+  .bandit-b { left:800px; top:352px; transform:scaleX(-1); }
+
+  /* 假 HUD */
+  .hud {
+    position:absolute; left:0; right:0; top:0; height:52px; z-index:6;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 16px;
+    background:linear-gradient(180deg, rgba(5,9,7,.65), transparent);
+  }
+  .hud .left { display:flex; align-items:center; gap:10px; }
+  .lvl {
+    width:34px; height:34px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font:600 15px 'Noto Serif SC'; color:#e8d9a0;
+    background:linear-gradient(180deg,#0c1310,#0e1512);
+    border:1px solid rgba(216,201,144,.5);
+    box-shadow:inset 0 1px 4px rgba(0,0,0,.7);
+  }
+  .hpbar {
+    width:170px; height:14px; border-radius:3px; position:relative;
+    background:#0b110e; border:1px solid rgba(0,0,0,.6);
+    box-shadow:inset 0 1px 3px rgba(0,0,0,.8), 0 1px 0 rgba(232,217,160,.06);
+    overflow:hidden;
+  }
+  .hpbar i {
+    position:absolute; inset:2px; border-radius:2px;
+    background:linear-gradient(180deg,#7a2e26,#5c1f1a);
+  }
+  .hpbar span {
+    position:absolute; inset:0; text-align:center;
+    font:500 9px/14px 'Noto Sans SC'; color:rgba(239,232,213,.85); letter-spacing:1px;
+  }
+  .hud .right { display:flex; align-items:center; gap:18px; }
+  .hstat { display:flex; align-items:center; gap:7px; }
+  .hstat img { width:15px; height:15px; opacity:.85; }
+  .hstat .k { font:500 10px 'Noto Sans SC'; color:rgba(200,194,178,.75); letter-spacing:2px; }
+  .hstat .v { font:600 15px 'Noto Serif SC'; color:#efe8d5; font-variant-numeric:tabular-nums; }
+
+  /* 暂停压暗 */
+  .dim {
+    position:absolute; inset:0; z-index:8;
+    background:rgba(5,9,7,.5);
+    backdrop-filter:blur(1.2px) saturate(.85);
+    -webkit-backdrop-filter:blur(1.2px) saturate(.85);
+  }
+  .lamp-glow {
+    position:absolute; z-index:9; right:130px; top:-120px; width:520px; height:460px;
+    background:radial-gradient(circle at 55% 35%, rgba(212,160,90,.11), rgba(212,160,90,.045) 45%, transparent 68%);
+  }
+  .vignette { position:absolute; inset:0; z-index:9;
+    background:radial-gradient(ellipse 76% 70% at 50% 47%, transparent 50%, rgba(3,6,5,.62)); }
+
+  /* ============ 面板 · 三层结构 ============ */
+  .panel {
+    position:absolute; left:285px; top:58px; width:390px; height:424px; z-index:10;
+    background:linear-gradient(180deg,#1b2620 0%,#16201a 34%,#111a15 100%);
+    border:1px solid rgba(216,201,144,.42);
+    box-shadow:0 24px 60px rgba(0,0,0,.68), 0 0 90px rgba(212,160,90,.08),
+               inset 0 0 40px rgba(0,0,0,.25);
+  }
+  .panel::before {
+    content:''; position:absolute; inset:5px;
+    border:1px solid rgba(216,201,144,.13); pointer-events:none;
+  }
+  .corner { position:absolute; width:20px; height:20px; z-index:3; }
+  .corner.tl { top:6px; left:6px; }
+  .corner.tr { top:6px; right:6px; transform:rotate(90deg); }
+  .corner.br { bottom:6px; right:6px; transform:rotate(180deg); }
+  .corner.bl { bottom:6px; left:6px; transform:rotate(270deg); }
+  .jade-pin {
+    position:absolute; left:50%; top:-5px; width:9px; height:9px; z-index:4;
+    transform:translateX(-50%) rotate(45deg);
+    background:radial-gradient(circle at 35% 30%, #d8ecdc, #7ba086 72%);
+    border:1px solid rgba(216,201,144,.85);
+    box-shadow:0 0 7px rgba(155,190,165,.55), 0 1px 3px rgba(0,0,0,.5);
+  }
+  .side-tag {
+    position:absolute; left:-32px; top:84px;
+    writing-mode:vertical-rl; letter-spacing:8px;
+    font:600 11px 'Noto Serif SC',serif; color:rgba(216,201,144,.6);
+  }
+  .side-tag::before {
+    content:''; display:block; width:4px; height:4px; margin:0 auto 10px;
+    transform:rotate(45deg); background:rgba(216,201,144,.45);
+  }
+  .side-tag::after {
+    content:''; display:block; width:1px; height:34px; margin:10px auto 0;
+    background:linear-gradient(180deg, rgba(216,201,144,.4), transparent);
+  }
+
+  /* 额枋标题区 */
+  .lintel {
+    position:relative; height:62px; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(180deg,#131b16,#101713);
+    border-bottom:1px solid rgba(232,217,160,.38);
+    box-shadow:0 1px 0 rgba(0,0,0,.5), inset 0 1px 0 rgba(232,217,160,.06);
+    gap:16px; padding:0 24px;
+  }
+  .lintel .ll { flex:1; max-width:88px; height:1px;
+    background:linear-gradient(90deg, transparent, rgba(216,201,144,.55)); }
+  .lintel .ll.r { background:linear-gradient(270deg, transparent, rgba(216,201,144,.55)); }
+  .lintel h1 {
+    font:400 32px 'Ma Shan Zheng','Noto Serif SC',serif;
+    color:#d8c990; letter-spacing:6px; line-height:1;
+    text-shadow:0 0 14px rgba(212,160,90,.28), 0 2px 4px rgba(0,0,0,.6);
+    white-space:nowrap;
+  }
+  .seal {
+    width:24px; height:24px; border-radius:4px; flex:none;
+    background:linear-gradient(155deg,#b4342a,#8a211a);
+    color:#f2e8dd; font:400 13px/24px 'Ma Shan Zheng',serif; text-align:center;
+    transform:rotate(-5deg) translateY(1px);
+    box-shadow:inset 0 0 5px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.5);
+  }
+
+  /* 菜单行 */
+  .rows { margin:24px 22px 0; border-top:1px solid rgba(216,201,144,.09); }
+  .row {
+    position:relative; height:57px; display:flex; align-items:center; justify-content:center;
+    border-bottom:1px solid rgba(216,201,144,.09);
+  }
+  .row span {
+    font:600 19px 'Noto Serif SC'; color:#efe8d5; letter-spacing:9px; text-indent:9px;
+    text-shadow:0 1px 3px rgba(0,0,0,.55);
+  }
+  .row .jade-bar {
+    position:absolute; left:12px; top:50%; transform:translateY(-50%);
+    width:3px; height:20px; border-radius:2px;
+    background:linear-gradient(180deg,#c4dccb,#7ba086);
+    box-shadow:0 0 6px rgba(155,190,165,.5);
+    opacity:0;
+  }
+  .row.is-hover { background:rgba(255,255,255,.04); }
+  .row.is-hover .jade-bar { opacity:1; }
+  .row.is-hover span { color:#e8d9a0; text-shadow:0 0 12px rgba(212,160,90,.3), 0 1px 3px rgba(0,0,0,.55); }
+
+  .hint {
+    margin-top:18px; text-align:center;
+    font:400 10px 'Noto Sans SC'; color:rgba(200,194,178,.42); letter-spacing:3px;
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <!-- 假游戏画面 -->
+  <div class="game">
+    <div class="soil"></div>
+    <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png" alt="">
+    <img class="bamboo bl2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo br2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo bl" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo br" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <div class="unit bandit-u bandit-a">
+      <img src="../game/src/assets/sprites/enemy_bandit_grunt_walk.png" alt="">
+      <i class="shadow"></i>
+    </div>
+    <div class="unit bandit-u bandit-b">
+      <img src="../game/src/assets/sprites/enemy_bandit_grunt_walk.png" alt="">
+      <i class="shadow"></i>
+    </div>
+    <div class="unit hero-u">
+      <img src="../game/src/assets/sprites/hero_shaoxia_idle.png" alt="">
+      <i class="shadow"></i>
+    </div>
+    <div class="hud">
+      <div class="left">
+        <span class="lvl">1</span>
+        <div class="hpbar"><i></i><span>生命 100 / 100</span></div>
+      </div>
+      <div class="right">
+        <span class="hstat">
+          <img src="../game/src/assets/ui/icon_hourglass.png" alt="">
+          <span class="k">时间</span><span class="v">0:06</span>
+        </span>
+        <span class="hstat">
+          <img src="../game/src/assets/ui/icon_kill.png" alt="">
+          <span class="k">击杀</span><span class="v">2</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div class="dim"></div>
+  <div class="lamp-glow"></div>
+  <div class="vignette"></div>
+
+  <!-- 暂停面板 -->
+  <div class="panel">
+    <svg class="corner tl" viewBox="0 0 24 24"><path d="M1.5 22.5 V1.5 H22.5 M5.5 18.5 V5.5 H18.5 M9.5 14.5 V9.5 H14.5" fill="none" stroke="rgba(216,201,144,.7)" stroke-width="1.4"/></svg>
+    <svg class="corner tr" viewBox="0 0 24 24"><path d="M1.5 22.5 V1.5 H22.5 M5.5 18.5 V5.5 H18.5 M9.5 14.5 V9.5 H14.5" fill="none" stroke="rgba(216,201,144,.7)" stroke-width="1.4"/></svg>
+    <svg class="corner br" viewBox="0 0 24 24"><path d="M1.5 22.5 V1.5 H22.5 M5.5 18.5 V5.5 H18.5 M9.5 14.5 V9.5 H14.5" fill="none" stroke="rgba(216,201,144,.7)" stroke-width="1.4"/></svg>
+    <svg class="corner bl" viewBox="0 0 24 24"><path d="M1.5 22.5 V1.5 H22.5 M5.5 18.5 V5.5 H18.5 M9.5 14.5 V9.5 H14.5" fill="none" stroke="rgba(216,201,144,.7)" stroke-width="1.4"/></svg>
+    <i class="jade-pin"></i>
+    <em class="side-tag">歇脚</em>
+
+    <header class="lintel">
+      <span class="ll"></span>
+      <h1>暂停</h1>
+      <i class="seal">歇</i>
+      <span class="ll r"></span>
+    </header>
+
+    <nav class="rows">
+      <div class="row is-hover">
+        <i class="jade-bar"></i>
+        <span>继续</span>
+      </div>
+      <div class="row">
+        <i class="jade-bar"></i>
+        <span>重新开始</span>
+      </div>
+      <div class="row">
+        <i class="jade-bar"></i>
+        <span>回主菜单</span>
+      </div>
+      <div class="row">
+        <i class="jade-bar"></i>
+        <span>设置</span>
+      </div>
+    </nav>
+
+    <p class="hint">按 ESC 返回战斗</p>
+  </div>
+</div>
+</body>
+</html>

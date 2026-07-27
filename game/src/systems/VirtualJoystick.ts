@@ -11,6 +11,7 @@ export class VirtualJoystick {
   private readonly base: Phaser.GameObjects.Arc;
   private readonly thumb: Phaser.GameObjects.Arc;
   private readonly touchZone = new Phaser.Geom.Rectangle();
+  private readonly touchCapable: boolean;
   private readonly visualRadius = 64;
   private readonly outputRadius = 48;
   private readonly deadZoneRadius = 6.4;
@@ -25,6 +26,7 @@ export class VirtualJoystick {
   private outputY = 0;
 
   constructor(private readonly scene: Phaser.Scene) {
+    this.touchCapable = scene.sys.game.device.input.touch;
     this.updateLayout();
 
     this.base = scene.add.circle(this.baseX, this.baseY, this.visualRadius, 0x0f1712, this.restingBaseAlpha)
@@ -35,6 +37,13 @@ export class VirtualJoystick {
       .setStrokeStyle(2, 0xf7f0d0, 0.72)
       .setDepth(921)
       .setScrollFactor(0);
+
+    if (!this.touchCapable) {
+      // 桌面端隐藏虚拟摇杆，键盘操作无需任何触控监听。
+      this.base.setVisible(false);
+      this.thumb.setVisible(false);
+      return;
+    }
 
     this.scene.input.on(Phaser.Input.Events.POINTER_DOWN, this.handlePointerDown, this);
     this.scene.input.on(Phaser.Input.Events.POINTER_MOVE, this.handlePointerMove, this);
@@ -69,6 +78,10 @@ export class VirtualJoystick {
     }
 
     this.activePointerId = pointer.id;
+    // 动态摇杆：落点即摇杆中心（钳制在屏幕内并避开顶部 HUD 区）。
+    this.baseX = Phaser.Math.Clamp(pointer.x, 56, this.scene.scale.width - 56);
+    this.baseY = Phaser.Math.Clamp(pointer.y, 152, this.scene.scale.height - 40);
+    this.base.setPosition(this.baseX, this.baseY);
     this.updateOutput(pointer);
     this.base.setAlpha(this.pressedBaseAlpha);
     this.thumb.setAlpha(this.pressedThumbAlpha);
@@ -88,6 +101,8 @@ export class VirtualJoystick {
     }
 
     this.activePointerId = undefined;
+    this.updateLayout();
+    this.base.setPosition(this.baseX, this.baseY);
     this.resetOutput();
   }
 
@@ -126,7 +141,7 @@ export class VirtualJoystick {
   private updateLayout(): void {
     this.baseX = 104;
     this.baseY = this.scene.scale.height - 104;
-    this.touchZone.setTo(0, this.scene.scale.height * 0.55, this.scene.scale.width * 0.38, this.scene.scale.height * 0.45);
+    this.touchZone.setTo(0, 96, this.scene.scale.width, this.scene.scale.height - 96);
   }
 
   private resetOutput(): void {

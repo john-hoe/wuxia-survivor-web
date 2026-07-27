@@ -13,13 +13,13 @@ export class DebugPanel {
       fontFamily: "monospace",
       fontSize: "12px",
       lineSpacing: 0
-    });
+    }).setResolution(2);
     this.rightText = scene.add.text(x + 228, y, "", {
       color: "#d7f7d1",
       fontFamily: "monospace",
       fontSize: "12px",
       lineSpacing: 0
-    });
+    }).setResolution(2);
     this.leftText.setDepth(1000);
     this.rightText.setDepth(1000);
     this.leftText.setScrollFactor(0);

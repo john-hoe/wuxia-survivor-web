@@ -12,6 +12,7 @@ import {
 import type { EnemyDamageResult } from "./EnemyDirectorSystem";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
+import { JuiceSystem } from "./JuiceSystem";
 
 type Point = {
   x: number;
@@ -211,7 +212,9 @@ export class ProgressionSystem {
         gem.trailCooldownMs = Math.max(0, gem.trailCooldownMs - deltaMs);
         gem.magnetAgeMs += deltaMs;
         const accelerationRatio = Phaser.Math.Clamp(gem.magnetAgeMs / MAGNET_ACCELERATION_MS, 0, 1);
-        const speed = Phaser.Math.Linear(INITIAL_MAGNET_SPEED_PX_PER_SECOND, MAX_MAGNET_SPEED_PX_PER_SECOND, accelerationRatio);
+        // Quad.in：吸附终段加速更陡，"飞入"感更强
+        const easedRatio = accelerationRatio * accelerationRatio;
+        const speed = Phaser.Math.Linear(INITIAL_MAGNET_SPEED_PX_PER_SECOND, MAX_MAGNET_SPEED_PX_PER_SECOND, easedRatio);
         const toHeroX = heroWorld.x - gem.worldX;
         const toHeroY = heroWorld.y - gem.worldY;
         const length = Math.hypot(toHeroX, toHeroY);
@@ -234,6 +237,10 @@ export class ProgressionSystem {
   private collectGem(index: number, gem: InnerPowerGemRuntime): void {
     this.innerPower += gem.value;
     this.options.playSfx("inner_power_pickup");
+    // 拾取反馈：收集点金青闪光 + 内力收益金色飘字
+    const juice = JuiceSystem.get(this.scene);
+    juice.pickupSparkle(gem.view.x, gem.view.y);
+    juice.damageNumber(gem.view.x, gem.view.y - 6, `+${gem.value}`, "gold");
     eventBus.emit("inner_power_gem_collected", {
       runtimeId: gem.runtimeId,
       tier: gem.tier,
@@ -357,9 +364,21 @@ export class ProgressionSystem {
       .setRotation(angle)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.magnetTrails.push(trail);
+    const cleanupTrail = (): void => {
+      this.scene.tweens.killTweensOf(trail);
+      const trailIndex = this.magnetTrails.indexOf(trail);
+      if (trailIndex >= 0) {
+        this.magnetTrails.splice(trailIndex, 1);
+      }
+      if (trail.active) {
+        trail.destroy();
+      }
+    };
     const animationKey = getArtAnimationKey("vfx_inner_magnet_trail");
     if (this.scene.anims.exists(animationKey)) {
       trail.play(animationKey);
+      // 一次性动画（loop:false）播完兜底销毁；通常 240ms Tween 先结束
+      trail.once(Phaser.Animations.Events.ANIMATION_COMPLETE, cleanupTrail);
     }
     this.scene.tweens.add({
       targets: trail,
@@ -367,13 +386,7 @@ export class ProgressionSystem {
       scale: 0.38,
       duration: 240,
       ease: "Quad.easeOut",
-      onComplete: () => {
-        const trailIndex = this.magnetTrails.indexOf(trail);
-        if (trailIndex >= 0) {
-          this.magnetTrails.splice(trailIndex, 1);
-        }
-        trail.destroy();
-      }
+      onComplete: cleanupTrail
     });
   }
 

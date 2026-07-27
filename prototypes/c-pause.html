@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>暂停 · 方向C 极简碑林</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#0a0f0c;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .frame {
+    position:relative; width:960px; height:540px; overflow:hidden;
+    background:#0d130e;
+    box-shadow:0 0 0 1px rgba(255,255,255,.05), 0 24px 80px rgba(0,0,0,.6);
+  }
+  /* ---------- 假游戏画面 ---------- */
+  .game { position:absolute; inset:0; filter:brightness(.72) saturate(.85); }
+  .ground {
+    position:absolute; inset:0;
+    background:url("../game/src/assets/backgrounds/ground_qingshi_base.png") repeat;
+    background-size:360px 360px;
+  }
+  .g-shade { position:absolute; inset:0; background:radial-gradient(90% 80% at 50% 46%, rgba(20,32,24,.1) 40%, rgba(8,14,10,.6) 100%); }
+  .gate {
+    position:absolute; left:50%; top:24px; width:560px;
+    transform:translateX(-50%); opacity:.95;
+  }
+  .bamboo { position:absolute; height:420px; bottom:auto; }
+  .bamboo.b1 { left:-70px; top:-40px; }
+  .bamboo.b2 { right:-70px; top:-30px; transform:scaleX(-1); }
+  .bamboo.b3 { left:120px; bottom:-90px; height:360px; opacity:.8; }
+  .bamboo.b4 { right:150px; bottom:-70px; height:330px; opacity:.8; transform:scaleX(-1); }
+  .spr { position:absolute; overflow:hidden; }
+  .spr img { display:block; }
+  .hero { left:calc(50% - 64px); top:406px; width:128px; height:128px; }
+  .hero img { width:512px; height:128px; }
+  .foe { width:96px; height:96px; }
+  .foe img { width:384px; height:96px; }
+  .foe.f1 { left:calc(50% - 250px); top:170px; }
+  .foe.f2 { left:calc(50% + 160px); top:150px; transform:scaleX(-1); }
+  .foe.f3 { left:calc(50% + 210px); top:300px; transform:scaleX(-1); }
+  /* 暂停压暗 */
+  .dim { position:absolute; inset:0; background:rgba(5,9,7,.5); }
+  .dim-v { position:absolute; inset:0; background:radial-gradient(86% 76% at 50% 46%, rgba(0,0,0,0) 46%, rgba(3,6,4,.5) 100%); }
+  .mist {
+    position:absolute; left:0; right:0; bottom:0; height:30%;
+    background:linear-gradient(to top, rgba(238,241,234,.07) 0%, rgba(238,241,234,0) 100%);
+  }
+  /* ---------- 内容层 ---------- */
+  .content { position:absolute; inset:0; }
+  .title-block { position:absolute; top:64px; left:0; right:0; text-align:center; }
+  h1.title {
+    display:inline-block; vertical-align:baseline;
+    font-family:"Ma Shan Zheng",cursive; font-weight:400;
+    font-size:48px; letter-spacing:.08em; color:#f4f1e6;
+    text-shadow:0 1px 2px rgba(0,0,0,.5), 0 5px 22px rgba(0,0,0,.55);
+  }
+  .seal {
+    display:inline-flex; vertical-align:baseline; margin-left:16px;
+    width:24px; height:24px; border-radius:5px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:14px;
+    align-items:center; justify-content:center;
+    transform:rotate(-4deg) translateY(-3px);
+    box-shadow:0 1px 4px rgba(0,0,0,.55),
+      inset 0 0 0 1.5px rgba(253,246,236,.9),
+      inset 0 0 0 3px #a81212,
+      inset 0 0 7px rgba(0,0,0,.35);
+  }
+  .menu { position:absolute; top:186px; left:0; right:0; display:flex; flex-direction:column; align-items:center; gap:26px; }
+  .mi {
+    position:relative;
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:24px; letter-spacing:.32em; text-indent:.32em;
+    color:rgba(240,234,216,.8);
+    text-shadow:0 1px 3px rgba(0,0,0,.55);
+  }
+  .mi.primary { color:#f0ead8; transform:scale(1.03); }
+  .mi .brush { position:absolute; left:6%; right:6%; bottom:-11px; width:88%; height:11px; opacity:0; }
+  .mi.primary .brush { opacity:1; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="game">
+    <div class="ground"></div>
+    <div class="g-shade"></div>
+    <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png" alt="">
+    <img class="bamboo b3" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo b4" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo b1" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo b2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <div class="spr foe f1"><img src="../game/src/assets/sprites/enemy_bandit_grunt_walk.png" alt=""></div>
+    <div class="spr foe f2"><img src="../game/src/assets/sprites/enemy_bandit_grunt_walk.png" alt=""></div>
+    <div class="spr foe f3"><img src="../game/src/assets/sprites/enemy_bandit_grunt_walk.png" alt=""></div>
+    <div class="spr hero"><img src="../game/src/assets/sprites/hero_shaoxia_idle.png" alt=""></div>
+  </div>
+  <div class="dim"></div>
+  <div class="dim-v"></div>
+  <div class="mist"></div>
+  <div class="content">
+    <div class="title-block">
+      <h1 class="title">暂停</h1><span class="seal">歇</span>
+    </div>
+    <nav class="menu">
+      <div class="mi primary">继续
+        <svg class="brush" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M3 8.2 C 30 4.2, 64 9.8, 98 6.4 C 132 3.6, 168 8.2, 197 5.4 L 195.4 9.2 C 160 11.6, 118 8.2, 84 10.6 C 50 12.8, 20 10.4, 4.6 11.4 Z" fill="#a99a20"/>
+        </svg>
+      </div>
+      <div class="mi">重新开始</div>
+      <div class="mi">回主菜单</div>
+      <div class="mi">设置</div>
+    </nav>
+  </div>
+</div>
+</body>
+</html>

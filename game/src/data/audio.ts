@@ -11,13 +11,33 @@ export type AudioEventConfig = {
   source?: "placeholder" | "generated" | "handmade";
 };
 
+const BGM_QINGSHI_URL = new URL("../assets/audio/bgm_qingshi_loop.ogg", import.meta.url).href;
+const SFX_SWORD_SWISH_URL = new URL("../assets/audio/sword_swish.ogg", import.meta.url).href;
+const SFX_SWORD_SWISH_HEAVY_URL = new URL("../assets/audio/sword_swish_heavy.ogg", import.meta.url).href;
+const SFX_PALM_BOOM_URL = new URL("../assets/audio/palm_boom.ogg", import.meta.url).href;
+const SFX_HIT_THUD_URL = new URL("../assets/audio/hit_thud.ogg", import.meta.url).href;
+const SFX_ENEMY_DIE_PUFF_URL = new URL("../assets/audio/enemy_die_puff.ogg", import.meta.url).href;
+const SFX_PICKUP_CHIME_URL = new URL("../assets/audio/pickup_chime.ogg", import.meta.url).href;
+const SFX_COIN_CLINK_URL = new URL("../assets/audio/coin_clink.ogg", import.meta.url).href;
+const SFX_HEAL_WARM_URL = new URL("../assets/audio/heal_warm.ogg", import.meta.url).href;
+const SFX_REVEAL_COMMON_URL = new URL("../assets/audio/reveal_common.ogg", import.meta.url).href;
+const SFX_REVEAL_RARE_URL = new URL("../assets/audio/reveal_rare.ogg", import.meta.url).href;
+const SFX_REVEAL_EPIC_URL = new URL("../assets/audio/reveal_epic.ogg", import.meta.url).href;
+const SFX_BOSS_ROAR_URL = new URL("../assets/audio/boss_roar.ogg", import.meta.url).href;
+const SFX_HEARTBEAT_URL = new URL("../assets/audio/heartbeat.ogg", import.meta.url).href;
+
+/** path 指向真实采样文件（而非 procedural: 合成占位）时返回 true。 */
+export function isSampleAudioPath(path: string): boolean {
+  return path.length > 0 && !path.startsWith("procedural:");
+}
+
 export const audioEvents: AudioEventConfig[] = [
   {
     id: "music_menu",
-    path: "",
+    path: BGM_QINGSHI_URL,
     bus: "music",
     priority: 1,
-    volume: 0.35,
+    volume: 0.3,
     throttleMs: 0,
     loop: true,
     required: false,
@@ -25,7 +45,7 @@ export const audioEvents: AudioEventConfig[] = [
   },
   {
     id: "music_stage_qingshi",
-    path: "",
+    path: BGM_QINGSHI_URL,
     bus: "music",
     priority: 1,
     volume: 0.42,
@@ -66,75 +86,75 @@ export const audioEvents: AudioEventConfig[] = [
   },
   {
     id: "skill_cast",
-    path: "procedural:skill_cast",
+    path: SFX_SWORD_SWISH_URL,
     bus: "sfx",
     priority: 2,
     volume: 0.32,
     throttleMs: 100,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "skill_cast_advanced",
-    path: "procedural:skill_cast_advanced",
+    path: SFX_SWORD_SWISH_HEAVY_URL,
     bus: "sfx",
     priority: 3,
     volume: 0.42,
     throttleMs: 120,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "hit_light",
-    path: "procedural:hit_light",
+    path: SFX_HIT_THUD_URL,
     bus: "sfx",
     priority: 2,
     volume: 0.45,
     throttleMs: 80,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "enemy_die",
-    path: "procedural:enemy_die",
+    path: SFX_ENEMY_DIE_PUFF_URL,
     bus: "sfx",
     priority: 3,
     volume: 0.55,
     throttleMs: 60,
     mergeWindowMs: 60,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "inner_power_pickup",
-    path: "procedural:inner_power_pickup",
+    path: SFX_PICKUP_CHIME_URL,
     bus: "sfx",
     priority: 3,
     volume: 0.5,
     throttleMs: 50,
     mergeWindowMs: 50,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "heal_pickup",
-    path: "procedural:heal_pickup",
+    path: SFX_HEAL_WARM_URL,
     bus: "sfx",
     priority: 3,
     volume: 0.5,
     throttleMs: 80,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "copper_gain",
-    path: "procedural:copper_gain",
+    path: SFX_COIN_CLINK_URL,
     bus: "sfx",
     priority: 3,
     volume: 0.5,
     throttleMs: 100,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "hero_hurt",
@@ -158,14 +178,14 @@ export const audioEvents: AudioEventConfig[] = [
   },
   {
     id: "low_hp_loop",
-    path: "",
+    path: SFX_HEARTBEAT_URL,
     bus: "sfx",
     priority: 6,
     volume: 0.34,
     throttleMs: 1000,
     loop: true,
     required: false,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "insight",
@@ -189,23 +209,23 @@ export const audioEvents: AudioEventConfig[] = [
   },
   {
     id: "elite_warning",
-    path: "procedural:elite_warning",
+    path: SFX_PALM_BOOM_URL,
     bus: "sfx",
     priority: 7,
     volume: 0.72,
     throttleMs: 1000,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "boss_intro",
-    path: "procedural:boss_intro",
+    path: SFX_BOSS_ROAR_URL,
     bus: "sfx",
     priority: 10,
     volume: 0.92,
     throttleMs: 0,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "boss_warning",
@@ -249,33 +269,33 @@ export const audioEvents: AudioEventConfig[] = [
   },
   {
     id: "scripture_reveal_common",
-    path: "procedural:scripture_reveal_common",
+    path: SFX_REVEAL_COMMON_URL,
     bus: "sfx",
     priority: 6,
     volume: 0.58,
     throttleMs: 0,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "scripture_reveal_rare",
-    path: "procedural:scripture_reveal_rare",
+    path: SFX_REVEAL_RARE_URL,
     bus: "sfx",
     priority: 7,
     volume: 0.72,
     throttleMs: 0,
     required: true,
-    source: "placeholder"
+    source: "generated"
   },
   {
     id: "scripture_reveal_epic",
-    path: "procedural:scripture_reveal_epic",
+    path: SFX_REVEAL_EPIC_URL,
     bus: "sfx",
     priority: 9,
     volume: 0.88,
     throttleMs: 0,
     required: true,
-    source: "placeholder"
+    source: "generated"
   }
 ];
 

@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { heifengChiefConfig, type BossAttackId, type BossConfig, type BossId, type BossState } from "../data/bosses";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
+import { JuiceSystem } from "./JuiceSystem";
 
 type Point = {
   x: number;
@@ -35,6 +36,9 @@ type BossRuntime = {
   attacksUsed: Set<BossAttackId>;
   stageCleared: boolean;
   deathNotified: boolean;
+  hitSquashMs: number;
+  ghostCooldownMs: number;
+  chargeGhostsSpawned: number;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
   shadow: Phaser.GameObjects.Ellipse;
   warningView?: Phaser.GameObjects.Container;
@@ -111,6 +115,18 @@ const INTRO_OFFSET_Y = -420;
 const INTRO_TARGET_OFFSET_Y = -90;
 const IDLE_ATTACK_CHECK_MS = 250;
 const BOSS_SPRITE_SCALE = 0.58;
+/** 受击白闪（Boss 用金色）与 squash 回弹时长 */
+const HIT_FLASH_MS = 80;
+const HIT_SQUASH_MS = 60;
+const HIT_FLASH_TINT = 0xf6d472;
+/** windup 蓄力 tint（出手时清除） */
+const WINDUP_TINT = 0xff6b5e;
+/** 冲锋残影：生成间隔与单次冲锋上限 */
+const CHARGE_GHOST_INTERVAL_MS = 90;
+const CHARGE_GHOST_MAX = 3;
+/** 死亡慢镜：time/tweens 双时间轴减速倍率与持续（游戏毫秒 ≈ 400ms 真实时间） */
+const DEATH_SLOWMO_SCALE = 0.3;
+const DEATH_SLOWMO_GAME_MS = Math.round(400 * DEATH_SLOWMO_SCALE);
 
 export class BossSystem {
   private readonly config: BossConfig;
@@ -134,6 +150,8 @@ export class BossSystem {
 
     runtime.chargeCooldownMs = Math.max(0, runtime.chargeCooldownMs - clampedDeltaMs);
     runtime.whirlwindCooldownMs = Math.max(0, runtime.whirlwindCooldownMs - clampedDeltaMs);
+    runtime.hitSquashMs = Math.max(0, runtime.hitSquashMs - clampedDeltaMs);
+    runtime.ghostCooldownMs = Math.max(0, runtime.ghostCooldownMs - clampedDeltaMs);
     runtime.stateMs += clampedDeltaMs;
 
     switch (runtime.state) {
@@ -211,6 +229,9 @@ export class BossSystem {
       attacksUsed: new Set<BossAttackId>(),
       stageCleared: false,
       deathNotified: false,
+      hitSquashMs: 0,
+      ghostCooldownMs: 0,
+      chargeGhostsSpawned: 0,
       view,
       shadow
     };
@@ -223,6 +244,7 @@ export class BossSystem {
       source,
       waveTimeSeconds: this.options.getElapsedSeconds()
     });
+    this.options.playSfx("boss_intro");
     eventBus.emit("boss_spawned", {
       bossId: this.config.id,
       displayName: this.config.displayName,
@@ -327,6 +349,9 @@ export class BossSystem {
     if (!this.runtime) {
       return;
     }
+    // 慢镜可能在销毁时仍激活，恢复双时间轴
+    this.scene.time.timeScale = 1;
+    this.scene.tweens.timeScale = 1;
     this.scene.tweens.killTweensOf(this.runtime.view);
     this.scene.tweens.killTweensOf(this.runtime.shadow);
     this.clearWarning(this.runtime);
@@ -383,6 +408,7 @@ export class BossSystem {
     this.updateWarningView(runtime);
     if (runtime.stateMs >= this.config.charge.warningMs) {
       this.clearWarning(runtime);
+      this.clearWindupTint(runtime);
       runtime.attackDamageApplied = false;
       this.createChargeAttackView(runtime);
       this.transitionTo(runtime, "charge_slash", false);
@@ -400,6 +426,7 @@ export class BossSystem {
     runtime.worldX += runtime.lockedDirectionX * this.config.charge.dashSpeed * deltaSeconds;
     runtime.worldY += runtime.lockedDirectionY * this.config.charge.dashSpeed * deltaSeconds;
     this.updateAttackView(runtime);
+    this.spawnChargeGhostIfReady(runtime);
 
     const heroWorld = this.options.getHeroWorld();
     const distance = Math.hypot(heroWorld.x - runtime.worldX, heroWorld.y - runtime.worldY);
@@ -419,6 +446,7 @@ export class BossSystem {
     this.updateWarningView(runtime);
     if (runtime.stateMs >= this.config.whirlwind.warningMs) {
       this.clearWarning(runtime);
+      this.clearWindupTint(runtime);
       runtime.attackDamageApplied = false;
       this.createWhirlwindAttackView(runtime);
       this.transitionTo(runtime, "whirlwind", false);
@@ -502,6 +530,9 @@ export class BossSystem {
     runtime.currentAttack = "charge_slash";
     runtime.lastWarningDurationMs = this.config.charge.warningMs;
     runtime.attacksUsed.add("charge_slash");
+    runtime.chargeGhostsSpawned = 0;
+    runtime.ghostCooldownMs = 0;
+    this.applyWindupTint(runtime);
     this.createChargeWarning(runtime);
     this.options.playSfx("boss_warning");
     eventBus.emit("boss_attack_warning", {
@@ -518,6 +549,7 @@ export class BossSystem {
     runtime.currentAttack = "whirlwind_blade";
     runtime.lastWarningDurationMs = this.config.whirlwind.warningMs;
     runtime.attacksUsed.add("whirlwind_blade");
+    this.applyWindupTint(runtime);
     this.createWhirlwindWarning(runtime);
     this.options.playSfx("boss_warning");
     eventBus.emit("boss_attack_warning", {
@@ -533,6 +565,7 @@ export class BossSystem {
   private beginDeath(runtime: BossRuntime, source: string): void {
     this.clearWarning(runtime);
     this.clearAttackView(runtime);
+    this.clearWindupTint(runtime);
     runtime.stageCleared = true;
     runtime.currentAttack = "none";
     runtime.lastAttack = runtime.lastAttack === "none" ? runtime.currentAttack : runtime.lastAttack;
@@ -544,6 +577,17 @@ export class BossSystem {
       aliveSeconds: Math.round(runtime.aliveMs / 1000),
       hitCount: runtime.hitCount,
       attacksUsed: Array.from(runtime.attacksUsed)
+    });
+    // 死亡演出：强震 + 暖白闪 + 金屑爆发 + 400ms 慢镜（time/tweens 双时间轴减速）
+    const juice = JuiceSystem.get(this.scene);
+    juice.bossDeath();
+    const screen = this.worldToScreen(runtime.worldX, runtime.worldY);
+    juice.goldBurst(screen.x, screen.y, 32);
+    this.scene.time.timeScale = DEATH_SLOWMO_SCALE;
+    this.scene.tweens.timeScale = DEATH_SLOWMO_SCALE;
+    this.scene.time.delayedCall(DEATH_SLOWMO_GAME_MS, () => {
+      this.scene.time.timeScale = 1;
+      this.scene.tweens.timeScale = 1;
     });
     this.createBossDeathBurst(runtime);
     this.transitionTo(runtime, "dead");
@@ -729,6 +773,7 @@ export class BossSystem {
       .setOrigin(0.5);
     const centerLine = this.scene.add.rectangle(centerOffset, 0, length, 4, 0xfff0b0, 0.72)
       .setOrigin(0.5);
+    centerLine.setData("warningInner", true);
     const front = this.scene.add.triangle(centerOffset + length / 2, 0, -16, -28, -16, 28, 24, 0, 0xffd37a, 0.58);
     runtime.warningView = this.scene.add.container(0, 0, [strip, centerLine, front])
       .setDepth(33)
@@ -756,6 +801,7 @@ export class BossSystem {
       .setStrokeStyle(4, 0xffd37a, 0.82);
     const inner = this.scene.add.circle(0, 0, this.config.whirlwind.startRadius, 0x000000, 0)
       .setStrokeStyle(2, 0xf7f0d0, 0.62);
+    inner.setData("warningInner", true);
     const slashA = this.scene.add.rectangle(0, 0, this.config.whirlwind.endRadius * 2, 5, 0xfff0b0, 0.5)
       .setRotation(0.32);
     const slashB = this.scene.add.rectangle(0, 0, this.config.whirlwind.endRadius * 2, 5, 0xfff0b0, 0.42)
@@ -815,8 +861,17 @@ export class BossSystem {
     }
     const screen = this.worldToScreen(runtime.worldX, runtime.worldY);
     runtime.warningView.setPosition(screen.x, screen.y);
-    const pulse = 0.8 + Math.sin(runtime.stateMs / 55) * 0.12;
-    runtime.warningView.setAlpha(Phaser.Math.Clamp(pulse, 0.55, 0.95));
+    // 预警渐强：alpha 由 0.2→0.9 随 stateMs 逼近出手，明示时机
+    const durationMs = Math.max(1, runtime.lastWarningDurationMs);
+    const progress = Phaser.Math.Clamp(runtime.stateMs / durationMs, 0, 1);
+    runtime.warningView.setAlpha(0.2 + progress * 0.7);
+    // 内圈随剩余时间收缩填充（仅几何兜底预警标记了 warningInner 子件）
+    const innerScale = 1 - progress * 0.85;
+    for (const child of runtime.warningView.list) {
+      if (child.getData("warningInner") === true) {
+        (child as unknown as Phaser.GameObjects.Components.Transform).setScale(innerScale);
+      }
+    }
   }
 
   private updateAttackView(runtime: BossRuntime): void {
@@ -859,6 +914,24 @@ export class BossSystem {
   }
 
   private flashBoss(runtime: BossRuntime): void {
+    runtime.hitSquashMs = HIT_SQUASH_MS;
+    if (runtime.view instanceof Phaser.GameObjects.Sprite && runtime.view.getData("bossSpriteArt") === true) {
+      // 受击白闪：Boss 用金色；80ms 后恢复（windup 期恢复为蓄力 tint 而非清除）
+      const view = runtime.view;
+      view.setTintFill(HIT_FLASH_TINT);
+      this.scene.time.delayedCall(HIT_FLASH_MS, () => {
+        if (!view.active) {
+          return;
+        }
+        if (runtime.state === "charge_windup" || runtime.state === "whirlwind_windup") {
+          view.setTint(WINDUP_TINT);
+        } else {
+          view.clearTint();
+        }
+      });
+      return;
+    }
+
     runtime.view.setAlpha(0.58);
     this.scene.tweens.add({
       targets: runtime.view,
@@ -868,12 +941,60 @@ export class BossSystem {
     });
   }
 
+  /** windup 蓄力 tint；几何兜底 Container 无 Tint 组件，仅贴图 Boss 生效。 */
+  private applyWindupTint(runtime: BossRuntime): void {
+    if (runtime.view instanceof Phaser.GameObjects.Sprite && runtime.view.getData("bossSpriteArt") === true) {
+      runtime.view.setTint(WINDUP_TINT);
+    }
+  }
+
+  private clearWindupTint(runtime: BossRuntime): void {
+    if (runtime.view instanceof Phaser.GameObjects.Sprite && runtime.view.getData("bossSpriteArt") === true) {
+      runtime.view.clearTint();
+    }
+  }
+
+  /** 冲锋路径残影：最多 3 个 Boss 纹理残影，alpha 渐隐后销毁。 */
+  private spawnChargeGhostIfReady(runtime: BossRuntime): void {
+    if (runtime.ghostCooldownMs > 0 || runtime.chargeGhostsSpawned >= CHARGE_GHOST_MAX) {
+      return;
+    }
+    runtime.ghostCooldownMs = CHARGE_GHOST_INTERVAL_MS;
+    runtime.chargeGhostsSpawned += 1;
+    const screen = this.worldToScreen(runtime.worldX, runtime.worldY);
+    let ghost: Phaser.GameObjects.Sprite | Phaser.GameObjects.Ellipse;
+    if (runtime.view instanceof Phaser.GameObjects.Sprite && runtime.view.getData("bossSpriteArt") === true) {
+      const view = runtime.view;
+      const sprite = this.scene.add.sprite(screen.x, screen.y, view.texture.key)
+        .setDepth(12)
+        .setAlpha(0.32)
+        .setScale(view.scaleX, view.scaleY);
+      sprite.setFrame(view.frame.name);
+      ghost = sprite;
+    } else {
+      ghost = this.scene.add.ellipse(screen.x, screen.y, 72, 96, 0x8f4b2f, 0.3)
+        .setDepth(12);
+    }
+    this.scene.tweens.add({
+      targets: ghost,
+      alpha: 0,
+      duration: 260,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        if (ghost.active) {
+          ghost.destroy();
+        }
+      }
+    });
+  }
+
   private updateBossSpriteAnimation(runtime: BossRuntime): void {
     if (!(runtime.view instanceof Phaser.GameObjects.Sprite) || runtime.view.getData("bossSpriteArt") !== true) {
       return;
     }
 
-    const assetId = isBossAttackState(runtime.state) ? "boss_heifeng_attack" : "boss_heifeng_idle";
+    const isAttack = isBossAttackState(runtime.state);
+    const assetId = isAttack ? "boss_heifeng_attack" : "boss_heifeng_idle";
     if (!this.scene.textures.exists(assetId)) {
       return;
     }
@@ -882,10 +1003,14 @@ export class BossSystem {
       runtime.view.setTexture(assetId);
     }
 
+    // attack 动画为单次播放（manifest loop:false），在进入攻击态时重播以对齐 windup→挥砍
     const animationKey = getArtAnimationKey(assetId);
-    if (this.scene.anims.exists(animationKey) && runtime.view.anims.currentAnim?.key !== animationKey) {
+    const wasAttack = runtime.view.getData("animAttackState") === true;
+    if (this.scene.anims.exists(animationKey)
+      && (runtime.view.anims.currentAnim?.key !== animationKey || (isAttack && !wasAttack))) {
       runtime.view.play(animationKey);
     }
+    runtime.view.setData("animAttackState", isAttack);
   }
 
   private setBossViewMotionScale(runtime: BossRuntime, motionScale: number): void {
@@ -897,7 +1022,9 @@ export class BossSystem {
     const baseScale = (runtime.view.getData("baseScale") as number | undefined) ?? 1;
     const motionScale = (runtime.view.getData("motionScale") as number | undefined) ?? 1;
     const facingLeft = (runtime.view.getData("facingLeft") as boolean | undefined) ?? false;
-    runtime.view.setScale((facingLeft ? -1 : 1) * baseScale * motionScale, baseScale * motionScale);
+    // 受击 squash 回弹：60ms 内从 0.92 恢复到 1（每帧缩放会覆盖 Tween，故用衰减因子）
+    const squash = runtime.hitSquashMs > 0 ? 1 - 0.08 * (runtime.hitSquashMs / HIT_SQUASH_MS) : 1;
+    runtime.view.setScale((facingLeft ? -1 : 1) * baseScale * motionScale * squash, baseScale * motionScale * squash);
     runtime.shadow.setScale(Math.max(0.55, motionScale));
   }
 

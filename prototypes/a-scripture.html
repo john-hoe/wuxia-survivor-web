@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>方向A · 翻阅秘籍</title>
+<link rel="stylesheet" href="a-common.css">
+<style>
+  .scrip-panel{
+    left:150px; top:58px; width:660px; height:458px;
+    padding:44px 52px 14px;
+    display:flex; flex-direction:column; align-items:center;
+  }
+  .scrip-plaque{ top:26px; }
+  .scrip-plaque h1{ font-size:34px; letter-spacing:8px; padding-left:8px; }
+  .scrip-plaque .seal{ width:23px; height:23px; font-size:14px; }
+
+  /* ---------- 页签 ---------- */
+  .tabs{ display:flex; gap:56px; height:30px; align-items:flex-end; }
+  .tab{
+    position:relative; padding-bottom:7px;
+    font:600 15px 'Noto Serif SC',serif; color:#938d7c; letter-spacing:3px;
+  }
+  .tab.on{ color:var(--ink); font-size:16px; }
+  .tab.on::after{
+    content:''; position:absolute; left:6%; right:6%; bottom:0; height:3px;
+    background:linear-gradient(90deg,transparent,#8a7a20 18%,#d8c061 50%,#8a7a20 82%,transparent);
+    border-radius:2px;
+  }
+
+  /* ---------- 信息行 ---------- */
+  .info{ width:100%; display:flex; justify-content:space-between; margin-top:13px; }
+  .pill{
+    display:flex; align-items:center; gap:8px;
+    padding:4px 16px 5px;
+    border:1px solid rgba(26,31,26,.4); border-radius:16px;
+    background:rgba(26,31,26,.05);
+  }
+  .pill img{ width:15px; height:15px; }
+  .pill .k{ font-size:12px; color:var(--sub); letter-spacing:2px; }
+  .pill .v{ font:700 14.5px 'Noto Serif SC',serif; color:var(--ink); }
+
+  /* ---------- 掉落概览 · 碑帖式 ---------- */
+  .caption{ width:100%; display:flex; align-items:center; gap:14px; margin-top:13px; }
+  .caption::before,.caption::after{
+    content:''; flex:1; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(26,31,26,.3),transparent);
+  }
+  .caption span{ font:600 13px 'Noto Serif SC',serif; color:var(--gold); letter-spacing:7px; padding-left:7px; }
+
+  .table{ width:100%; margin-top:4px; }
+  .prow{
+    display:flex; align-items:center; height:37px;
+    border-bottom:1px solid rgba(26,31,26,.09);
+  }
+  .prow:last-child{ border-bottom:none; }
+  .rname{ display:flex; align-items:center; gap:10px; width:122px; }
+  .chip{ width:6px; height:21px; border-radius:2px; box-shadow:0 0 0 1px rgba(26,31,26,.18); }
+  .rn{ font-family:'Ma Shan Zheng',serif; font-size:21px; letter-spacing:5px; line-height:1; }
+  .rdesc{ font-size:12.5px; color:#6f6a5b; letter-spacing:1px; }
+  .leader{ flex:1; margin:0 14px; border-bottom:2px dotted rgba(26,31,26,.3); transform:translateY(-4px); }
+  .pct{ width:44px; text-align:right; font:700 16px 'Noto Serif SC',serif; color:#232920; }
+
+  .r0 .chip{ background:#b8b3a4; } .r0 .rn{ color:#8f8978; }
+  .r1 .chip{ background:#7d9b76; } .r1 .rn{ color:#5f7d58; }
+  .r2 .chip{ background:#a99a20; } .r2 .rn{ color:#8d8016; }
+  .r3 .chip{ background:#c00000; } .r3 .rn{ color:#b30f0f; }
+
+  .fineprint{ margin-top:9px; font-size:11.5px; color:#948e7e; letter-spacing:1.5px; }
+
+  /* ---------- 按钮 ---------- */
+  .btns{ margin-top:13px; display:flex; flex-direction:column; gap:9px; align-items:center; }
+  .btn-p{
+    width:258px; height:41px; border:none; border-radius:4px; cursor:pointer;
+    background:linear-gradient(172deg,#2d332b 0%,#1e241c 58%,#171c15 100%);
+    color:#f1ead6; font:600 16px 'Noto Serif SC',serif; letter-spacing:2px;
+    display:flex; align-items:center; justify-content:center; gap:9px;
+    box-shadow:0 0 0 1px rgba(168,145,47,.6), 0 5px 12px rgba(20,26,18,.4), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  .btn-p img{ width:16px; height:16px; filter:brightness(1.15); }
+  .btn-s{
+    width:258px; height:36px; border-radius:4px; cursor:pointer;
+    background:rgba(26,31,26,.035); border:1px solid rgba(26,31,26,.68);
+    color:#282e26; font:600 15px 'Noto Serif SC',serif; letter-spacing:2px;
+    display:flex; align-items:center; justify-content:center; gap:9px;
+  }
+  .btn-s img{ width:15px; height:15px; }
+
+  .blink{
+    margin-top:12px; font-size:13px; color:var(--sub); letter-spacing:6px; padding:0 4px 2px 10px;
+    border-bottom:1px solid rgba(26,31,26,.32);
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="scene">
+    <div class="sky"></div>
+    <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png">
+    <div class="ground"></div>
+    <img class="bamboo b2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png">
+    <img class="bamboo b4" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png">
+    <img class="bamboo b1" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png">
+    <img class="bamboo b3" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png">
+    <div class="vignette"></div>
+  </div>
+
+  <div class="panel scrip-panel">
+    <span class="corner c-tl"><svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M31 3.5 H3.5 V31" stroke="#a8912f" stroke-width="2.3"/><path d="M22.5 9.5 H9.5 V22.5" stroke="#a8912f" stroke-width="1.6"/><path d="M16.5 14.5 H13.5 V17.5" stroke="#a8912f" stroke-width="1.3"/></svg></span>
+    <span class="corner c-tr"><svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M31 3.5 H3.5 V31" stroke="#a8912f" stroke-width="2.3"/><path d="M22.5 9.5 H9.5 V22.5" stroke="#a8912f" stroke-width="1.6"/><path d="M16.5 14.5 H13.5 V17.5" stroke="#a8912f" stroke-width="1.3"/></svg></span>
+    <span class="corner c-bl"><svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M31 3.5 H3.5 V31" stroke="#a8912f" stroke-width="2.3"/><path d="M22.5 9.5 H9.5 V22.5" stroke="#a8912f" stroke-width="1.6"/><path d="M16.5 14.5 H13.5 V17.5" stroke="#a8912f" stroke-width="1.3"/></svg></span>
+    <span class="corner c-br"><svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M31 3.5 H3.5 V31" stroke="#a8912f" stroke-width="2.3"/><path d="M22.5 9.5 H9.5 V22.5" stroke="#a8912f" stroke-width="1.6"/><path d="M16.5 14.5 H13.5 V17.5" stroke="#a8912f" stroke-width="1.3"/></svg></span>
+
+    <div class="tabs">
+      <span class="tab">局外成长</span>
+      <span class="tab on">翻阅秘籍</span>
+    </div>
+
+    <div class="info">
+      <div class="pill"><img class="inkicon" src="../game/src/assets/ui/icon_coin.png"><span class="k">铜钱</span><span class="v">0</span></div>
+      <div class="pill"><img class="inkicon" src="../game/src/assets/ui/icon_hourglass.png"><span class="k">距保底</span><span class="v">20 次</span></div>
+    </div>
+
+    <div class="caption"><span>掉落概览</span></div>
+
+    <div class="table">
+      <div class="prow r0"><div class="rname"><span class="chip"></span><span class="rn">普通</span></div><span class="rdesc">残页 / 铜钱返还</span><span class="leader"></span><span class="pct">65%</span></div>
+      <div class="prow r1"><div class="rname"><span class="chip"></span><span class="rn">精良</span></div><span class="rdesc">外观 / 成长碎片</span><span class="leader"></span><span class="pct">25%</span></div>
+      <div class="prow r2"><div class="rname"><span class="chip"></span><span class="rn">上乘</span></div><span class="rdesc">稀有心法碎片</span><span class="leader"></span><span class="pct">9%</span></div>
+      <div class="prow r3"><div class="rname"><span class="chip"></span><span class="rn">绝学</span></div><span class="rdesc">称号卷轴</span><span class="leader"></span><span class="pct">1%</span></div>
+    </div>
+
+    <div class="fineprint">20 次内至少 1 个精良或以上 · 重复收藏转为残页</div>
+
+    <div class="btns">
+      <button class="btn-p"><img src="../game/src/assets/ui/icon_scroll.png">翻阅一次 · 300 铜钱</button>
+      <button class="btn-s"><img class="inkicon" src="../game/src/assets/ui/icon_scroll.png">翻阅十次 · 3000 铜钱</button>
+    </div>
+
+    <span class="blink">返回</span>
+  </div>
+
+  <div class="plaque scrip-plaque"><h1>翻阅秘籍</h1><span class="seal">秘</span></div>
+</div>
+</body>
+</html>

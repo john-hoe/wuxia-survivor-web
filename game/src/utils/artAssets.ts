@@ -2,6 +2,10 @@ import Phaser from "phaser";
 import { artManifest } from "../data/artManifest";
 
 import bambooEdgeClusterUrl from "../assets/backgrounds/bamboo_edge_cluster.png";
+import decorFlagUrl from "../assets/backgrounds/decor_flag.png";
+import decorLanternUrl from "../assets/backgrounds/decor_lantern.png";
+import decorSteleUrl from "../assets/backgrounds/decor_stele.png";
+import decorWinejarUrl from "../assets/backgrounds/decor_winejar.png";
 import distantGateShadowUrl from "../assets/backgrounds/distant_gate_shadow.png";
 import groundQingshiBaseUrl from "../assets/backgrounds/ground_qingshi_base.png";
 import roadRibbonAUrl from "../assets/backgrounds/road_ribbon_a.png";
@@ -107,11 +111,32 @@ import uiPanelMenuUrl from "../assets/ui/ui_panel_menu.png";
 import uiPanelPauseUrl from "../assets/ui/ui_panel_pause.png";
 import uiPanelResultUrl from "../assets/ui/ui_panel_result.png";
 import uiPanelScriptureProbabilityUrl from "../assets/ui/ui_panel_scripture_probability.png";
+import uiDividerFlourishUrl from "../assets/ui/divider_flourish.png";
+import uiHudEmblemFrameUrl from "../assets/ui/hud_emblem_frame.png";
+import uiHudTopStripUrl from "../assets/ui/hud_top_strip.png";
+import uiPanelModalUrl from "../assets/ui/panel_modal.png";
+import uiSkillSlotFrameUrl from "../assets/ui/skill_slot_frame.png";
+import iconCoinUrl from "../assets/ui/icon_coin.png";
+import iconFullscreenUrl from "../assets/ui/icon_fullscreen.png";
+import iconGearUrl from "../assets/ui/icon_gear.png";
+import iconHourglassUrl from "../assets/ui/icon_hourglass.png";
+import iconKillUrl from "../assets/ui/icon_kill.png";
+import iconLowvfxUrl from "../assets/ui/icon_lowvfx.png";
+import iconMusicUrl from "../assets/ui/icon_music.png";
+import iconMuteUrl from "../assets/ui/icon_mute.png";
+import iconScrollUrl from "../assets/ui/icon_scroll.png";
+import iconSfxUrl from "../assets/ui/icon_sfx.png";
+import iconSwordUrl from "../assets/ui/icon_sword.png";
+import titleBannerUrl from "../assets/ui/title_banner.png";
 
 export const artAssetUrls = {
   bamboo_edge_cluster: bambooEdgeClusterUrl,
   boss_heifeng_attack: bossHeifengAttackUrl,
   boss_heifeng_idle: bossHeifengIdleUrl,
+  decor_flag: decorFlagUrl,
+  decor_lantern: decorLanternUrl,
+  decor_stele: decorSteleUrl,
+  decor_winejar: decorWinejarUrl,
   distant_gate_shadow: distantGateShadowUrl,
   drop_inner_large: dropInnerLargeUrl,
   drop_inner_medium: dropInnerMediumUrl,
@@ -214,6 +239,23 @@ export const artAssetUrls = {
   ui_panel_pause: uiPanelPauseUrl,
   ui_panel_result: uiPanelResultUrl,
   ui_panel_scripture_probability: uiPanelScriptureProbabilityUrl,
+  ui_divider_flourish: uiDividerFlourishUrl,
+  ui_hud_emblem_frame: uiHudEmblemFrameUrl,
+  ui_hud_top_strip: uiHudTopStripUrl,
+  ui_panel_modal: uiPanelModalUrl,
+  ui_skill_slot_frame: uiSkillSlotFrameUrl,
+  icon_coin: iconCoinUrl,
+  icon_fullscreen: iconFullscreenUrl,
+  icon_gear: iconGearUrl,
+  icon_hourglass: iconHourglassUrl,
+  icon_kill: iconKillUrl,
+  icon_lowvfx: iconLowvfxUrl,
+  icon_music: iconMusicUrl,
+  icon_mute: iconMuteUrl,
+  icon_scroll: iconScrollUrl,
+  icon_sfx: iconSfxUrl,
+  icon_sword: iconSwordUrl,
+  title_banner: titleBannerUrl,
   wood_stake_flag: woodStakeFlagUrl
 } satisfies Record<string, string>;
 
@@ -260,7 +302,8 @@ export function registerArtAnimations(scene: Phaser.Scene): void {
       key: animationKey,
       frames: scene.anims.generateFrameNumbers(item.id, { start: 0, end: frameCount - 1 }),
       frameRate: item.frameRate ?? 10,
-      repeat: -1
+      // 一次性特效（命中/死亡/揭示）播放一次后停在末帧，由调用方 animationcomplete 销毁
+      repeat: item.loop === false ? 0 : -1
     });
   }
 }

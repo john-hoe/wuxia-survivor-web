@@ -1,3 +1,4 @@
+import { feedbackSettingsDefaults, shakeScaleLevels } from "../data/gameConfig";
 import type { GameSettings, SaveData } from "../types";
 import { eventBus } from "../utils/EventBus";
 
@@ -88,7 +89,9 @@ export class SaveSystem {
         musicVolume: 0.6,
         sfxVolume: 0.8,
         muted: false,
-        lowVfxMode: false
+        lowVfxMode: false,
+        damageNumbers: feedbackSettingsDefaults.damageNumbers,
+        shakeScale: feedbackSettingsDefaults.shakeScale
       }
     };
   }
@@ -124,9 +127,28 @@ export class SaveSystem {
         musicVolume: this.readVolume(saveData.settings?.musicVolume, 0.6),
         sfxVolume: this.readVolume(saveData.settings?.sfxVolume, 0.8),
         muted: this.readBoolean(saveData.settings?.muted, false),
-        lowVfxMode: this.readBoolean(saveData.settings?.lowVfxMode, false)
+        lowVfxMode: this.readBoolean(saveData.settings?.lowVfxMode, false),
+        damageNumbers: this.readBoolean(saveData.settings?.damageNumbers, feedbackSettingsDefaults.damageNumbers),
+        shakeScale: this.readShakeScale(saveData.settings?.shakeScale)
       }
     };
+  }
+
+  /** 震屏强度读档兼容：旧档缺字段或值非法时回默认，非三档取值吸附最近档。 */
+  private readShakeScale(value: unknown): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return feedbackSettingsDefaults.shakeScale;
+    }
+    let nearestLevel: number = shakeScaleLevels[0];
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const level of shakeScaleLevels) {
+      const distance = Math.abs(value - level);
+      if (distance < nearestDistance) {
+        nearestLevel = level;
+        nearestDistance = distance;
+      }
+    }
+    return nearestLevel;
   }
 
   private readNonNegativeInteger(value: unknown, fallback: number): number {

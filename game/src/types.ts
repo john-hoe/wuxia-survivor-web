@@ -97,6 +97,10 @@ export type GameSettings = {
   sfxVolume: number;
   muted: boolean;
   lowVfxMode: boolean;
+  /** 伤害飘字开关（方案五·反馈密度分级，仅表现层） */
+  damageNumbers: boolean;
+  /** 震屏强度：0 无 / 0.5 弱 / 1 标准（仅表现层） */
+  shakeScale: number;
 };
 
 export type SaveData = {

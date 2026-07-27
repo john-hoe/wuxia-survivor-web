@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>经脉武学 · 方向D 局外成长原型甲</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#0a0f0c;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .frame {
+    position:relative; width:960px; height:540px; overflow:hidden;
+    background:#0d130e;
+    box-shadow:0 0 0 1px rgba(255,255,255,.05), 0 24px 80px rgba(0,0,0,.6);
+  }
+  /* ---------- 场景层（沿用方向C 极简碑林） ---------- */
+  .scene { position:absolute; inset:0; }
+  .sky {
+    position:absolute; inset:0;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #18241b 0%, #101a13 46%, #0a100c 100%);
+  }
+  .bamboo { position:absolute; bottom:-24px; height:560px; filter:brightness(.8); }
+  .bamboo.l { left:-218px; }
+  .bamboo.r { right:-218px; transform:scaleX(-1); }
+  .bamboo.l2 { left:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); }
+  .bamboo.r2 { right:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); transform:scaleX(-1); }
+  .veil { position:absolute; inset:0; background:rgba(7,12,9,.65); }
+  .mist {
+    position:absolute; left:0; right:0; bottom:0; height:36%;
+    background:linear-gradient(to top, rgba(238,241,234,.085) 0%, rgba(238,241,234,.03) 45%, rgba(238,241,234,0) 100%);
+  }
+  .vignette {
+    position:absolute; inset:0;
+    background:radial-gradient(90% 78% at 50% 44%, rgba(0,0,0,0) 52%, rgba(3,6,4,.55) 100%);
+  }
+  /* ---------- 内容层 ---------- */
+  .content { position:absolute; inset:0; }
+  .title-block { position:absolute; top:40px; left:0; right:0; text-align:center; }
+  h1.title {
+    display:inline-block; vertical-align:baseline;
+    font-family:"Ma Shan Zheng",cursive; font-weight:400;
+    font-size:46px; letter-spacing:.06em; color:#f4f1e6;
+    text-shadow:0 1px 2px rgba(0,0,0,.45), 0 5px 22px rgba(0,0,0,.5);
+  }
+  .seal {
+    display:inline-flex; vertical-align:baseline; margin-left:16px;
+    width:24px; height:24px; border-radius:5px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:14px;
+    align-items:center; justify-content:center;
+    transform:rotate(-4deg) translateY(-3px);
+    box-shadow:0 1px 4px rgba(0,0,0,.55),
+      inset 0 0 0 1.5px rgba(253,246,236,.9),
+      inset 0 0 0 3px #a81212,
+      inset 0 0 7px rgba(0,0,0,.35);
+  }
+  .info-line {
+    position:absolute; top:108px; left:0; right:0;
+    display:flex; justify-content:center; align-items:center;
+    font-size:12.5px; letter-spacing:.14em; color:rgba(255,255,255,.6);
+  }
+  .info-line b { font-weight:500; color:rgba(240,234,216,.88); font-variant-numeric:tabular-nums; }
+  .info-line .sep { margin:0 12px; color:rgba(255,255,255,.22); }
+  .coin { width:13px; height:13px; }
+  /* ---------- 经脉图 ---------- */
+  .fig-aura {
+    position:absolute; left:34px; top:96px; width:440px; height:440px;
+    background:radial-gradient(45% 42% at 50% 46%, rgba(201,178,50,.06), rgba(201,178,50,0) 70%);
+  }
+  .chart { position:absolute; left:64px; top:116px; }
+  .fig { fill:none; stroke-linecap:round; stroke-linejoin:round; }
+  .fig.ghost { stroke:rgba(201,178,50,.16); stroke-width:1.1; }
+  .fig.main { stroke:rgba(201,178,50,.5); stroke-width:1.35; }
+  .meridian { fill:none; stroke:rgba(201,178,50,.62); stroke-width:1.5; stroke-linecap:round; }
+  .meridian.faint { stroke:rgba(201,178,50,.22); }
+  .meridian.lit { stroke:#7d9b76; stroke-width:2; filter:drop-shadow(0 0 4px rgba(125,180,120,.55)); }
+  .pt { cursor:pointer; }
+  .pt .hit { fill:transparent; }
+  .pt .core { transition:filter .15s ease; }
+  .pt.lit .core { fill:#8fae8a; filter:drop-shadow(0 0 5px rgba(125,180,120,.85)); }
+  .pt.lit .halo { fill:rgba(125,155,118,.22); }
+  .pt.avail .core { fill:#c9b232; filter:drop-shadow(0 0 4px rgba(201,178,50,.6)); }
+  .pt.avail .halo {
+    fill:none; stroke:rgba(201,178,50,.75); stroke-width:1;
+    transform-box:fill-box; transform-origin:center;
+    animation:halo 1.9s ease-out infinite;
+  }
+  @keyframes halo {
+    0% { transform:scale(.55); opacity:.9; }
+    70% { opacity:.25; }
+    100% { transform:scale(1.8); opacity:0; }
+  }
+  .pt.locked .core { fill:rgba(205,200,185,.1); stroke:rgba(205,200,185,.4); stroke-width:1; }
+  .pt.locked .halo { display:none; }
+  .pt:hover .hit { fill:rgba(255,255,255,.06); }
+  #selRing {
+    fill:none; stroke:rgba(240,234,216,.85); stroke-width:1;
+    stroke-dasharray:2.5 3; pointer-events:none;
+  }
+  /* ---------- 经络签注 ---------- */
+  .cap { position:absolute; }
+  .cap .c-name {
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:13.5px; letter-spacing:.16em; color:rgba(240,234,216,.85);
+    text-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  .cap .c-sub { margin-top:5px; font-size:10.5px; letter-spacing:.14em; color:rgba(255,255,255,.42); }
+  .cap .c-dots { margin-top:8px; display:flex; gap:5px; }
+  .cap.right .c-dots { justify-content:flex-end; }
+  .cap.right .c-name, .cap.right .c-sub { text-align:right; }
+  .cd { width:6px; height:6px; border-radius:50%; }
+  .cd.lit { background:#8fae8a; box-shadow:0 0 4px rgba(125,180,120,.7); }
+  .cd.avail { background:#c9b232; box-shadow:0 0 4px rgba(201,178,50,.6); }
+  .cd.locked { background:transparent; border:1px solid rgba(205,200,185,.35); }
+  .lead { position:absolute; height:0; border-top:1px dashed rgba(201,178,50,.4); }
+  /* ---------- 穴位小签 ---------- */
+  .tag {
+    position:absolute; left:600px; top:148px; width:240px;
+    padding:20px 22px 16px;
+    background:linear-gradient(165deg,#efe4c6,#e3d5b0 70%,#dccda4);
+    border-radius:3px;
+    box-shadow:0 10px 26px rgba(0,0,0,.5), inset 0 0 0 1px rgba(120,95,50,.25);
+    transform:rotate(1.2deg);
+  }
+  .tag.pop { animation:tagIn .45s ease both; }
+  @keyframes tagIn {
+    from { opacity:0; transform:translateX(12px) rotate(1.2deg); }
+    to { opacity:1; transform:translateX(0) rotate(1.2deg); }
+  }
+  .t-string { position:absolute; top:-14px; left:50%; width:2px; height:14px; background:linear-gradient(#a81212,#7a0c0c); }
+  .t-string::before {
+    content:""; position:absolute; top:-5px; left:50%; width:8px; height:8px; margin-left:-4px;
+    border-radius:50%; background:#a81212; box-shadow:inset 0 0 2px rgba(0,0,0,.4);
+  }
+  .t-name { font-family:"Ma Shan Zheng",cursive; font-size:30px; letter-spacing:.08em; color:#2b2419; }
+  .t-line {
+    margin-top:3px;
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:10.5px; letter-spacing:.18em; color:#7a6a4c;
+  }
+  .t-div { margin:12px 0 8px; border-top:1px dashed rgba(90,72,40,.4); }
+  .t-row { display:flex; justify-content:space-between; align-items:baseline; padding:4px 0; }
+  .t-row span { font-size:11px; letter-spacing:.14em; color:#8a7757; }
+  .t-row b {
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:12.5px; letter-spacing:.06em; color:#3d3424;
+  }
+  .t-row.dim b { color:rgba(61,52,36,.45); }
+  .t-price { margin-top:10px; display:flex; align-items:center; gap:7px; }
+  .t-price b { font-size:15px; font-weight:700; color:#8a6414; font-variant-numeric:tabular-nums; }
+  .t-price i { font-style:normal; font-size:11px; letter-spacing:.14em; color:#8a7757; }
+  .t-price.dim { opacity:.45; }
+  .t-cta {
+    margin-top:12px; padding-top:11px; text-align:center;
+    border-top:1px dashed rgba(90,72,40,.4);
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:12px; letter-spacing:.3em; text-indent:.3em; color:#a81212;
+  }
+  .t-cta.calm { color:rgba(61,52,36,.55); }
+  /* ---------- 引线 / 图例 / 返回 ---------- */
+  .lead-line { position:absolute; inset:0; pointer-events:none; }
+  .legend {
+    position:absolute; bottom:24px; left:0; right:0;
+    display:flex; justify-content:center; align-items:center; gap:24px;
+    font-size:10.5px; letter-spacing:.14em; color:rgba(255,255,255,.4);
+  }
+  .legend .item { display:flex; align-items:center; gap:7px; }
+  .back {
+    position:absolute; left:36px; bottom:28px;
+    font-size:13px; letter-spacing:.18em;
+    color:rgba(255,255,255,.55);
+  }
+  .back span { margin-right:8px; }
+</style>
+</head>
+<body>
+<div class="frame" id="frame">
+  <div class="scene">
+    <div class="sky"></div>
+    <img class="bamboo l2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo l" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <div class="veil"></div>
+    <div class="mist"></div>
+    <div class="vignette"></div>
+  </div>
+  <div class="content">
+    <div class="title-block">
+      <h1 class="title">经脉武学</h1><span class="seal">脉</span>
+    </div>
+    <div class="info-line">
+      <svg class="coin" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="#c79a3d" stroke="#7a5a1c" stroke-width="1.1"/><rect x="5.6" y="5.6" width="4.8" height="4.8" fill="none" stroke="#7a5a1c" stroke-width="1.1"/></svg>
+      铜钱 <b>1,280</b><span class="sep">·</span>已通穴位 <b>3 / 15</b>
+    </div>
+
+    <div class="fig-aura"></div>
+    <svg class="chart" width="380" height="400" viewBox="0 0 380 400">
+      <defs>
+        <g id="figBody">
+          <circle cx="190" cy="52" r="26"/>
+          <circle cx="190" cy="19.5" r="6.5"/>
+          <path d="M190 78 C 190 82, 190 84, 190 88"/>
+          <path d="M148 104 C 168 88, 212 88, 232 104"/>
+          <path d="M148 104 C 134 130, 138 168, 158 196 C 166 210, 172 230, 174 254"/>
+          <path d="M232 104 C 246 130, 242 168, 222 196 C 214 210, 208 230, 206 254"/>
+          <path d="M174 254 C 182 263, 198 263, 206 254"/>
+          <path d="M150 108 C 132 122, 112 138, 98 152"/>
+          <path d="M230 108 C 248 122, 268 138, 282 152"/>
+          <path d="M174 254 C 172 286, 170 320, 167 366"/>
+          <path d="M206 254 C 208 286, 210 320, 213 366"/>
+          <path d="M167 366 C 163 372, 158 374, 152 372"/>
+          <path d="M213 366 C 217 372, 222 374, 228 372"/>
+        </g>
+      </defs>
+      <use href="#figBody" class="fig ghost" transform="translate(.8,.7)"/>
+      <use href="#figBody" class="fig main"/>
+      <!-- 带脉（后腰弧淡、前腰弧实） -->
+      <path class="meridian faint" d="M138 193 A 52 13 0 0 1 242 193"/>
+      <path class="meridian" d="M138 193 A 52 13 0 0 0 242 193"/>
+      <!-- 任督 -->
+      <path class="meridian" d="M190 92 C 189 130, 191 190, 190 246"/>
+      <path class="meridian lit" d="M190 207 C 190 222, 190 238, 190 246"/>
+      <!-- 冲脉 -->
+      <path class="meridian" d="M180 258 C 178 292, 176 326, 174 362"/>
+      <path class="meridian" d="M200 258 C 202 292, 204 326, 206 362"/>
+      <path class="meridian lit" d="M174 350 C 174 355, 174 359, 174 363"/>
+      <!-- 穴位 -->
+      <g class="pt lit" data-id="guanyuan" transform="translate(190,234)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt lit" data-id="qihai" transform="translate(190,210)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt avail" data-id="shenque" transform="translate(190,182)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="zhongwan" transform="translate(190,158)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="tanzhong" transform="translate(190,134)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt lit" data-id="yongquan" transform="translate(174,362)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt avail" data-id="chengshan" transform="translate(175,342)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="weizhong" transform="translate(176,318)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="fengshi" transform="translate(178,292)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="huantiao" transform="translate(181,262)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt avail" data-id="daimai" transform="translate(138,193)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="wushu" transform="translate(150,202)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="weidao" transform="translate(168,205)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="jingmen" transform="translate(230,202)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <g class="pt locked" data-id="zhangmen" transform="translate(242,193)">
+        <circle class="halo" r="9"/><circle class="core" r="5.5"/><circle class="hit" r="14"/>
+      </g>
+      <circle id="selRing" r="10.5" transform="translate(190,182)"/>
+    </svg>
+
+    <!-- 经络签注 -->
+    <div class="cap" style="left:356px; top:236px;">
+      <div class="c-name">任督二脉 · 体魄训练</div>
+      <div class="c-sub">第贰重 · 气血渐充</div>
+      <div class="c-dots"><span class="cd lit"></span><span class="cd lit"></span><span class="cd avail"></span><span class="cd locked"></span><span class="cd locked"></span></div>
+    </div>
+    <div class="cap" style="left:344px; top:296px;">
+      <div class="c-name">带脉 · 磁石锦囊</div>
+      <div class="c-sub">未入门 · 待冲开</div>
+      <div class="c-dots"><span class="cd avail"></span><span class="cd locked"></span><span class="cd locked"></span><span class="cd locked"></span><span class="cd locked"></span></div>
+    </div>
+    <div class="lead" style="left:310px; top:308px; width:30px;"></div>
+    <div class="cap right" style="left:92px; top:416px; width:130px;">
+      <div class="c-name">冲脉 · 轻功步法</div>
+      <div class="c-sub">第壹重 · 身法初成</div>
+      <div class="c-dots"><span class="cd lit"></span><span class="cd avail"></span><span class="cd locked"></span><span class="cd locked"></span><span class="cd locked"></span></div>
+    </div>
+    <div class="lead" style="left:226px; top:427px; width:12px;"></div>
+
+    <!-- 穴位小签 -->
+    <svg class="lead-line" width="960" height="540">
+      <line id="leadLine" x1="265" y1="300" x2="300" y2="292" stroke="rgba(201,178,50,.5)" stroke-width="1" stroke-dasharray="1.5 4.5"/>
+    </svg>
+    <div class="tag pop" id="tag">
+      <div class="t-string"></div>
+      <div class="t-name" id="tName">神阙</div>
+      <div class="t-line" id="tLine">任督二脉 · 体魄训练</div>
+      <div class="t-div"></div>
+      <div class="t-row"><span>当前</span><b id="tCur">第贰重 · 最大血量 +10%</b></div>
+      <div class="t-row" id="tNextRow"><span>下层</span><b id="tNext">第叁重 → 最大血量 +15%</b></div>
+      <div class="t-price" id="tPrice">
+        <svg class="coin" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="#c79a3d" stroke="#7a5a1c" stroke-width="1.1"/><rect x="5.6" y="5.6" width="4.8" height="4.8" fill="none" stroke="#7a5a1c" stroke-width="1.1"/></svg>
+        <b id="tPriceNum">360</b><i>铜钱</i>
+      </div>
+      <div class="t-cta" id="tCta">点按冲开此穴</div>
+    </div>
+
+    <div class="legend">
+      <div class="item"><span class="cd lit"></span>已通</div>
+      <div class="item"><span class="cd avail"></span>可冲</div>
+      <div class="item"><span class="cd locked"></span>未达</div>
+    </div>
+    <div class="back"><span>←</span>返回</div>
+  </div>
+</div>
+<script>
+  var CN = ["", "壹", "贰", "叁", "肆", "伍"];
+  var LINES = {
+    ti:   { name: "任督二脉 · 体魄训练", costs: [120, 220, 360, 520, 720], cur: 2, fx: function (i) { return "最大血量 +" + (i * 5) + "%"; } },
+    qing: { name: "冲脉 · 轻功步法",     costs: [120, 220, 360, 520, 720], cur: 1, fx: function (i) { return "移动速度 +" + (i * 3) + "%"; } },
+    nang: { name: "带脉 · 磁石锦囊",     costs: [100, 200, 320, 480, 680], cur: 0, fx: function (i) { return "拾取半径 +" + (i * 5) + "%"; } }
+  };
+  var NODES = {
+    guanyuan:  { line: "ti",   order: 1, pt: "关元", state: "lit" },
+    qihai:     { line: "ti",   order: 2, pt: "气海", state: "lit" },
+    shenque:   { line: "ti",   order: 3, pt: "神阙", state: "avail" },
+    zhongwan:  { line: "ti",   order: 4, pt: "中脘", state: "locked" },
+    tanzhong:  { line: "ti",   order: 5, pt: "膻中", state: "locked" },
+    yongquan:  { line: "qing", order: 1, pt: "涌泉", state: "lit" },
+    chengshan: { line: "qing", order: 2, pt: "承山", state: "avail" },
+    weizhong:  { line: "qing", order: 3, pt: "委中", state: "locked" },
+    fengshi:   { line: "qing", order: 4, pt: "风市", state: "locked" },
+    huantiao:  { line: "qing", order: 5, pt: "环跳", state: "locked" },
+    daimai:    { line: "nang", order: 1, pt: "带脉", state: "avail" },
+    wushu:     { line: "nang", order: 2, pt: "五枢", state: "locked" },
+    weidao:    { line: "nang", order: 3, pt: "维道", state: "locked" },
+    jingmen:   { line: "nang", order: 4, pt: "京门", state: "locked" },
+    zhangmen:  { line: "nang", order: 5, pt: "章门", state: "locked" }
+  };
+
+  var frame = document.getElementById("frame");
+  var tag = document.getElementById("tag");
+  var selRing = document.getElementById("selRing");
+  var leadLine = document.getElementById("leadLine");
+  var el = {
+    name: document.getElementById("tName"),
+    line: document.getElementById("tLine"),
+    cur: document.getElementById("tCur"),
+    nextRow: document.getElementById("tNextRow"),
+    next: document.getElementById("tNext"),
+    price: document.getElementById("tPrice"),
+    priceNum: document.getElementById("tPriceNum"),
+    cta: document.getElementById("tCta")
+  };
+
+  function render(id, g) {
+    var n = NODES[id];
+    var L = LINES[n.line];
+    el.name.textContent = n.pt;
+    el.line.textContent = L.name;
+    el.cur.textContent = L.cur > 0 ? "第" + CN[L.cur] + "重 · " + L.fx(L.cur) : "未入门";
+    if (n.state === "locked") {
+      el.nextRow.classList.add("dim");
+      el.next.textContent = "第" + CN[n.order] + "重 → " + L.fx(n.order);
+      el.price.classList.add("dim");
+      el.priceNum.textContent = L.costs[n.order - 1];
+      el.cta.textContent = "未达 · 需先通前穴";
+      el.cta.classList.add("calm");
+    } else {
+      el.nextRow.classList.remove("dim");
+      el.next.textContent = "第" + CN[L.cur + 1] + "重 → " + L.fx(L.cur + 1);
+      el.price.classList.remove("dim");
+      el.priceNum.textContent = L.costs[L.cur];
+      el.cta.textContent = n.state === "avail" ? "点按冲开此穴" : "此穴已通 · 气血周流";
+      el.cta.classList.toggle("calm", n.state !== "avail");
+    }
+    if (g) {
+      var fr = frame.getBoundingClientRect();
+      var c = g.querySelector(".core").getBoundingClientRect();
+      var cx = c.left - fr.left + c.width / 2;
+      var cy = c.top - fr.top + c.height / 2;
+      selRing.setAttribute("transform", "translate(" + (cx - 64) + "," + (cy - 116) + ")");
+      leadLine.setAttribute("x1", cx + 11);
+      leadLine.setAttribute("y1", cy + 2);
+      leadLine.setAttribute("x2", cx + 46);
+      leadLine.setAttribute("y2", cy - 6);
+    }
+    tag.classList.remove("pop");
+    void tag.offsetWidth;
+    tag.classList.add("pop");
+  }
+
+  var pts = document.querySelectorAll(".pt");
+  pts.forEach(function (g) {
+    g.addEventListener("click", function () { render(g.getAttribute("data-id"), g); });
+  });
+  render("shenque", document.querySelector('.pt[data-id="shenque"]'));
+</script>
+</body>
+</html>

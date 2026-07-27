@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>卷轴展开 · 方向D 抽卡结果原型甲</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#0a0f0c;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .frame {
+    position:relative; width:960px; height:540px; overflow:hidden;
+    background:#0d130e;
+    box-shadow:0 0 0 1px rgba(255,255,255,.05), 0 24px 80px rgba(0,0,0,.6);
+  }
+  /* ---------- 场景层（沿用方向C 极简碑林） ---------- */
+  .scene { position:absolute; inset:0; }
+  .sky {
+    position:absolute; inset:0;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #18241b 0%, #101a13 46%, #0a100c 100%);
+  }
+  .bamboo { position:absolute; bottom:-24px; height:560px; filter:brightness(.8); }
+  .bamboo.l { left:-218px; }
+  .bamboo.r { right:-218px; transform:scaleX(-1); }
+  .bamboo.l2 { left:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); }
+  .bamboo.r2 { right:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); transform:scaleX(-1); }
+  .veil { position:absolute; inset:0; background:rgba(7,12,9,.65); }
+  .mist {
+    position:absolute; left:0; right:0; bottom:0; height:36%;
+    background:linear-gradient(to top, rgba(238,241,234,.085) 0%, rgba(238,241,234,.03) 45%, rgba(238,241,234,0) 100%);
+  }
+  .vignette {
+    position:absolute; inset:0;
+    background:radial-gradient(90% 78% at 50% 44%, rgba(0,0,0,0) 52%, rgba(3,6,4,.55) 100%);
+  }
+  /* ---------- 内容层 ---------- */
+  .content { position:absolute; inset:0; }
+  .title-block { position:absolute; top:44px; left:0; right:0; text-align:center; }
+  h1.title {
+    display:inline-block; vertical-align:baseline;
+    font-family:"Ma Shan Zheng",cursive; font-weight:400;
+    font-size:48px; letter-spacing:.06em; color:#f4f1e6;
+    text-shadow:0 1px 2px rgba(0,0,0,.45), 0 5px 22px rgba(0,0,0,.5);
+  }
+  .seal {
+    display:inline-flex; vertical-align:baseline; margin-left:16px;
+    width:24px; height:24px; border-radius:5px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:14px;
+    align-items:center; justify-content:center;
+    transform:rotate(-4deg) translateY(-3px);
+    box-shadow:0 1px 4px rgba(0,0,0,.55),
+      inset 0 0 0 1.5px rgba(253,246,236,.9),
+      inset 0 0 0 3px #a81212,
+      inset 0 0 7px rgba(0,0,0,.35);
+  }
+  .sub-line {
+    position:absolute; top:112px; left:0; right:0; text-align:center;
+    font-size:12px; letter-spacing:.2em; color:rgba(255,255,255,.45);
+  }
+  .sub-line b { font-weight:500; color:rgba(240,234,216,.8); font-variant-numeric:tabular-nums; }
+  /* ---------- 卷轴 ---------- */
+  .scroll { position:absolute; left:50%; top:168px; width:660px; height:210px; transform:translateX(-50%); }
+  .glow {
+    position:absolute; left:50%; top:50%; width:700px; height:300px;
+    transform:translate(-50%,-50%); opacity:0;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(192,0,0,.2), rgba(192,0,0,0) 70%);
+    filter:blur(6px);
+  }
+  .paper-clip {
+    position:absolute; left:50%; top:15px; height:180px; width:0;
+    transform:translateX(-50%); overflow:hidden;
+  }
+  .paper {
+    position:absolute; left:50%; top:0; width:600px; height:180px;
+    transform:translateX(-50%);
+    background:
+      linear-gradient(90deg, rgba(120,90,40,.16), rgba(120,90,40,0) 7%, rgba(120,90,40,0) 93%, rgba(120,90,40,.18)),
+      repeating-linear-gradient(0deg, rgba(120,95,50,.035) 0 2px, rgba(120,95,50,0) 2px 5px),
+      linear-gradient(180deg, #eadfc2, #e3d5b1 55%, #dccda6);
+    box-shadow:
+      inset 0 1px 0 rgba(255,250,235,.6),
+      inset 16px 0 24px -16px rgba(60,40,15,.5),
+      inset -16px 0 24px -16px rgba(60,40,15,.5),
+      0 12px 32px rgba(0,0,0,.45);
+    border-radius:2px;
+  }
+  .paper-inner {
+    position:absolute; inset:0; opacity:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    transform:scale(.96);
+  }
+  .r-label {
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:12px; letter-spacing:.5em; text-indent:.5em; color:#7a6a4c;
+  }
+  .r-frame { position:relative; margin-top:10px; padding:13px 42px; border:2px solid rgba(174,30,30,.88); }
+  .r-frame::before { content:""; position:absolute; inset:4px; border:1px solid rgba(174,30,30,.5); }
+  .r-name { font-family:"Ma Shan Zheng",cursive; font-size:46px; letter-spacing:.12em; color:#2a2318; line-height:1.1; }
+  .r-rarity {
+    display:flex; align-items:center; gap:12px; margin-top:13px;
+    font-family:"Ma Shan Zheng",cursive; font-size:19px; letter-spacing:.3em; text-indent:.3em;
+    color:#b22121; text-shadow:0 0 14px rgba(192,0,0,.35);
+  }
+  .r-rarity i { display:block; width:34px; height:1px; background:rgba(174,30,30,.5); }
+  .r-seal {
+    position:absolute; right:24px; bottom:16px;
+    width:24px; height:24px; border-radius:5px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:14px;
+    display:flex; align-items:center; justify-content:center;
+    transform:rotate(5deg);
+    box-shadow:0 1px 3px rgba(0,0,0,.35),
+      inset 0 0 0 1.5px rgba(253,246,236,.9),
+      inset 0 0 0 3px #a81212;
+  }
+  .roller {
+    position:absolute; top:7px; left:50%; width:22px; height:196px; margin-left:-11px;
+    border-radius:10px;
+    background:linear-gradient(90deg,#1c130c,#4a3423 28%,#6a4c32 50%,#3a2818 78%,#160f09);
+    box-shadow:0 4px 14px rgba(0,0,0,.5), inset 0 0 0 1px rgba(0,0,0,.35);
+  }
+  .roller::before, .roller::after {
+    content:""; position:absolute; left:50%; width:12px; height:12px; margin-left:-6px;
+    border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #d8bd55, #8a7018 70%, #5a470e);
+    box-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  .roller::before { top:-7px; }
+  .roller::after { bottom:-7px; }
+  /* ---------- 展开动画（仅在 .play 下运行，便于重播） ---------- */
+  .frame.play .glow { animation:glowIn .9s ease 1.1s forwards; }
+  .frame.play .paper-clip { animation:openUp 1.5s cubic-bezier(.3,.65,.25,1) .3s forwards; }
+  .frame.play .paper-inner { animation:innerIn .7s ease .95s forwards; }
+  .frame.play .roller.l { animation:rollL 1.5s cubic-bezier(.3,.65,.25,1) .3s forwards; }
+  .frame.play .roller.r { animation:rollR 1.5s cubic-bezier(.3,.65,.25,1) .3s forwards; }
+  .frame.play .r-name { animation:inkIn .8s ease 1.25s both; }
+  .frame.play .r-rarity { animation:rareIn .55s ease 1.55s both; }
+  .frame.play .r-seal { animation:sealIn .4s ease 1.8s both; }
+  @keyframes openUp { from { width:0; } to { width:600px; } }
+  @keyframes rollL { from { transform:translateX(0); } to { transform:translateX(-311px); } }
+  @keyframes rollR { from { transform:translateX(0); } to { transform:translateX(311px); } }
+  @keyframes innerIn { from { opacity:0; transform:scale(.96); } to { opacity:1; transform:scale(1); } }
+  @keyframes glowIn { from { opacity:0; } to { opacity:1; } }
+  @keyframes inkIn {
+    from { opacity:.25; color:#6a6257; filter:blur(1.5px); }
+    to { opacity:1; color:#2a2318; filter:blur(0); }
+  }
+  @keyframes rareIn {
+    0% { opacity:0; transform:scale(1.4); color:#8a8578; text-shadow:none; }
+    60% { opacity:1; transform:scale(.97); }
+    100% { opacity:1; transform:scale(1); color:#b22121; text-shadow:0 0 14px rgba(192,0,0,.35); }
+  }
+  @keyframes sealIn {
+    from { opacity:0; transform:rotate(5deg) scale(1.6); }
+    to { opacity:1; transform:rotate(5deg) scale(1); }
+  }
+  /* ---------- 收下 / 小字 / 返回 ---------- */
+  .pocket { position:absolute; top:420px; left:0; right:0; text-align:center; opacity:0; transform:translateY(8px); }
+  .pocket .btn {
+    position:relative; display:inline-block;
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:15px; letter-spacing:.3em; text-indent:.3em;
+    color:rgba(240,234,216,.85);
+    text-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  .pocket .brush { position:absolute; left:5%; right:5%; bottom:-9px; width:90%; height:9px; opacity:.55; }
+  .pocket .brush path { fill:rgba(240,234,216,.55); }
+  .frame.play .pocket { animation:fadeUp .7s ease 1.95s forwards; }
+  .fine {
+    position:absolute; top:456px; left:0; right:0; text-align:center;
+    font-size:11px; letter-spacing:.16em; color:rgba(255,255,255,.42);
+    opacity:0;
+  }
+  .frame.play .fine { animation:fadeUp .7s ease 2.2s forwards; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .back {
+    position:absolute; left:36px; bottom:28px;
+    font-size:13px; letter-spacing:.18em;
+    color:rgba(255,255,255,.55);
+  }
+  .back span { margin-right:8px; }
+  .replay {
+    position:absolute; right:36px; bottom:28px;
+    font-size:10.5px; letter-spacing:.16em; color:rgba(255,255,255,.32);
+  }
+</style>
+</head>
+<body>
+<div class="frame play" id="frame">
+  <div class="scene">
+    <div class="sky"></div>
+    <img class="bamboo l2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo l" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <div class="veil"></div>
+    <div class="mist"></div>
+    <div class="vignette"></div>
+  </div>
+  <div class="content">
+    <div class="title-block">
+      <h1 class="title">翻阅秘籍</h1><span class="seal">秘</span>
+    </div>
+    <div class="sub-line">单抽 · 消耗 <b>300</b> 铜钱</div>
+
+    <div class="scroll">
+      <div class="glow"></div>
+      <div class="paper-clip">
+        <div class="paper">
+          <div class="paper-inner">
+            <div class="r-label">称号卷轴</div>
+            <div class="r-frame"><div class="r-name">剑胆琴心</div></div>
+            <div class="r-rarity"><i></i>绝学<i></i></div>
+          </div>
+          <div class="r-seal">藏</div>
+        </div>
+      </div>
+      <div class="roller l"></div>
+      <div class="roller r"></div>
+    </div>
+
+    <div class="pocket">
+      <span class="btn">收入囊中
+        <svg class="brush" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M3 8.2 C 30 4.2, 64 9.8, 98 6.4 C 132 3.6, 168 8.2, 197 5.4 L 195.4 9.2 C 160 11.6, 118 8.2, 84 10.6 C 50 12.8, 20 10.4, 4.6 11.4 Z"/>
+        </svg>
+      </span>
+    </div>
+    <div class="fine">称号已收入囊中 · 重复收藏将转为残页</div>
+    <div class="back"><span>←</span>返回</div>
+    <div class="replay">点按画面 · 重新展开</div>
+  </div>
+</div>
+<script>
+  document.getElementById("frame").addEventListener("click", function () {
+    this.classList.remove("play");
+    void this.offsetWidth;
+    this.classList.add("play");
+  });
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 
-export type ArtPanel = Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
+export type ArtPanel = Phaser.GameObjects.Image | Phaser.GameObjects.NineSlice | Phaser.GameObjects.Rectangle;
 
 export function createArtPanel(
   scene: Phaser.Scene,
@@ -13,7 +13,10 @@ export function createArtPanel(
   fallbackAlpha = 0.88
 ): ArtPanel {
   if (scene.textures.exists(textureKey)) {
-    return scene.add.image(x, y, textureKey).setDisplaySize(width, height);
+    // 九宫格：四角 16px 保护区，面板任意尺寸拉伸不变形
+    return scene.add
+      .nineslice(x, y, textureKey, undefined, width, height, 16, 16, 16, 16)
+      .setOrigin(0.5);
   }
 
   return scene.add

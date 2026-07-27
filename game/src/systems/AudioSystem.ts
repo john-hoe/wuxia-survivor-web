@@ -1,8 +1,11 @@
-import { audioEvents, type AudioEventConfig } from "../data/audio";
+import { audioEvents, isSampleAudioPath, type AudioEventConfig } from "../data/audio";
 import type { GameSettings } from "../types";
 import { eventBus } from "../utils/EventBus";
 
 const MAX_SFX_VOICES = 24;
+const HIT_JITTER_RATIO = 0.08;
+const GENERIC_JITTER_RATIO = 0.05;
+const HEARTBEAT_PERIOD_SECONDS = 1;
 const EVENT_BY_ID = new Map(audioEvents.map((event) => [event.id, event]));
 const DEFAULT_EVENT: AudioEventConfig = {
   id: "unknown",
@@ -22,6 +25,19 @@ type ActiveVoice = {
   startedAtMs: number;
   stopAtMs: number;
   stop: () => void;
+};
+
+type PendingMerge = {
+  count: number;
+  timer: number;
+};
+
+type MusicVoice = {
+  key: string;
+  config: AudioEventConfig;
+  token: number;
+  source: AudioBufferSourceNode;
+  gain: GainNode;
 };
 
 export type AudioDebugSnapshot = {
@@ -66,12 +82,25 @@ export class AudioSystem {
   private audioContext?: AudioContext;
   private readonly activeVoices: ActiveVoice[] = [];
   private readonly lastPlayedAtByEvent = new Map<string, number>();
+  private readonly pendingMerges = new Map<string, PendingMerge>();
   private nextVoiceId = 0;
   private playedCount = 0;
   private suppressedCount = 0;
   private lastEventId = "none";
   private lastSuppressedEventId = "none";
   private lastSuppressedReason = "none";
+  private manuallySuspended = false;
+  private lowHpActive = false;
+  private heartbeatTimer?: number;
+  private heartbeatStopFns: Array<() => void> = [];
+  private nextHeartbeatAt = 0;
+  private readonly sampleCache = new Map<string, Promise<AudioBuffer | undefined>>();
+  private readonly loadedSamples = new Map<string, AudioBuffer>();
+  private currentMusic?: MusicVoice;
+  private musicToken = 0;
+  private desiredMusicKey?: string;
+  private heartbeatSource?: AudioBufferSourceNode;
+  private heartbeatGain?: GainNode;
 
   constructor(settings: GameSettings) {
     this.settings = { ...settings };
@@ -80,9 +109,178 @@ export class AudioSystem {
 
   updateSettings(settings: GameSettings): void {
     this.settings = { ...settings };
-    if (this.settings.muted || this.settings.masterVolume <= 0.01 || this.settings.sfxVolume <= 0.01) {
+    this.refreshContinuousGains();
+    if (this.isSfxSilent()) {
       this.stopAllVoices();
+      this.stopHeartbeat();
+      if (!this.manuallySuspended && this.audioContext?.state === "running") {
+        void this.audioContext.suspend().catch(() => undefined);
+      }
+      return;
     }
+    if (!this.manuallySuspended && this.audioContext?.state === "suspended") {
+      void this.audioContext.resume().catch(() => undefined);
+    }
+    // 取消静音/音量恢复后，若有记录的目标 BGM 且当前未播，恢复播放
+    if (this.desiredMusicKey && !this.currentMusic) {
+      this.playMusic(this.desiredMusicKey);
+    }
+    if (this.lowHpActive) {
+      this.startHeartbeat();
+    }
+  }
+
+  /** 设置变化后，把音乐 / 采样心跳这类长循环 voice 的增益平滑对齐到新音量。 */
+  private refreshContinuousGains(): void {
+    const context = this.audioContext;
+    if (!context) {
+      return;
+    }
+    const now = context.currentTime;
+    if (this.currentMusic) {
+      const target = Math.max(0.0001, this.getEffectiveVolume(this.currentMusic.config));
+      this.currentMusic.gain.gain.setTargetAtTime(target, now, 0.12);
+    }
+    if (this.heartbeatGain) {
+      const target = Math.max(0.0001, Math.min(1, this.getEffectiveVolume(this.getEventConfig("low_hp_loop"))));
+      this.heartbeatGain.gain.setTargetAtTime(target, now, 0.08);
+    }
+  }
+
+  setLowHp(active: boolean): void {
+    this.lowHpActive = active;
+    if (active) {
+      this.startHeartbeat();
+    } else {
+      this.stopHeartbeat();
+    }
+  }
+
+  suspendAll(): void {
+    this.manuallySuspended = true;
+    this.stopHeartbeat();
+    if (this.audioContext?.state === "running") {
+      void this.audioContext.suspend().catch(() => undefined);
+    }
+  }
+
+  resumeAll(): void {
+    this.manuallySuspended = false;
+    if (this.isSfxSilent()) {
+      return;
+    }
+    if (this.audioContext?.state === "suspended") {
+      void this.audioContext.resume().catch(() => undefined);
+    }
+    if (this.lowHpActive) {
+      this.startHeartbeat();
+    }
+  }
+
+  unlockFromGesture(): void {
+    const context = this.ensureAudioContext();
+    if (context?.state === "suspended") {
+      void context.resume().catch(() => undefined);
+    }
+    // 手势解锁后预加载全部采样事件，避免首次播放回退 procedural。
+    for (const event of audioEvents) {
+      if (isSampleAudioPath(event.path)) {
+        void this.loadSample(event.path);
+      }
+    }
+  }
+
+  /**
+   * 播放循环 BGM（music 总线，淡入 800ms）。
+   * 同时只保留一首；同 key 重复调用幂等不重启；采样缺失/解码失败时静默跳过。
+   */
+  playMusic(key: string): void {
+    const config = this.getEventConfig(key);
+    if (config.bus !== "music" || !isSampleAudioPath(config.path)) {
+      return;
+    }
+    // 记录想播的曲子；静音/音量归零时先不播，取消静音后由 updateSettings 恢复
+    this.desiredMusicKey = key;
+    if (this.settings.muted || this.settings.masterVolume <= 0.01 || this.settings.musicVolume <= 0.01) {
+      return;
+    }
+    if (this.currentMusic?.key === key) {
+      return;
+    }
+
+    const token = ++this.musicToken;
+    this.fadeOutCurrentMusic(400);
+    const context = this.ensureAudioContext();
+    if (!context) {
+      return;
+    }
+    if (context.state === "suspended" && !this.manuallySuspended && !this.settings.muted) {
+      void context.resume().catch(() => undefined);
+    }
+
+    void this.loadSample(config.path).then((buffer) => {
+      if (!buffer || token !== this.musicToken) {
+        return;
+      }
+      const currentContext = this.ensureAudioContext();
+      if (!currentContext) {
+        return;
+      }
+      this.startMusicLoop(currentContext, key, config, buffer, token);
+    });
+  }
+
+  /** 停止当前 BGM，默认 500ms 淡出。 */
+  stopMusic(fadeMs = 500): void {
+    ++this.musicToken;
+    this.desiredMusicKey = undefined;
+    this.fadeOutCurrentMusic(fadeMs);
+  }
+
+  private startMusicLoop(
+    context: AudioContext,
+    key: string,
+    config: AudioEventConfig,
+    buffer: AudioBuffer,
+    token: number
+  ): void {
+    this.fadeOutCurrentMusic(400);
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const gain = context.createGain();
+    const target = Math.max(0.0001, this.getEffectiveVolume(config));
+    const now = context.currentTime;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(target, now + 0.8);
+    source.connect(gain);
+    gain.connect(context.destination);
+    source.start(now);
+    this.currentMusic = { key, config, token, source, gain };
+  }
+
+  private fadeOutCurrentMusic(fadeMs: number): void {
+    const music = this.currentMusic;
+    if (!music) {
+      return;
+    }
+    this.currentMusic = undefined;
+    const context = this.audioContext;
+    if (context && context.state === "running") {
+      const now = context.currentTime;
+      music.gain.gain.cancelScheduledValues(now);
+      music.gain.gain.setValueAtTime(Math.max(0.0001, music.gain.gain.value), now);
+      music.gain.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.05, fadeMs / 1000));
+    }
+    window.setTimeout(() => {
+      try {
+        music.source.stop();
+      } catch {
+        // Source already stopped.
+      }
+      music.source.disconnect();
+      music.gain.disconnect();
+    }, fadeMs + 80);
   }
 
   update(_deltaMs: number): void {
@@ -121,6 +319,10 @@ export class AudioSystem {
     const nowMs = performance.now();
     const effectiveVolume = this.getEffectiveVolume(config);
     if (config.bus === "music") {
+      if (isSampleAudioPath(config.path)) {
+        this.playMusic(config.id);
+        return true;
+      }
       this.recordSuppressed(config.id, "music_placeholder_not_implemented");
       return false;
     }
@@ -132,6 +334,9 @@ export class AudioSystem {
       this.recordSuppressed(config.id, "volume_zero");
       return false;
     }
+    if (config.mergeWindowMs !== undefined && config.mergeWindowMs > 0 && config.id.endsWith("pickup")) {
+      return this.queueMergedEvent(config, effectiveVolume, nowMs);
+    }
     if (this.isThrottled(config, nowMs)) {
       this.recordSuppressed(config.id, "throttled");
       return false;
@@ -142,13 +347,59 @@ export class AudioSystem {
     }
 
     this.lastPlayedAtByEvent.set(config.id, nowMs);
+    this.playEvent(config, effectiveVolume, nowMs);
+    return true;
+  }
+
+  private queueMergedEvent(config: AudioEventConfig, effectiveVolume: number, nowMs: number): boolean {
+    const pending = this.pendingMerges.get(config.id);
+    if (pending) {
+      pending.count += 1;
+      this.lastPlayedAtByEvent.set(config.id, nowMs);
+      return true;
+    }
+
+    const entry: PendingMerge = { count: 1, timer: 0 };
+    entry.timer = window.setTimeout(() => {
+      this.pendingMerges.delete(config.id);
+      this.flushMergedEvent(config, entry.count, effectiveVolume);
+    }, config.mergeWindowMs ?? 0);
+    this.pendingMerges.set(config.id, entry);
+    this.lastPlayedAtByEvent.set(config.id, nowMs);
+    return true;
+  }
+
+  private flushMergedEvent(config: AudioEventConfig, count: number, effectiveVolume: number): void {
+    const nowMs = performance.now();
+    if (this.isSfxSilent()) {
+      this.recordSuppressed(config.id, "muted");
+      return;
+    }
+    if (!this.reserveVoice(config, nowMs)) {
+      this.recordSuppressed(config.id, "voice_budget");
+      return;
+    }
+
+    const extraPicks = Math.max(0, count - 1);
+    const pitchRatio = Math.min(1 + extraPicks * 0.07, 1.5);
+    const volumeScale = Math.min(1 + extraPicks * 0.15, 1.6);
+    this.playEvent(config, effectiveVolume, nowMs, pitchRatio, volumeScale);
+  }
+
+  private playEvent(
+    config: AudioEventConfig,
+    effectiveVolume: number,
+    nowMs: number,
+    pitchRatio = 1,
+    volumeScale = 1
+  ): void {
     this.playedCount += 1;
     this.lastEventId = config.id;
     eventBus.emit("audio_event_played", {
       id: config.id,
       activeVoices: this.activeVoices.length,
       priority: config.priority,
-      effectiveVolume: Number(effectiveVolume.toFixed(3))
+      effectiveVolume: Number(Math.min(1, effectiveVolume * volumeScale).toFixed(3))
     });
 
     const durationMs = getEventDurationMs(config.id);
@@ -156,7 +407,7 @@ export class AudioSystem {
       const context = this.ensureAudioContext();
       if (!context) {
         this.trackTimerOnlyVoice(config, durationMs, nowMs);
-        return true;
+        return;
       }
 
       if (context.state === "suspended") {
@@ -165,12 +416,94 @@ export class AudioSystem {
         });
       }
 
-      this.synthesizeEvent(context, config.id, effectiveVolume, durationMs, nowMs);
-      return true;
+      if (isSampleAudioPath(config.path)) {
+        const buffer = this.loadedSamples.get(config.path);
+        if (buffer) {
+          this.playSampleVoice(context, config, buffer, effectiveVolume, nowMs, pitchRatio, volumeScale);
+          return;
+        }
+        // 采样尚未就绪：触发懒加载，本次回退 procedural 合成。
+        void this.loadSample(config.path);
+      }
+
+      this.synthesizeEvent(context, config.id, effectiveVolume, durationMs, nowMs, pitchRatio, volumeScale);
     } catch {
       this.trackTimerOnlyVoice(config, durationMs, nowMs);
-      return true;
     }
+  }
+
+  /** 懒加载采样：fetch + decodeAudioData，结果按 path 缓存；失败缓存 undefined 并永久回退 procedural。 */
+  private loadSample(path: string): Promise<AudioBuffer | undefined> {
+    const cached = this.sampleCache.get(path);
+    if (cached) {
+      return cached;
+    }
+
+    const promise = (async (): Promise<AudioBuffer | undefined> => {
+      try {
+        const context = this.ensureAudioContext();
+        if (!context) {
+          return undefined;
+        }
+        const response = await fetch(path);
+        if (!response.ok) {
+          return undefined;
+        }
+        const data = await response.arrayBuffer();
+        const buffer = await context.decodeAudioData(data);
+        this.loadedSamples.set(path, buffer);
+        return buffer;
+      } catch {
+        return undefined;
+      }
+    })();
+    this.sampleCache.set(path, promise);
+    return promise;
+  }
+
+  /** 播放已解码采样：走与合成相同的 bus 增益、voice 计数与抢占，仅音源换成 AudioBuffer。 */
+  private playSampleVoice(
+    context: AudioContext,
+    config: AudioEventConfig,
+    buffer: AudioBuffer,
+    effectiveVolume: number,
+    nowMs: number,
+    pitchRatio: number,
+    volumeScale: number
+  ): void {
+    const jitterRatio =
+      1 + (Math.random() * 2 - 1) * (config.id === "hit_light" ? HIT_JITTER_RATIO : GENERIC_JITTER_RATIO);
+    const rate = Math.max(0.25, jitterRatio * pitchRatio);
+    const volume = Math.min(1, effectiveVolume * volumeScale);
+    const startTime = context.currentTime;
+
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.setValueAtTime(rate, startTime);
+    const gain = context.createGain();
+    // 极短 attack 避免爆音，随后保持常值增益（采样自带包络）。
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.linearRampToValueAtTime(Math.max(0.0001, volume), startTime + 0.008);
+    source.connect(gain);
+    gain.connect(context.destination);
+    source.start(startTime);
+
+    const stop = (): void => {
+      try {
+        source.stop();
+      } catch {
+        // Source already stopped.
+      }
+      source.disconnect();
+      gain.disconnect();
+    };
+
+    const durationMs = Math.max(60, (buffer.duration * 1000) / rate);
+    this.trackAudioVoice(config.id, config.priority, durationMs, nowMs, [stop]);
+  }
+
+  private isSfxSilent(): boolean {
+    return this.settings.muted || this.settings.masterVolume <= 0.01 || this.settings.sfxVolume <= 0.01;
   }
 
   private getEventConfig(eventId: string): AudioEventConfig {
@@ -182,6 +515,9 @@ export class AudioSystem {
   }
 
   private getEffectiveVolume(config: AudioEventConfig): number {
+    if (this.settings.muted) {
+      return 0;
+    }
     const busVolume = config.bus === "music" ? this.settings.musicVolume : this.settings.sfxVolume;
     return clamp01(this.settings.masterVolume) * clamp01(busVolume) * clamp01(config.volume);
   }
@@ -243,127 +579,154 @@ export class AudioSystem {
     eventId: string,
     effectiveVolume: number,
     durationMs: number,
-    nowMs: number
+    nowMs: number,
+    pitchRatio = 1,
+    volumeScale = 1
   ): void {
     const startTime = context.currentTime;
     const stopFns: Array<() => void> = [];
+    const jitterRatio =
+      1 + (Math.random() * 2 - 1) * (eventId === "hit_light" ? HIT_JITTER_RATIO : GENERIC_JITTER_RATIO);
+    const pitch = jitterRatio * pitchRatio;
+    const volume = Math.min(1, effectiveVolume * volumeScale);
 
     const tone = (
       frequency: number,
       durationSeconds: number,
-      volume: number,
+      toneVolume: number,
       type: OscillatorType = "sine",
       delaySeconds = 0,
       endFrequency?: number
     ): void => {
-      stopFns.push(this.playTone(context, startTime + delaySeconds, frequency, durationSeconds, volume, type, endFrequency));
+      stopFns.push(
+        this.playTone(
+          context,
+          startTime + delaySeconds,
+          frequency * pitch,
+          durationSeconds,
+          toneVolume,
+          type,
+          endFrequency !== undefined ? endFrequency * pitch : undefined
+        )
+      );
     };
     const noise = (
       durationSeconds: number,
-      volume: number,
+      noiseVolume: number,
       delaySeconds = 0,
       filterType: BiquadFilterType = "bandpass",
       frequency = 900
     ): void => {
-      stopFns.push(this.playNoise(context, startTime + delaySeconds, durationSeconds, volume, filterType, frequency));
+      stopFns.push(
+        this.playNoise(context, startTime + delaySeconds, durationSeconds, noiseVolume, filterType, frequency * pitch)
+      );
     };
 
     switch (eventId) {
       case "ui_click":
-        tone(720, 0.07, effectiveVolume, "triangle", 0, 980);
+        tone(720, 0.07, volume, "triangle", 0, 980);
         break;
       case "menu_open":
       case "result_open":
-        tone(392, 0.12, effectiveVolume * 0.45, "triangle", 0, 523);
-        tone(659, 0.18, effectiveVolume * 0.38, "sine", 0.08, 784);
+        tone(392, 0.12, volume * 0.45, "triangle", 0, 523);
+        tone(659, 0.18, volume * 0.38, "sine", 0.08, 784);
         break;
       case "pause_toggle":
-        tone(440, 0.06, effectiveVolume * 0.5, "triangle", 0);
-        tone(330, 0.08, effectiveVolume * 0.44, "triangle", 0.06);
+        tone(440, 0.06, volume * 0.5, "triangle", 0);
+        tone(330, 0.08, volume * 0.44, "triangle", 0.06);
         break;
       case "skill_cast":
-        noise(0.08, effectiveVolume * 0.55, 0, "highpass", 1200);
-        tone(620, 0.1, effectiveVolume * 0.34, "sine", 0, 760);
+        noise(0.08, volume * 0.55, 0, "highpass", 1200);
+        tone(620, 0.1, volume * 0.34, "sine", 0, 760);
         break;
       case "skill_cast_advanced":
-        noise(0.1, effectiveVolume * 0.55, 0, "highpass", 1300);
-        tone(523, 0.09, effectiveVolume * 0.34, "triangle", 0);
-        tone(784, 0.12, effectiveVolume * 0.32, "sine", 0.06);
+        noise(0.1, volume * 0.55, 0, "highpass", 1300);
+        tone(523, 0.09, volume * 0.34, "triangle", 0);
+        tone(784, 0.12, volume * 0.32, "sine", 0.06);
         break;
       case "hit_light":
-        noise(0.055, effectiveVolume * 0.5, 0, "highpass", 1600);
-        tone(1050, 0.045, effectiveVolume * 0.28, "square", 0);
+        noise(0.055, volume * 0.5, 0, "highpass", 1600);
+        tone(1050, 0.045, volume * 0.28, "square", 0);
+        tone(120, 0.03, volume * 0.5, "sine", 0, 60);
         break;
       case "enemy_die":
-        noise(0.16, effectiveVolume * 0.42, 0, "lowpass", 580);
-        tone(260, 0.16, effectiveVolume * 0.34, "sawtooth", 0, 120);
+        noise(0.16, volume * 0.42, 0, "lowpass", 580);
+        tone(260, 0.16, volume * 0.34, "sawtooth", 0, 120);
+        break;
+      case "heal_pickup":
+        tone(523, 0.11, volume * 0.4, "sine", 0, 659);
+        tone(784, 0.15, volume * 0.3, "sine", 0.08, 988);
         break;
       case "inner_power_pickup":
+        tone(659, 0.06, volume * 0.38, "triangle", 0);
+        tone(880, 0.06, volume * 0.34, "triangle", 0.05);
+        tone(1319, 0.1, volume * 0.28, "triangle", 0.1);
+        break;
       case "copper_gain":
-      case "heal_pickup":
-        tone(880, 0.08, effectiveVolume * 0.38, "sine", 0, 1320);
-        tone(1320, 0.1, effectiveVolume * 0.24, "sine", 0.05, 1760);
+        tone(2093, 0.05, volume * 0.3, "square", 0, 1976);
+        tone(3136, 0.045, volume * 0.18, "square", 0.012);
+        noise(0.035, volume * 0.22, 0, "highpass", 3800);
         break;
       case "hero_hurt":
-        noise(0.18, effectiveVolume * 0.62, 0, "bandpass", 420);
-        tone(170, 0.22, effectiveVolume * 0.42, "sawtooth", 0, 95);
+        noise(0.18, volume * 0.62, 0, "bandpass", 420);
+        tone(170, 0.22, volume * 0.42, "sawtooth", 0, 95);
         break;
       case "hero_die":
-        tone(196, 0.35, effectiveVolume * 0.55, "triangle", 0, 116);
-        tone(147, 0.46, effectiveVolume * 0.42, "sine", 0.22, 82);
-        noise(0.35, effectiveVolume * 0.2, 0.12, "lowpass", 360);
+        tone(196, 0.35, volume * 0.55, "triangle", 0, 116);
+        tone(147, 0.46, volume * 0.42, "sine", 0.22, 82);
+        noise(0.35, volume * 0.2, 0.12, "lowpass", 360);
         break;
       case "insight":
-        tone(392, 0.16, effectiveVolume * 0.36, "sine", 0);
-        tone(523, 0.18, effectiveVolume * 0.34, "sine", 0.12);
-        tone(784, 0.28, effectiveVolume * 0.28, "sine", 0.24);
-        noise(0.32, effectiveVolume * 0.18, 0.06, "highpass", 1500);
+        tone(392, 0.16, volume * 0.36, "sine", 0);
+        tone(523, 0.18, volume * 0.34, "sine", 0.12);
+        tone(784, 0.28, volume * 0.28, "sine", 0.24);
+        noise(0.32, volume * 0.18, 0.06, "highpass", 1500);
         break;
       case "skill_advance":
-        tone(262, 0.16, effectiveVolume * 0.32, "triangle", 0);
-        tone(392, 0.18, effectiveVolume * 0.34, "triangle", 0.14);
-        tone(659, 0.32, effectiveVolume * 0.34, "sine", 0.3);
-        noise(0.4, effectiveVolume * 0.22, 0.08, "bandpass", 900);
+        tone(262, 0.16, volume * 0.32, "triangle", 0);
+        tone(392, 0.18, volume * 0.34, "triangle", 0.14);
+        tone(659, 0.32, volume * 0.34, "sine", 0.3);
+        noise(0.4, volume * 0.22, 0.08, "bandpass", 900);
         break;
       case "elite_warning":
-        tone(220, 0.11, effectiveVolume * 0.42, "square", 0);
-        tone(220, 0.11, effectiveVolume * 0.42, "square", 0.2);
-        tone(330, 0.12, effectiveVolume * 0.36, "triangle", 0.4);
+        tone(220, 0.11, volume * 0.42, "square", 0);
+        tone(220, 0.11, volume * 0.42, "square", 0.2);
+        tone(330, 0.12, volume * 0.36, "triangle", 0.4);
         break;
       case "boss_intro":
-        tone(98, 0.3, effectiveVolume * 0.55, "sawtooth", 0);
-        tone(130, 0.36, effectiveVolume * 0.42, "triangle", 0.28);
-        noise(0.45, effectiveVolume * 0.32, 0.06, "lowpass", 260);
+        tone(98, 0.3, volume * 0.55, "sawtooth", 0);
+        tone(130, 0.36, volume * 0.42, "triangle", 0.28);
+        noise(0.45, volume * 0.32, 0.06, "lowpass", 260);
         break;
       case "boss_warning":
-        tone(164, 0.14, effectiveVolume * 0.54, "square", 0);
-        tone(247, 0.16, effectiveVolume * 0.44, "square", 0.18);
+        tone(164, 0.14, volume * 0.54, "square", 0);
+        tone(247, 0.16, volume * 0.44, "square", 0.18);
         break;
       case "boss_hit":
-        noise(0.08, effectiveVolume * 0.48, 0, "bandpass", 520);
-        tone(210, 0.1, effectiveVolume * 0.28, "triangle", 0, 140);
+        noise(0.08, volume * 0.48, 0, "bandpass", 520);
+        tone(210, 0.1, volume * 0.28, "triangle", 0, 140);
         break;
       case "boss_defeated":
-        tone(196, 0.2, effectiveVolume * 0.36, "triangle", 0);
-        tone(294, 0.24, effectiveVolume * 0.38, "triangle", 0.18);
-        tone(392, 0.42, effectiveVolume * 0.38, "sine", 0.38);
-        noise(0.38, effectiveVolume * 0.18, 0.2, "bandpass", 720);
+        tone(196, 0.2, volume * 0.36, "triangle", 0);
+        tone(294, 0.24, volume * 0.38, "triangle", 0.18);
+        tone(392, 0.42, volume * 0.38, "sine", 0.38);
+        noise(0.38, volume * 0.18, 0.2, "bandpass", 720);
         break;
       case "scripture_reveal_rare":
-        tone(523, 0.16, effectiveVolume * 0.34, "sine", 0);
-        tone(784, 0.26, effectiveVolume * 0.34, "sine", 0.14);
-        noise(0.24, effectiveVolume * 0.16, 0.06, "highpass", 1800);
+        tone(523, 0.16, volume * 0.34, "sine", 0);
+        tone(784, 0.26, volume * 0.34, "sine", 0.14);
+        noise(0.24, volume * 0.16, 0.06, "highpass", 1800);
         break;
       case "scripture_reveal_epic":
-        tone(392, 0.16, effectiveVolume * 0.34, "triangle", 0);
-        tone(587, 0.2, effectiveVolume * 0.36, "triangle", 0.16);
-        tone(880, 0.36, effectiveVolume * 0.32, "sine", 0.34);
-        noise(0.32, effectiveVolume * 0.2, 0.1, "bandpass", 1200);
+        tone(392, 0.16, volume * 0.34, "triangle", 0);
+        tone(587, 0.2, volume * 0.36, "triangle", 0.16);
+        tone(880, 0.36, volume * 0.32, "sine", 0.34);
+        noise(0.32, volume * 0.2, 0.1, "bandpass", 1200);
         break;
       case "scripture_reveal_common":
       default:
-        tone(440, 0.14, effectiveVolume * 0.36, "triangle", 0);
-        tone(660, 0.16, effectiveVolume * 0.26, "sine", 0.1);
+        tone(440, 0.14, volume * 0.36, "triangle", 0);
+        tone(660, 0.16, volume * 0.26, "sine", 0.1);
         break;
     }
 
@@ -442,6 +805,161 @@ export class AudioSystem {
       filter.disconnect();
       gain.disconnect();
     };
+  }
+
+  private startHeartbeat(): void {
+    if (
+      this.heartbeatSource !== undefined ||
+      this.heartbeatTimer !== undefined ||
+      !this.lowHpActive ||
+      this.manuallySuspended ||
+      this.isSfxSilent()
+    ) {
+      return;
+    }
+    const context = this.ensureAudioContext();
+    if (!context) {
+      return;
+    }
+    if (context.state === "suspended") {
+      void context.resume().catch(() => undefined);
+    }
+
+    const heartbeatPath = this.getEventConfig("low_hp_loop").path;
+    if (isSampleAudioPath(heartbeatPath)) {
+      const buffer = this.loadedSamples.get(heartbeatPath);
+      if (buffer) {
+        this.startSampleHeartbeat(context, buffer);
+        return;
+      }
+      // 采样未就绪：先走合成心跳，解码完成后无缝切换为采样循环。
+      void this.loadSample(heartbeatPath).then((loaded) => {
+        if (
+          !loaded ||
+          !this.lowHpActive ||
+          this.manuallySuspended ||
+          this.isSfxSilent() ||
+          this.heartbeatSource !== undefined ||
+          this.heartbeatTimer === undefined
+        ) {
+          return;
+        }
+        const currentContext = this.ensureAudioContext();
+        if (!currentContext) {
+          return;
+        }
+        this.stopProceduralHeartbeat();
+        this.startSampleHeartbeat(currentContext, loaded);
+      });
+    }
+
+    this.nextHeartbeatAt = context.currentTime + 0.1;
+    this.heartbeatTimer = window.setInterval(() => this.scheduleHeartbeat(), 120);
+    this.scheduleHeartbeat();
+  }
+
+  /** 采样心跳：heartbeat.ogg 循环播放，音量取 low_hp_loop 事件配置 × sfx 总线。 */
+  private startSampleHeartbeat(context: AudioContext, buffer: AudioBuffer): void {
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const gain = context.createGain();
+    const volume = Math.max(0.0001, Math.min(1, this.getEffectiveVolume(this.getEventConfig("low_hp_loop"))));
+    gain.gain.setValueAtTime(volume, context.currentTime);
+    source.connect(gain);
+    gain.connect(context.destination);
+    source.start();
+    this.heartbeatSource = source;
+    this.heartbeatGain = gain;
+  }
+
+  private stopProceduralHeartbeat(): void {
+    if (this.heartbeatTimer !== undefined) {
+      window.clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+    for (const stop of this.heartbeatStopFns.splice(0)) {
+      stop();
+    }
+  }
+
+  private scheduleHeartbeat(): void {
+    const context = this.audioContext;
+    if (!context || context.state !== "running") {
+      return;
+    }
+    if (this.nextHeartbeatAt < context.currentTime + 0.05) {
+      this.nextHeartbeatAt = context.currentTime + 0.05;
+    }
+    while (this.nextHeartbeatAt < context.currentTime + 0.5) {
+      this.scheduleHeartbeatBeat(context, this.nextHeartbeatAt);
+      this.nextHeartbeatAt += HEARTBEAT_PERIOD_SECONDS;
+    }
+  }
+
+  private scheduleHeartbeatBeat(context: AudioContext, startTime: number): void {
+    const volume = Math.min(1, this.getEffectiveVolume(this.getEventConfig("low_hp_loop")));
+    if (volume <= 0.01) {
+      return;
+    }
+
+    this.heartbeatStopFns.push(this.playHeartbeatThump(context, startTime, 78, 58, 0.16, volume));
+    this.heartbeatStopFns.push(this.playHeartbeatThump(context, startTime + 0.18, 64, 50, 0.13, volume * 0.7));
+    while (this.heartbeatStopFns.length > 8) {
+      this.heartbeatStopFns.shift();
+    }
+  }
+
+  private playHeartbeatThump(
+    context: AudioContext,
+    startTime: number,
+    frequency: number,
+    endFrequency: number,
+    durationSeconds: number,
+    volume: number
+  ): () => void {
+    const oscillator = context.createOscillator();
+    const filter = context.createBiquadFilter();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, startTime);
+    oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, endFrequency), startTime + durationSeconds);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(220, startTime);
+    applyEnvelope(gain.gain, startTime, durationSeconds, volume);
+    oscillator.connect(filter);
+    filter.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + durationSeconds + 0.03);
+
+    return () => {
+      try {
+        oscillator.stop();
+      } catch {
+        // Source already stopped.
+      }
+      oscillator.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
+  }
+
+  private stopHeartbeat(): void {
+    this.stopProceduralHeartbeat();
+    if (this.heartbeatSource) {
+      try {
+        this.heartbeatSource.stop();
+      } catch {
+        // Source already stopped.
+      }
+      this.heartbeatSource.disconnect();
+      this.heartbeatSource = undefined;
+    }
+    if (this.heartbeatGain) {
+      this.heartbeatGain.disconnect();
+      this.heartbeatGain = undefined;
+    }
   }
 
   private trackAudioVoice(
@@ -562,9 +1080,11 @@ function getEventDurationMs(eventId: string): number {
     case "enemy_die":
       return 210;
     case "inner_power_pickup":
+      return 200;
     case "heal_pickup":
+      return 230;
     case "copper_gain":
-      return 150;
+      return 100;
     case "hero_hurt":
       return 280;
     case "hero_die":

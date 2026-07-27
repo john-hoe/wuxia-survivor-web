@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>灵签问武 · 方向E 签筒(方案三·乙)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#0a0f0c;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .frame {
+    position:relative; width:960px; height:540px; overflow:hidden;
+    background:#0d130e;
+    box-shadow:0 0 0 1px rgba(255,255,255,.05), 0 24px 80px rgba(0,0,0,.6);
+  }
+  /* ---------- 场景层(同方向C) ---------- */
+  .scene { position:absolute; inset:0; }
+  .sky {
+    position:absolute; inset:0;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #18241b 0%, #101a13 46%, #0a100c 100%);
+  }
+  .bamboo { position:absolute; bottom:-24px; height:560px; filter:brightness(.8); }
+  .bamboo.l { left:-218px; }
+  .bamboo.r { right:-218px; transform:scaleX(-1); }
+  .bamboo.l2 { left:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); }
+  .bamboo.r2 { right:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); transform:scaleX(-1); }
+  .veil { position:absolute; inset:0; background:rgba(7,12,9,.65); }
+  .mist {
+    position:absolute; left:0; right:0; bottom:0; height:36%;
+    background:linear-gradient(to top, rgba(238,241,234,.085) 0%, rgba(238,241,234,.03) 45%, rgba(238,241,234,0) 100%);
+  }
+  .vignette {
+    position:absolute; inset:0;
+    background:radial-gradient(90% 78% at 50% 44%, rgba(0,0,0,0) 52%, rgba(3,6,4,.55) 100%);
+  }
+  /* ---------- 内容层 ---------- */
+  .content { position:absolute; inset:0; }
+  .title-block { position:absolute; top:34px; left:0; right:0; text-align:center; }
+  h1.title {
+    display:inline-block; vertical-align:baseline;
+    font-family:"Ma Shan Zheng",cursive; font-weight:400;
+    font-size:42px; letter-spacing:.06em; color:#f4f1e6;
+    text-shadow:0 1px 2px rgba(0,0,0,.45), 0 5px 22px rgba(0,0,0,.5);
+  }
+  .seal {
+    display:inline-flex; vertical-align:baseline; margin-left:14px;
+    width:24px; height:24px; border-radius:5px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:14px;
+    align-items:center; justify-content:center;
+    transform:rotate(-4deg) translateY(-3px);
+    box-shadow:0 1px 4px rgba(0,0,0,.55),
+      inset 0 0 0 1.5px rgba(253,246,236,.9),
+      inset 0 0 0 3px #a81212,
+      inset 0 0 7px rgba(0,0,0,.35);
+  }
+  .info {
+    position:absolute; top:100px; left:50%; transform:translateX(-50%);
+    width:380px; display:flex; justify-content:space-between;
+    font-size:12.5px; letter-spacing:.14em; color:rgba(255,255,255,.6);
+  }
+  .info b { font-weight:500; color:rgba(240,234,216,.88); font-variant-numeric:tabular-nums; }
+  /* ---------- 左:签筒单抽 ---------- */
+  .tube-wrap {
+    position:absolute; left:150px; top:230px; width:160px; height:180px;
+    transform-origin:50% 100%;
+    animation:tubeshake .85s cubic-bezier(.36,.07,.19,.97) .35s 1 both;
+  }
+  @keyframes tubeshake {
+    0%   { transform:rotate(0) translateX(0); }
+    14%  { transform:rotate(-3.2deg) translateX(-3px); }
+    28%  { transform:rotate(2.8deg) translateX(3px); }
+    42%  { transform:rotate(-2.2deg) translateX(-2px); }
+    56%  { transform:rotate(1.6deg) translateX(2px); }
+    70%  { transform:rotate(-.9deg) translateX(-1px); }
+    84%  { transform:rotate(.4deg) translateX(0); }
+    100% { transform:rotate(0) translateX(0); }
+  }
+  .tube-svg { position:absolute; inset:0; z-index:2; }
+  .hero-stick {
+    position:absolute; left:50%; bottom:138px; z-index:1;
+    width:30px; height:168px;
+    background:linear-gradient(180deg,#e6d5a8 0%, #d3bd8c 55%, #c4ac7c 100%);
+    border:1px solid rgba(90,70,40,.5);
+    border-radius:14px 14px 6px 6px;
+    box-shadow:0 3px 10px rgba(0,0,0,.5);
+    transform:translate(-50%,156px);
+    animation:stickrise .95s cubic-bezier(.25,.8,.3,1) 1.25s 1 both;
+  }
+  .stick-txt {
+    position:absolute; left:0; right:0; top:13px; bottom:26px;
+    writing-mode:vertical-rl;
+    display:flex; align-items:center; justify-content:center;
+  }
+  @keyframes stickrise {
+    0%   { transform:translate(-50%,156px); }
+    62%  { transform:translate(-50%,-7px); }
+    80%  { transform:translate(-50%,2px); }
+    100% { transform:translate(-50%,0); }
+  }
+  .hero-stick .head {
+    position:absolute; top:0; left:0; right:0; height:12px;
+    border-radius:14px 14px 2px 2px;
+    background:linear-gradient(180deg,#d02020,#a00e0e);
+    box-shadow:0 0 10px rgba(192,0,0,.55);
+  }
+  .hero-stick .txt {
+    font-family:"Ma Shan Zheng",cursive; font-size:22px; letter-spacing:.08em;
+    color:#453316;
+  }
+  .hero-stick .sub {
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:10.5px; letter-spacing:.08em; color:#6b532e; margin-top:6px;
+  }
+  .hero-stick .tail {
+    position:absolute; bottom:5px; left:50%; transform:translateX(-50%);
+    width:16px; height:16px; border-radius:3px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:10px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:inset 0 0 0 1px rgba(253,246,236,.85), inset 0 0 4px rgba(0,0,0,.35);
+  }
+  .tube-label {
+    position:absolute; left:50%; top:96px; transform:translateX(-50%); z-index:3;
+    writing-mode:vertical-rl;
+    font-family:"Ma Shan Zheng",cursive; font-size:20px; letter-spacing:.18em;
+    color:#e0cd9c; text-shadow:0 1px 2px rgba(0,0,0,.6);
+  }
+  .tube-seal {
+    position:absolute; right:18px; bottom:14px; z-index:3;
+    width:15px; height:15px; border-radius:3px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:9px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:inset 0 0 0 1px rgba(253,246,236,.85);
+  }
+  .cap {
+    position:absolute; font-size:11px; letter-spacing:.16em; text-indent:.16em;
+    color:rgba(255,255,255,.42); text-align:center;
+  }
+  .cap.l { left:150px; top:418px; width:160px; }
+  /* ---------- 右:十连签扇 ---------- */
+  .fan { position:absolute; left:560px; top:148px; width:320px; height:256px; }
+  .fstick {
+    position:absolute; left:149px; top:80px; width:22px; height:170px;
+    transform-origin:50% 100%;
+    background:linear-gradient(180deg,#e0d0a4 0%, #cbb380 60%, #bfa874 100%);
+    border:1px solid rgba(90,70,40,.45);
+    border-radius:11px 11px 4px 4px;
+    box-shadow:0 2px 6px rgba(0,0,0,.4);
+    animation:fanout .5s cubic-bezier(.2,.8,.3,1.05) 1 both;
+  }
+  @keyframes fanout {
+    from { transform:rotate(0deg) translateY(46px); opacity:0; }
+  }
+  .fstick .head {
+    position:absolute; top:0; left:0; right:0; height:12px;
+    border-radius:11px 11px 2px 2px;
+  }
+  .h-c1 { background:#b8b3a4; }
+  .h-c2 { background:#7d9b76; }
+  .h-c3 { background:#a99a20; }
+  .h-c4 { background:linear-gradient(180deg,#d02020,#a00e0e); box-shadow:0 0 8px rgba(192,0,0,.55); }
+  .fstick.hot {
+    height:178px; top:72px; z-index:5;
+    box-shadow:0 0 16px rgba(192,0,0,.32), 0 3px 8px rgba(0,0,0,.5);
+  }
+  .cap.r { left:560px; top:408px; width:320px; }
+  /* ---------- 底部 ---------- */
+  .fine {
+    position:absolute; top:440px; left:0; right:0; text-align:center;
+    font-size:11px; letter-spacing:.16em; color:rgba(255,255,255,.42);
+  }
+  .actions { position:absolute; top:468px; left:0; right:0; display:flex; justify-content:center; gap:72px; }
+  .btn {
+    position:relative;
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:15px; letter-spacing:.22em; text-indent:.22em;
+    color:rgba(240,234,216,.85);
+    text-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  .btn .brush { position:absolute; left:5%; right:5%; bottom:-9px; width:90%; height:9px; opacity:.5; }
+  .btn .brush path { fill:rgba(240,234,216,.55); }
+  .btn.gold { font-size:17px; color:#c9b232; }
+  .btn.gold .brush { opacity:1; height:11px; bottom:-10px; }
+  .btn.gold .brush path { fill:#a99a20; }
+  .back {
+    position:absolute; left:36px; bottom:24px;
+    font-size:13px; letter-spacing:.18em;
+    color:rgba(255,255,255,.55);
+  }
+  .back span { margin-right:8px; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="scene">
+    <div class="sky"></div>
+    <img class="bamboo l2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo l" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <div class="veil"></div>
+    <div class="mist"></div>
+    <div class="vignette"></div>
+  </div>
+  <div class="content">
+    <div class="title-block">
+      <h1 class="title">灵签问武</h1><span class="seal">签</span>
+    </div>
+    <div class="info">
+      <div>铜钱 <b>2,450</b></div>
+      <div>距保底 <b>2</b> 次</div>
+    </div>
+
+    <!-- 左:签筒晃动 → 抽出一签 -->
+    <div class="tube-wrap">
+      <div class="hero-stick">
+        <div class="head"></div>
+        <div class="stick-txt">
+          <span class="txt">绝学</span>
+          <span class="sub">称号卷轴</span>
+        </div>
+        <div class="tail">绝</div>
+      </div>
+      <svg class="tube-svg" viewBox="0 0 160 180" aria-hidden="true">
+        <defs>
+          <linearGradient id="tubeGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#5d4b2c"/>
+            <stop offset=".55" stop-color="#463722"/>
+            <stop offset="1" stop-color="#2f2413"/>
+          </linearGradient>
+        </defs>
+        <!-- 筒口内壁 -->
+        <ellipse cx="80" cy="24" rx="64" ry="15" fill="#1d1508"/>
+        <!-- 筒内签束 -->
+        <g>
+          <rect x="42" y="2"  width="9" height="30" rx="4" fill="#d8cca4" transform="rotate(-7 46 32)"/>
+          <rect x="56" y="8"  width="9" height="26" rx="4" fill="#cbbd92" transform="rotate(-3 60 34)"/>
+          <rect x="70" y="0"  width="9" height="34" rx="4" fill="#e2d6b0"/>
+          <rect x="70" y="0"  width="9" height="8"  rx="4" fill="#b21e1e"/>
+          <rect x="84" y="6"  width="9" height="28" rx="4" fill="#d2c69e" transform="rotate(2 88 34)"/>
+          <rect x="98" y="3"  width="9" height="31" rx="4" fill="#c6b88e" transform="rotate(5 102 34)"/>
+          <rect x="112" y="9" width="9" height="25" rx="4" fill="#ddd1ab" transform="rotate(8 116 34)"/>
+        </g>
+        <!-- 筒身 -->
+        <path d="M16,24 L144,24 L139,156 Q137,170 80,170 Q23,170 21,156 Z"
+              fill="url(#tubeGrad)" stroke="rgba(0,0,0,.4)" stroke-width="1"/>
+        <!-- 缠绳 -->
+        <rect x="16" y="64"  width="128" height="7" fill="rgba(20,14,6,.45)"/>
+        <rect x="16" y="118" width="128" height="7" fill="rgba(20,14,6,.45)"/>
+        <!-- 筒口前缘 -->
+        <path d="M16,24 A64,15 0 0 0 144,24" fill="none" stroke="#7a633a" stroke-width="2.5"/>
+      </svg>
+      <div class="tube-label">灵签</div>
+      <div class="tube-seal">签</div>
+    </div>
+    <div class="cap l">单抽 · 签起</div>
+
+    <!-- 右:十连签扇 -->
+    <div class="fan">
+      <div class="fstick" style="transform:rotate(-40.5deg); animation-delay:2.30s"><div class="head h-c1"></div></div>
+      <div class="fstick" style="transform:rotate(-31.5deg); animation-delay:2.35s"><div class="head h-c1"></div></div>
+      <div class="fstick" style="transform:rotate(-22.5deg); animation-delay:2.40s"><div class="head h-c2"></div></div>
+      <div class="fstick" style="transform:rotate(-13.5deg); animation-delay:2.45s"><div class="head h-c1"></div></div>
+      <div class="fstick" style="transform:rotate(-4.5deg);  animation-delay:2.50s"><div class="head h-c3"></div></div>
+      <div class="fstick hot" style="transform:rotate(4.5deg) translateY(-12px); animation-delay:2.55s"><div class="head h-c4"></div></div>
+      <div class="fstick" style="transform:rotate(13.5deg); animation-delay:2.60s"><div class="head h-c1"></div></div>
+      <div class="fstick" style="transform:rotate(22.5deg); animation-delay:2.65s"><div class="head h-c2"></div></div>
+      <div class="fstick" style="transform:rotate(31.5deg); animation-delay:2.70s"><div class="head h-c2"></div></div>
+      <div class="fstick" style="transform:rotate(40.5deg); animation-delay:2.75s"><div class="head h-c1"></div></div>
+    </div>
+    <div class="cap r">十连 · 签扇</div>
+
+    <div class="fine">20 次内至少 1 个精良或以上 · 重复收藏转为残页</div>
+    <div class="actions">
+      <div class="btn">求签一次 · 300 铜钱
+        <svg class="brush" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M3 8.2 C 30 4.2, 64 9.8, 98 6.4 C 132 3.6, 168 8.2, 197 5.4 L 195.4 9.2 C 160 11.6, 118 8.2, 84 10.6 C 50 12.8, 20 10.4, 4.6 11.4 Z"/>
+        </svg>
+      </div>
+      <div class="btn gold">求签十次 · 3000 铜钱
+        <svg class="brush" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M3 8.2 C 30 4.2, 64 9.8, 98 6.4 C 132 3.6, 168 8.2, 197 5.4 L 195.4 9.2 C 160 11.6, 118 8.2, 84 10.6 C 50 12.8, 20 10.4, 4.6 11.4 Z"/>
+        </svg>
+      </div>
+    </div>
+    <div class="back"><span>←</span>返回</div>
+  </div>
+</div>
+</body>
+</html>

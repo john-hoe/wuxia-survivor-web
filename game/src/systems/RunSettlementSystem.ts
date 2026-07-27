@@ -135,6 +135,7 @@ export function applyRunSettlement(scene: Phaser.Scene, inputSummary: RunSummary
       amount: copperBreakdown.copperEarned,
       totalCopper: nextSaveData.copper
     });
+    playSfxSafely(scene, "copper_gain");
   }
 
   return {
@@ -211,4 +212,10 @@ function readNonNegativeInteger(value: unknown): number {
     return 0;
   }
   return Math.max(0, Math.floor(value));
+}
+
+/** 防御性音频调用：AudioSystem 未注册或方法缺失时静默跳过。 */
+function playSfxSafely(scene: Phaser.Scene, eventId: string): void {
+  const audioSystem = scene.registry.get("audioSystem") as { playPlaceholder?: (id: string) => boolean } | undefined;
+  audioSystem?.playPlaceholder?.(eventId);
 }

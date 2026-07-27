@@ -3,6 +3,7 @@ import { combat001DirectorConfig, type EnemyDirectorConfig, type WaveDirectorSta
 import { enemyConfigs, type EnemyConfig, type EnemyId } from "../data/enemies";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
+import { JuiceSystem } from "./JuiceSystem";
 
 type Point = {
   x: number;
@@ -91,6 +92,11 @@ type EnemyRuntime = {
   knockbackVelocityY: number;
   knockbackMsRemaining: number;
   offscreenMs: number;
+  hitSquashMs: number;
+  /** 受击击退表现层位移偏移（屏幕像素，不进世界坐标，阻尼余弦弹性回位） */
+  hitOffsetX: number;
+  hitOffsetY: number;
+  hitOffsetAgeMs: number;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
 };
 
@@ -123,6 +129,21 @@ type EnemyDirectorOptions = {
 
 const KNOCKBACK_DURATION_MS = 180;
 const KNOCKBACK_CHASE_DAMPING = 0;
+/** 受击白闪时长与 squash 回弹时长（表现层，不影响数值） */
+const HIT_FLASH_MS = 80;
+const HIT_SQUASH_MS = 60;
+const ELITE_HIT_TINT = 0xf6d472;
+const NORMAL_HIT_TINT = 0xffffff;
+const DEATH_TWEEN_MS = 200;
+/** 受击击退分级（纯表现层）：普通小怪 12-18px 沿弹道方向击退，精英 4-6px 原地抖动，Boss 无位移仅闪白 */
+const HIT_KNOCKBACK_NORMAL_MIN_PX = 12;
+const HIT_KNOCKBACK_NORMAL_MAX_PX = 18;
+const HIT_KNOCKBACK_ELITE_MIN_PX = 4;
+const HIT_KNOCKBACK_ELITE_MAX_PX = 6;
+/** 偏移回位曲线：阻尼余弦 exp(-t/τ)·cos(ωt)，约 60ms 出现小幅过冲、160ms 内完全回稳 */
+const HIT_OFFSET_DECAY_MS = 30;
+const HIT_OFFSET_OSCILLATION_MS = 90;
+const HIT_OFFSET_SETTLE_MS = 160;
 
 export class EnemyDirectorSystem {
   private readonly config: EnemyDirectorConfig;
@@ -240,6 +261,7 @@ export class EnemyDirectorSystem {
       side: "corner" as const
     };
     this.eliteWarning = this.createEliteWarning(spawn, elapsedSeconds + 2);
+    playSfxSafely(this.scene, "elite_warning");
     eventBus.emit("enemy_elite_warning_started", {
       enemyId: "wooden_dummy_elite",
       warningSeconds: 2,
@@ -279,6 +301,7 @@ export class EnemyDirectorSystem {
     }
 
     this.flashEnemyHit(enemy);
+    this.applyHitKnockback(enemy);
     return result;
   }
 
@@ -408,6 +431,10 @@ export class EnemyDirectorSystem {
       knockbackVelocityY: 0,
       knockbackMsRemaining: 0,
       offscreenMs: 0,
+      hitSquashMs: 0,
+      hitOffsetX: 0,
+      hitOffsetY: 0,
+      hitOffsetAgeMs: HIT_OFFSET_SETTLE_MS,
       view
     };
     this.nextRuntimeId += 1;
@@ -458,6 +485,8 @@ export class EnemyDirectorSystem {
       const chaseScale = enemy.knockbackMsRemaining > 0 ? KNOCKBACK_CHASE_DAMPING : 1;
       enemy.worldX += enemy.directionX * enemy.config.moveSpeed * chaseScale * deltaSeconds;
       enemy.worldY += enemy.directionY * enemy.config.moveSpeed * chaseScale * deltaSeconds;
+      enemy.hitSquashMs = Math.max(0, enemy.hitSquashMs - deltaMs);
+      enemy.hitOffsetAgeMs = Math.min(HIT_OFFSET_SETTLE_MS, enemy.hitOffsetAgeMs + deltaMs);
       this.applyKnockbackMotion(enemy, deltaMs);
       this.updateEnemyScreenPosition(enemy);
       this.updateEnemyFallbackAnimation(enemy, deltaMs);
@@ -546,7 +575,12 @@ export class EnemyDirectorSystem {
 
   private killEnemy(index: number, source: string, result: EnemyDamageResult): void {
     const [enemy] = this.enemies.splice(index, 1);
-    enemy.view.destroy();
+    this.playEnemyDeathTween(enemy);
+    const juice = JuiceSystem.get(this.scene);
+    juice.killBurst(result.screenX, result.screenY, getKillBurstTint(enemy.config));
+    if (enemy.config.tier === "elite") {
+      juice.hitStop(80);
+    }
     eventBus.emit("enemy_killed", {
       runtimeId: enemy.runtimeId,
       enemyId: enemy.config.id,
@@ -556,6 +590,33 @@ export class EnemyDirectorSystem {
       worldY: roundForDebug(result.worldY),
       screenX: roundForDebug(result.screenX),
       screenY: roundForDebug(result.screenY)
+    });
+  }
+
+  /** 死亡 200ms 小动画：沿远离少侠方向击飞 30-50px + 压扁 + 渐隐，结束后销毁。 */
+  private playEnemyDeathTween(enemy: EnemyRuntime): void {
+    const view = enemy.view;
+    const heroWorld = this.options.getHeroWorld();
+    const awayX = enemy.worldX - heroWorld.x;
+    const awayY = enemy.worldY - heroWorld.y;
+    const length = Math.hypot(awayX, awayY);
+    const dirX = length > 0 ? awayX / length : 1;
+    const dirY = length > 0 ? awayY / length : 0;
+    const distance = Phaser.Math.Between(30, 50);
+    this.scene.tweens.killTweensOf(view);
+    this.scene.tweens.add({
+      targets: view,
+      x: view.x + dirX * distance,
+      y: view.y + dirY * distance,
+      scaleY: view.scaleY * 0.2,
+      alpha: 0,
+      duration: DEATH_TWEEN_MS,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        if (view.active) {
+          view.destroy();
+        }
+      }
     });
   }
 
@@ -804,7 +865,7 @@ export class EnemyDirectorSystem {
       fontFamily: "system-ui, sans-serif",
       fontSize: "20px",
       fontStyle: "bold"
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setResolution(2);
     const enemyView = this.scene.add.container(0, 0, [shadow, armLeft, armRight, trunk, head, core, warningMarks])
       .setDepth(9)
       .setAlpha(0.98);
@@ -817,6 +878,8 @@ export class EnemyDirectorSystem {
   private updateEnemyFallbackAnimation(enemy: EnemyRuntime, deltaMs: number): void {
     const walkMs = ((enemy.view.getData("walkMs") as number | undefined) ?? 0) + deltaMs;
     enemy.view.setData("walkMs", walkMs);
+    // 受击 squash 回弹：60ms 内从 0.92 恢复到 1（逐帧缩放会覆盖 Tween，故用衰减因子）
+    const squash = enemy.hitSquashMs > 0 ? 1 - 0.08 * (enemy.hitSquashMs / HIT_SQUASH_MS) : 1;
     if (enemy.view instanceof Phaser.GameObjects.Sprite && enemy.view.getData("spriteArt") === true) {
       const animationKey = (enemy.view.getData("animationKey") as string | undefined) ?? getArtAnimationKey(enemy.config.assetId);
       if (this.scene.anims.exists(animationKey) && enemy.view.anims.currentAnim?.key !== animationKey) {
@@ -828,39 +891,41 @@ export class EnemyDirectorSystem {
       const baseScale = (enemy.view.getData("baseScale") as number | undefined) ?? 1;
       const roleMotion = getSpriteRoleMotion(enemy.config.role);
       enemy.view.setRotation(Math.sin(walkMs / roleMotion.rotateMs) * roleMotion.rotation);
-      enemy.view.setScale(baseScale, baseScale + Math.sin(walkMs / roleMotion.pulseMs) * roleMotion.pulse);
+      enemy.view.setScale(baseScale * squash, (baseScale + Math.sin(walkMs / roleMotion.pulseMs) * roleMotion.pulse) * squash);
       return;
     }
 
     if (enemy.config.role === "fast") {
       enemy.view.setRotation(Math.sin(walkMs / 72) * 0.1);
-      enemy.view.setScale(1 + Math.sin(walkMs / 58) * 0.045, 1 - Math.sin(walkMs / 58) * 0.025);
+      enemy.view.setScale((1 + Math.sin(walkMs / 58) * 0.045) * squash, (1 - Math.sin(walkMs / 58) * 0.025) * squash);
       return;
     }
 
     if (enemy.config.role === "tank") {
       enemy.view.setRotation(Math.sin(walkMs / 180) * 0.045);
-      enemy.view.setScale(1, 1 + Math.sin(walkMs / 150) * 0.02);
+      enemy.view.setScale(squash, (1 + Math.sin(walkMs / 150) * 0.02) * squash);
       return;
     }
 
     if (enemy.config.role === "elite_pressure") {
       enemy.view.setRotation(Math.sin(walkMs / 260) * 0.035);
-      enemy.view.setScale(1 + Math.sin(walkMs / 180) * 0.018, 1 + Math.cos(walkMs / 210) * 0.018);
+      enemy.view.setScale((1 + Math.sin(walkMs / 180) * 0.018) * squash, (1 + Math.cos(walkMs / 210) * 0.018) * squash);
       return;
     }
 
     const sway = Math.sin(walkMs / 125) * 0.08;
     enemy.view.setRotation(sway);
-    enemy.view.setScale(1, 1 + Math.sin(walkMs / 90) * 0.035);
+    enemy.view.setScale(squash, (1 + Math.sin(walkMs / 90) * 0.035) * squash);
   }
 
   private updateEnemyScreenPosition(enemy: EnemyRuntime): void {
     const heroWorld = this.options.getHeroWorld();
     const heroScreen = this.options.getHeroScreen();
+    // 受击击退偏移：弹性回位系数（回稳后为 0，零开销）
+    const offsetScale = getHitOffsetScale(enemy.hitOffsetAgeMs);
     enemy.view.setPosition(
-      heroScreen.x + enemy.worldX - heroWorld.x,
-      heroScreen.y + enemy.worldY - heroWorld.y
+      heroScreen.x + enemy.worldX - heroWorld.x + enemy.hitOffsetX * offsetScale,
+      heroScreen.y + enemy.worldY - heroWorld.y + enemy.hitOffsetY * offsetScale
     );
   }
 
@@ -894,7 +959,46 @@ export class EnemyDirectorSystem {
     };
   }
 
+  /**
+   * 受击击退分级（方案五）：写入临时位移偏移，updateEnemyScreenPosition 每帧叠加，
+   * 阻尼余弦衰减弹性回位，不碰世界坐标，与逐帧位置重写零冲突。
+   * 普通小怪：沿弹道方向（投射物自少侠射向目标，故取 少侠→敌人 方向）击退 12-18px；
+   * 精英：随机方向 4-6px 原地抖动；致死一击不偏移（并入死亡击飞）。
+   */
+  private applyHitKnockback(enemy: EnemyRuntime): void {
+    if (enemy.config.tier === "elite") {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = Phaser.Math.Between(HIT_KNOCKBACK_ELITE_MIN_PX, HIT_KNOCKBACK_ELITE_MAX_PX);
+      enemy.hitOffsetX = Math.cos(angle) * distance;
+      enemy.hitOffsetY = Math.sin(angle) * distance;
+    } else {
+      const heroWorld = this.options.getHeroWorld();
+      const awayX = enemy.worldX - heroWorld.x;
+      const awayY = enemy.worldY - heroWorld.y;
+      const length = Math.hypot(awayX, awayY);
+      const dirX = length > 0 ? awayX / length : 1;
+      const dirY = length > 0 ? awayY / length : 0;
+      const distance = Phaser.Math.Between(HIT_KNOCKBACK_NORMAL_MIN_PX, HIT_KNOCKBACK_NORMAL_MAX_PX);
+      enemy.hitOffsetX = dirX * distance;
+      enemy.hitOffsetY = dirY * distance;
+    }
+    enemy.hitOffsetAgeMs = 0;
+  }
+
   private flashEnemyHit(enemy: EnemyRuntime): void {
+    enemy.hitSquashMs = HIT_SQUASH_MS;
+    if (enemy.view instanceof Phaser.GameObjects.Sprite && enemy.view.getData("spriteArt") === true) {
+      // 受击白闪：精英用金色，普通敌人白色；80ms 后清 tint（几何兜底图形无 Tint 组件，走 alpha 微闪）
+      const view = enemy.view;
+      view.setTintFill(enemy.config.tier === "elite" ? ELITE_HIT_TINT : NORMAL_HIT_TINT);
+      this.scene.time.delayedCall(HIT_FLASH_MS, () => {
+        if (view.active) {
+          view.clearTint();
+        }
+      });
+      return;
+    }
+
     enemy.view.setAlpha(0.62);
     this.scene.tweens.add({
       targets: enemy.view,
@@ -936,6 +1040,7 @@ export class EnemyDirectorSystem {
     const spawn = this.pickSpawnPoint(this.options.getHeroWorld());
     const warning = this.createEliteWarning(spawn, this.nextEliteSpawnSeconds);
     this.eliteWarning = warning;
+    playSfxSafely(this.scene, "elite_warning");
     eventBus.emit("enemy_elite_warning_started", {
       enemyId: "wooden_dummy_elite",
       warningSeconds: this.config.eliteWarningSeconds,
@@ -1125,6 +1230,40 @@ export class EnemyDirectorSystem {
 
 function roundForDebug(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+/**
+ * 受击击退偏移回位系数：阻尼余弦 exp(-t/τ)·cos(2πt/T)，
+ * t≈60ms 处出现小幅反向过冲（弹性感），≥ HIT_OFFSET_SETTLE_MS 后归零。
+ */
+function getHitOffsetScale(ageMs: number): number {
+  if (ageMs >= HIT_OFFSET_SETTLE_MS) {
+    return 0;
+  }
+  return (
+    Math.exp(-ageMs / HIT_OFFSET_DECAY_MS) *
+    Math.cos((ageMs / HIT_OFFSET_OSCILLATION_MS) * Math.PI * 2)
+  );
+}
+
+/** 击杀碎屑配色：精英金色，其余按敌种贴近本体色调。 */
+function getKillBurstTint(config: EnemyConfig): number {
+  if (config.tier === "elite") {
+    return 0xf6d472;
+  }
+  if (config.id === "hound") {
+    return 0x8a4b3f;
+  }
+  if (config.id === "shield_bandit") {
+    return 0xa98a5a;
+  }
+  return 0xc77b4b;
+}
+
+/** 防御性音频调用：AudioSystem 未注册或方法缺失时静默跳过。 */
+function playSfxSafely(scene: Phaser.Scene, eventId: string): void {
+  const audioSystem = scene.registry.get("audioSystem") as { playPlaceholder?: (id: string) => boolean } | undefined;
+  audioSystem?.playPlaceholder?.(eventId);
 }
 
 function getNumericData(view: Phaser.GameObjects.GameObject, key: string, fallback: number): number {

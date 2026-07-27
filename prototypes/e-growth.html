@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>武功谱 · 方向E 武功谱(方案三·乙)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#0a0f0c;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .frame {
+    position:relative; width:960px; height:540px; overflow:hidden;
+    background:#0d130e;
+    box-shadow:0 0 0 1px rgba(255,255,255,.05), 0 24px 80px rgba(0,0,0,.6);
+  }
+  /* ---------- 场景层(同方向C) ---------- */
+  .scene { position:absolute; inset:0; }
+  .sky {
+    position:absolute; inset:0;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #18241b 0%, #101a13 46%, #0a100c 100%);
+  }
+  .bamboo { position:absolute; bottom:-24px; height:560px; filter:brightness(.8); }
+  .bamboo.l { left:-218px; }
+  .bamboo.r { right:-218px; transform:scaleX(-1); }
+  .bamboo.l2 { left:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); }
+  .bamboo.r2 { right:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); transform:scaleX(-1); }
+  .veil { position:absolute; inset:0; background:rgba(7,12,9,.65); }
+  .mist {
+    position:absolute; left:0; right:0; bottom:0; height:36%;
+    background:linear-gradient(to top, rgba(238,241,234,.085) 0%, rgba(238,241,234,.03) 45%, rgba(238,241,234,0) 100%);
+  }
+  .vignette {
+    position:absolute; inset:0;
+    background:radial-gradient(90% 78% at 50% 44%, rgba(0,0,0,0) 52%, rgba(3,6,4,.55) 100%);
+  }
+  /* ---------- 内容层 ---------- */
+  .content { position:absolute; inset:0; }
+  .title-block { position:absolute; top:36px; left:0; right:0; text-align:center; }
+  h1.title {
+    display:inline-block; vertical-align:baseline;
+    font-family:"Ma Shan Zheng",cursive; font-weight:400;
+    font-size:44px; letter-spacing:.06em; color:#f4f1e6;
+    text-shadow:0 1px 2px rgba(0,0,0,.45), 0 5px 22px rgba(0,0,0,.5);
+  }
+  .seal {
+    display:inline-flex; vertical-align:baseline; margin-left:14px;
+    width:24px; height:24px; border-radius:5px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:14px;
+    align-items:center; justify-content:center;
+    transform:rotate(-4deg) translateY(-3px);
+    box-shadow:0 1px 4px rgba(0,0,0,.55),
+      inset 0 0 0 1.5px rgba(253,246,236,.9),
+      inset 0 0 0 3px #a81212,
+      inset 0 0 7px rgba(0,0,0,.35);
+  }
+  .info {
+    position:absolute; top:102px; left:50%; transform:translateX(-50%);
+    width:380px; display:flex; justify-content:space-between;
+    font-size:12.5px; letter-spacing:.14em; color:rgba(255,255,255,.6);
+  }
+  .info b { font-weight:500; color:rgba(240,234,216,.88); font-variant-numeric:tabular-nums; }
+  /* ---------- 三列函套 ---------- */
+  .shelf { position:absolute; top:138px; left:0; right:0; display:flex; justify-content:center; gap:76px; }
+  .col { width:140px; cursor:pointer; transition:transform .28s cubic-bezier(.2,.7,.25,1); }
+  .col.on { transform:translateY(-12px); }
+  .case {
+    position:relative; width:140px; height:236px; border-radius:8px;
+    background:linear-gradient(165deg, #1d2634 0%, #131b27 55%, #0e1520 100%);
+    border:1px solid rgba(240,234,216,.14);
+    box-shadow:0 10px 26px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+    transition:border-color .25s, box-shadow .25s;
+  }
+  .case::before { /* 函套布面细纹 */
+    content:""; position:absolute; inset:0; border-radius:8px; opacity:.5;
+    background:repeating-linear-gradient(90deg, rgba(255,255,255,.022) 0 2px, rgba(255,255,255,0) 2px 5px);
+  }
+  .col.on .case {
+    border-color:#c9b232;
+    box-shadow:0 0 0 1px rgba(201,178,50,.38), 0 18px 40px rgba(0,0,0,.55),
+      0 0 26px rgba(201,178,50,.14), inset 0 1px 0 rgba(255,255,255,.06);
+  }
+  .label { /* 签条 */
+    position:absolute; top:16px; left:14px; width:34px; height:96px;
+    background:linear-gradient(180deg,#efe7d0,#e0d5b8);
+    border-radius:3px;
+    box-shadow:0 1px 3px rgba(0,0,0,.5), inset 0 0 0 1px rgba(120,100,60,.25);
+    writing-mode:vertical-rl;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Ma Shan Zheng",cursive; font-size:22px; letter-spacing:.12em;
+    color:#2e2a22;
+  }
+  .label .dot { /* 签条下角朱砂小印 */
+    position:absolute; left:50%; bottom:5px; transform:translateX(-50%);
+    width:9px; height:9px; border-radius:2px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f); opacity:.9;
+  }
+  .bone { /* 别子 */
+    position:absolute; left:58px; width:14px; height:5px; border-radius:3px;
+    background:linear-gradient(180deg,#e8e0c8,#c9bfa0);
+    box-shadow:0 1px 2px rgba(0,0,0,.5);
+  }
+  .bone.b1 { top:34px; } .bone.b2 { top:46px; }
+  .strata { /* 侧开口露出的谱册页层:层数=等级,自下而上填满 */
+    position:absolute; right:12px; top:24px; bottom:16px; width:18px;
+    display:flex; flex-direction:column-reverse; gap:4px;
+  }
+  .slot {
+    height:34px; border-radius:2px;
+    background:rgba(0,0,0,.38);
+    border:1px dashed rgba(240,234,216,.13);
+  }
+  .slot.full {
+    border:1px solid rgba(0,0,0,.45);
+    background:repeating-linear-gradient(to bottom, #ded5ba 0 2px, #b6ad92 2px 4px);
+    box-shadow:inset 0 0 3px rgba(0,0,0,.3), 0 1px 1px rgba(0,0,0,.35);
+  }
+  .case-name {
+    margin-top:14px; text-align:center;
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:13.5px; letter-spacing:.22em; text-indent:.22em;
+    color:rgba(240,234,216,.6);
+  }
+  .col.on .case-name { color:#f0ead8; }
+  .case-name em { font-style:normal; color:#c9b232; }
+  /* ---------- 详情浮出 ---------- */
+  .detail { position:absolute; top:428px; left:0; right:0; text-align:center; }
+  .detail .d-name {
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:15px; letter-spacing:.2em; text-indent:.2em; color:#f0ead8;
+  }
+  .detail .d-name .lv { color:#c9b232; }
+  .detail .d-effect {
+    margin-top:8px; font-size:12.5px; letter-spacing:.12em;
+    color:rgba(255,255,255,.58);
+  }
+  .detail .d-effect b { font-weight:500; color:rgba(240,234,216,.9); }
+  .actions { margin-top:16px; display:flex; justify-content:center; }
+  .btn {
+    position:relative; display:inline-block;
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:16px; letter-spacing:.22em; text-indent:.22em;
+    color:#c9b232; text-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  .btn .brush { position:absolute; left:5%; right:5%; bottom:-10px; width:90%; height:11px; }
+  .btn .brush path { fill:#a99a20; }
+  .btn.done { color:rgba(240,234,216,.42); font-size:14px; }
+  .back {
+    position:absolute; left:36px; bottom:24px;
+    font-size:13px; letter-spacing:.18em;
+    color:rgba(255,255,255,.55);
+  }
+  .back span { margin-right:8px; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="scene">
+    <div class="sky"></div>
+    <img class="bamboo l2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo l" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <div class="veil"></div>
+    <div class="mist"></div>
+    <div class="vignette"></div>
+  </div>
+  <div class="content">
+    <div class="title-block">
+      <h1 class="title">武功谱</h1><span class="seal">谱</span>
+    </div>
+    <div class="info">
+      <div>铜钱 <b>2,450</b></div>
+      <div>已参悟 <b>9</b> 册</div>
+    </div>
+    <div class="shelf">
+      <div class="col on" data-key="lianti">
+        <div class="case">
+          <div class="label">炼体<span class="dot"></span></div>
+          <div class="bone b1"></div><div class="bone b2"></div>
+          <div class="strata">
+            <div class="slot full"></div><div class="slot full"></div><div class="slot full"></div>
+            <div class="slot"></div><div class="slot"></div>
+          </div>
+        </div>
+        <div class="case-name">三层</div>
+      </div>
+      <div class="col" data-key="qinggong">
+        <div class="case">
+          <div class="label">轻功<span class="dot"></span></div>
+          <div class="bone b1"></div><div class="bone b2"></div>
+          <div class="strata">
+            <div class="slot full"></div><div class="slot full"></div><div class="slot full"></div>
+            <div class="slot full"></div><div class="slot full"></div>
+          </div>
+        </div>
+        <div class="case-name">五层 · <em>圆满</em></div>
+      </div>
+      <div class="col" data-key="cishi">
+        <div class="case">
+          <div class="label">磁石<span class="dot"></span></div>
+          <div class="bone b1"></div><div class="bone b2"></div>
+          <div class="strata">
+            <div class="slot full"></div>
+            <div class="slot"></div><div class="slot"></div>
+            <div class="slot"></div><div class="slot"></div>
+          </div>
+        </div>
+        <div class="case-name">一层</div>
+      </div>
+    </div>
+    <div class="detail">
+      <div class="d-name" id="dName">炼体 · <span class="lv">第三层</span></div>
+      <div class="d-effect" id="dEffect">气血上限 <b>+30</b> ｜ 下一层 <b>+40</b></div>
+      <div class="actions">
+        <div class="btn" id="dBtn">参悟 · 800 铜钱
+          <svg class="brush" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M3 8.2 C 30 4.2, 64 9.8, 98 6.4 C 132 3.6, 168 8.2, 197 5.4 L 195.4 9.2 C 160 11.6, 118 8.2, 84 10.6 C 50 12.8, 20 10.4, 4.6 11.4 Z"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+    <div class="back"><span>←</span>返回</div>
+  </div>
+</div>
+<script>
+  const DATA = {
+    lianti:   { name:"炼体", lv:"第三层", effect:'气血上限 <b>+30</b> ｜ 下一层 <b>+40</b>', btn:"参悟 · 800 铜钱", done:false },
+    qinggong: { name:"轻功", lv:"第五层", effect:'移动速度 <b>+15%</b> ｜ 已至圆满',          btn:"已圆满",          done:true  },
+    cishi:    { name:"磁石", lv:"第一层", effect:'拾取范围 <b>+20</b> ｜ 下一层 <b>+40</b>',  btn:"参悟 · 300 铜钱", done:false },
+  };
+  const brush = '<svg class="brush" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true"><path d="M3 8.2 C 30 4.2, 64 9.8, 98 6.4 C 132 3.6, 168 8.2, 197 5.4 L 195.4 9.2 C 160 11.6, 118 8.2, 84 10.6 C 50 12.8, 20 10.4, 4.6 11.4 Z"/></svg>';
+  const dName = document.getElementById("dName");
+  const dEffect = document.getElementById("dEffect");
+  const dBtn = document.getElementById("dBtn");
+  document.querySelectorAll(".col").forEach(col => {
+    col.addEventListener("click", () => {
+      document.querySelectorAll(".col").forEach(c => c.classList.remove("on"));
+      col.classList.add("on");
+      const d = DATA[col.dataset.key];
+      dName.innerHTML = d.name + ' · <span class="lv">' + d.lv + "</span>";
+      dEffect.innerHTML = d.effect;
+      dBtn.classList.toggle("done", d.done);
+      dBtn.innerHTML = d.done ? d.btn : d.btn + brush;
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,10 +1,18 @@
 import Phaser from "phaser";
 import type { RunSummary, SaveData } from "../types";
-import { createArtPanel, getSafePanelWidth } from "../ui/ArtPanel";
-import { createIconButton, createTextButton, type UiButton } from "../ui/UiButton";
+import { getSafePanelWidth } from "../ui/ArtPanel";
+import {
+  addMinimalBackdrop,
+  addMinimalBackRow,
+  addMinimalMenuRow,
+  addMinimalTitle,
+  type MinimalRowHandle
+} from "../ui/minimalTheme";
+import { fadeIn, FONT_BODY, FONT_MONO, FONT_TITLE, PALETTE } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getAudioSystem, getRunSummary, getSaveData, setSaveData } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
+import { JuiceSystem } from "../systems/JuiceSystem";
 import { saveSystem } from "../systems/SaveSystem";
 import { SCENE_KEYS } from "./sceneKeys";
 
@@ -190,11 +198,13 @@ const RARITY_LABELS: Record<ScriptureRarity, string> = {
   epic: "绝学"
 };
 
-const RARITY_COLORS: Record<ScriptureRarity, string> = {
-  common: "#d8ead9",
-  rare: "#99e2ff",
-  elite: "#e4b7ff",
-  epic: "#f6d472"
+const RARITY_COLORS: Record<ScriptureRarity, string> = PALETTE.rarity as Record<ScriptureRarity, string>;
+
+type TenRevealEntry = {
+  slot: Phaser.GameObjects.Container;
+  label: Phaser.GameObjects.Text;
+  result: ScripturePullResult;
+  revealed: boolean;
 };
 
 export class ScriptureScene extends Phaser.Scene {
@@ -204,15 +214,17 @@ export class ScriptureScene extends Phaser.Scene {
   private content?: Phaser.GameObjects.Container;
   private resultPanel?: Phaser.GameObjects.Container;
   private debugOverlay?: Phaser.GameObjects.Container;
-  private pullButtons: UiButton[] = [];
+  private pullButtons: MinimalRowHandle[] = [];
   private statusText?: Phaser.GameObjects.Text;
-  private resultHiddenObjects: Array<Phaser.GameObjects.Text | UiButton> = [];
+  private resultHiddenObjects: Array<Phaser.GameObjects.Text | Phaser.GameObjects.Container> = [];
   private pendingLayoutTargets: LayoutTunerTarget[] = [];
   private layoutTunerEnabled = false;
   private layoutTunerOverlay?: Phaser.GameObjects.Container;
   private layoutTunerInfo?: Phaser.GameObjects.Text;
   private layoutTunerHandles: LayoutTunerHandle[] = [];
   private selectedLayoutHandle?: LayoutTunerHandle;
+  private revealTimers: Phaser.Time.TimerEvent[] = [];
+  private tenRevealEntries: TenRevealEntry[] = [];
 
   constructor() {
     super(SCENE_KEYS.scripture);
@@ -227,8 +239,12 @@ export class ScriptureScene extends Phaser.Scene {
   create(): void {
     enterScreen(this, "scripture");
     eventBus.emit("scripture_screen_opened", {});
+    // 极简碑林：氛围底与书法标题常驻场景层（视图切换/揭示重建时保持，不随 content 销毁）
+    addMinimalBackdrop(this);
+    addMinimalTitle(this, "翻阅秘籍", 52, 46, "秘");
     this.renderView();
     this.installDebugShowcaseKeys();
+    fadeIn(this);
   }
 
   private renderView(): void {
@@ -239,155 +255,240 @@ export class ScriptureScene extends Phaser.Scene {
     this.statusText = undefined;
     this.resultHiddenObjects = [];
     this.pendingLayoutTargets = [];
+    this.clearRevealState();
     this.destroyLayoutTunerOverlay();
     this.content = this.add.container(0, 0);
 
     const centerX = this.scale.width / 2;
-    this.addToContent(this.add.rectangle(centerX, this.scale.height / 2, this.scale.width, this.scale.height, 0x1a221b));
-    this.addToContent(createArtPanel(this, "ui_panel_pause", centerX, 334, getSafePanelWidth(this, 800), 370, 0x11140f, 0.84));
-    this.addCleanPanel(centerX, 334, getSafePanelWidth(this, 700), 314, 0.86);
-    this.addToContent(this.add.text(centerX, 56, this.activeView === "meta" ? "局外成长" : "翻阅秘籍", {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "36px",
-      fontStyle: "bold"
-    }).setOrigin(0.5));
-
-    this.addTabButton(356, "局外成长", "meta");
-    this.addTabButton(604, "翻阅秘籍", "scripture");
-    this.addToContent(createIconButton(this, 848, 54, "ui_icon_back", () => this.returnFromScene()));
+    this.addViewTab(centerX - 90, "局外成长", "meta");
+    this.addViewTab(centerX + 90, "翻阅秘籍", "scripture");
+    this.addToContent(addMinimalBackRow(this, () => this.returnFromScene()).container);
 
     if (this.activeView === "meta") {
       this.drawMetaView();
-      return;
+    } else {
+      this.drawScriptureView();
     }
 
-    this.drawScriptureView();
+    // 视图切换：content 容器 120ms 淡入（与设置/暂停一致）
+    this.content.setAlpha(0);
+    this.tweens.add({
+      targets: this.content,
+      alpha: 1,
+      duration: 120,
+      ease: Phaser.Math.Easing.Linear
+    });
+  }
+
+  /** 信息行左段：铜钱小字（标签次级色 13px + 数值芥金 FONT_MONO 14px），x 为左缘。 */
+  private addCopperInfo(x: number, y: number, copper: number): void {
+    const label = this.add.text(0, 0, "铜钱 ", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "13px"
+    }).setOrigin(0, 0.5).setResolution(2);
+    const value = this.add.text(label.displayWidth, 0, `${copper}`, {
+      color: PALETTE.accentGoldCss,
+      fontFamily: FONT_MONO,
+      fontSize: "14px",
+      fontStyle: "bold"
+    }).setOrigin(0, 0.5).setResolution(2);
+    this.addToContent(this.add.container(x, y, [label, value]));
+  }
+
+  /** 信息行右段："距保底 N 次" 右对齐；≤3 次时数值芥金脉冲呼吸（沿用旧胶囊脉冲节奏，随销毁自动清理）。 */
+  private addPityInfo(x: number, y: number, pullsUntilPity: number): void {
+    const tail = this.add.text(0, 0, " 次", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "13px"
+    }).setOrigin(0, 0.5).setResolution(2);
+    const value = this.add.text(0, 0, `${pullsUntilPity}`, {
+      color: PALETTE.accentGoldCss,
+      fontFamily: FONT_MONO,
+      fontSize: "14px",
+      fontStyle: "bold"
+    }).setOrigin(0, 0.5).setResolution(2);
+    const label = this.add.text(0, 0, "距保底 ", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "13px"
+    }).setOrigin(0, 0.5).setResolution(2);
+    // 右对齐：整体末端贴 x
+    tail.setX(-tail.displayWidth);
+    value.setX(tail.x - value.displayWidth);
+    label.setX(value.x - label.displayWidth);
+    this.addToContent(this.add.container(x, y, [label, value, tail]));
+    if (pullsUntilPity > 3) {
+      return;
+    }
+    const pulse = this.tweens.add({
+      targets: value,
+      alpha: 0.4,
+      duration: 520,
+      yoyo: true,
+      repeat: -1,
+      ease: Phaser.Math.Easing.Sine.InOut
+    });
+    value.once(Phaser.GameObjects.Events.DESTROY, () => pulse.remove());
+  }
+
+  /**
+   * 分区小标题：FONT_BODY 13px 次级色文字 + 左右 1px 芥金 hairline 延伸。
+   * 返回对象数组，由调用方决定挂到 content 还是结果面板；backing 用于压住面板描边。
+   */
+  private createSectionHeaderObjects(
+    label: string,
+    centerX: number,
+    y: number,
+    totalWidth: number,
+    options?: { backing?: boolean }
+  ): Phaser.GameObjects.GameObject[] {
+    const text = this.add.text(centerX, y, label, {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "13px"
+    }).setOrigin(0.5).setResolution(2);
+    const objects: Phaser.GameObjects.GameObject[] = [];
+    if (options?.backing) {
+      objects.push(this.add.rectangle(centerX, y, text.displayWidth + 16, 16, PALETTE.panelBg, 0.92));
+    }
+    objects.push(text);
+    const gap = 10;
+    const lineWidth = Math.floor(totalWidth / 2 - text.displayWidth / 2 - gap);
+    if (lineWidth > 0) {
+      objects.push(
+        this.add.rectangle(centerX - text.displayWidth / 2 - gap - lineWidth / 2, y, lineWidth, 1, PALETTE.accentGold, 0.35),
+        this.add.rectangle(centerX + text.displayWidth / 2 + gap + lineWidth / 2, y, lineWidth, 1, PALETTE.accentGold, 0.35)
+      );
+    }
+    return objects;
   }
 
   private drawMetaView(): void {
     const saveData = getSaveData(this);
-    this.addToContent(this.add.text(this.scale.width / 2, 154, `当前铜钱 ${saveData.copper}`, {
-      color: "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "22px",
-      fontStyle: "bold"
-    }).setOrigin(0.5));
+    this.addCopperInfo(200, 170, saveData.copper);
+    this.addToContent(this.add.text(760, 170, "铜钱来自战后清点 · 最高 5 级", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "13px"
+    }).setOrigin(1, 0.5).setResolution(2));
 
-    const cardY = 320;
-    const cardGap = 226;
+    // 三张去面板化成长卡，92px 等距节奏
+    const cardYs = [226, 318, 410];
     META_UPGRADES.forEach((upgrade, index) => {
-      this.addMetaUpgradeCard(upgrade, this.scale.width / 2 + (index - 1) * cardGap, cardY, saveData);
+      this.addMetaUpgradeCard(upgrade, cardYs[index] ?? 226, saveData);
     });
-    this.statusText = this.addToContent(this.add.text(this.scale.width / 2, 472, "铜钱只能来自战后清点，局外成长最高 5 级", {
-      color: "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "17px"
-    }).setOrigin(0.5));
+    this.statusText = this.addToContent(this.add.text(this.scale.width / 2, 474, "", {
+      color: PALETTE.legacyGoldCss,
+      fontFamily: FONT_BODY,
+      fontSize: "14px"
+    }).setOrigin(0.5).setResolution(2));
   }
 
   private drawScriptureView(): void {
     const saveData = getSaveData(this);
+    const centerX = this.scale.width / 2;
     const pullsUntilPity = Math.max(1, RARE_OR_BETTER_PITY - saveData.scriptureGacha.starter_scripture_pool.pityCounter);
-    this.addToContent(this.add.text(this.scale.width / 2, 154, `当前铜钱 ${saveData.copper}    距保底 ${pullsUntilPity} 次`, {
-      color: "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "21px",
-      fontStyle: "bold"
-    }).setOrigin(0.5));
-    this.addIcon("ui_badge_pity", this.scale.width / 2 + 230, 154, 34);
+    // 顶部一行小字：左"铜钱 N" / 右"距保底 N 次"（数值芥金 FONT_MONO，≤3 保底脉冲保留）
+    this.addCopperInfo(200, 170, saveData.copper);
+    this.addPityInfo(760, 170, pullsUntilPity);
 
-    const probabilityPanelWidth = getSafePanelWidth(this, 600);
-    const probabilityPanelY = 236;
-    this.addCleanPanel(this.scale.width / 2, probabilityPanelY, probabilityPanelWidth, 132, 0.92, 0x6fcfb8, 0.52);
-    this.addProbabilityRows(probabilityPanelWidth, probabilityPanelY, 132);
-    const hintText = this.addToContent(this.add.text(this.scale.width / 2, 320, "20 次内至少 1 个精良或以上；收藏重复会转为残页", {
-      color: "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "16px"
-    }).setOrigin(0.5));
-    this.resultHiddenObjects.push(hintText);
+    // 疏朗四行概率：稀有度书法 20px / 说明 13px 次级 / 居中虚线引导 / 概率 FONT_MONO 右对齐
+    this.addProbabilityRows(200, 760, 218, 43);
 
-    const pullOnce = createTextButton(this, 328, 366, "翻阅一次 300 铜钱", () => this.pullScripture(1), 270, 54);
-    pullOnce.setEnabled(saveData.copper >= PULL_ONCE_COST);
-    const pullTen = createTextButton(this, 632, 366, "翻阅十次 3000 铜钱", () => this.pullScripture(10), 270, 54);
-    pullTen.setEnabled(saveData.copper >= PULL_TEN_COST);
-    this.pullButtons = [this.addToContent(pullOnce), this.addToContent(pullTen)];
-    this.resultHiddenObjects.push(pullOnce, pullTen);
-
-    this.statusText = this.addToContent(this.add.text(this.scale.width / 2, 416, saveData.copper < PULL_ONCE_COST ? "铜钱不足" : "概率公开，只消耗游玩获得的铜钱", {
-      color: "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "17px"
-    }).setOrigin(0.5));
+    this.statusText = this.addToContent(this.add.text(centerX, 388, "20 次内至少 1 个精良或以上 · 重复收藏转为残页", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "12px"
+    }).setOrigin(0.5).setResolution(2));
     this.resultHiddenObjects.push(this.statusText);
+
+    // 极简菜单行抽卡："翻阅一次" 主 highlight；铜钱不足禁用
+    const pullOnce = addMinimalMenuRow(this, centerX, 428, `翻阅一次 · ${PULL_ONCE_COST} 铜钱`, () => this.pullScripture(1), { highlight: true, fontSize: 22 });
+    pullOnce.setEnabled(saveData.copper >= PULL_ONCE_COST);
+    const pullTen = addMinimalMenuRow(this, centerX, 474, `翻阅十次 · ${PULL_TEN_COST} 铜钱`, () => this.pullScripture(10), { fontSize: 22 });
+    pullTen.setEnabled(saveData.copper >= PULL_TEN_COST);
+    this.pullButtons = [pullOnce, pullTen];
+    this.pullButtons.forEach((handle) => {
+      this.addToContent(handle.container);
+      this.resultHiddenObjects.push(handle.container);
+    });
   }
 
-  private addMetaUpgradeCard(upgrade: MetaUpgradeDefinition, x: number, y: number, saveData: SaveData): void {
+  /** 成长卡：无底色，图标 + 名称/效果/等级左排，价格与购买行右排，底部 1px 低透 hairline 分隔。 */
+  private addMetaUpgradeCard(upgrade: MetaUpgradeDefinition, y: number, saveData: SaveData): void {
+    const centerX = this.scale.width / 2;
     const level = saveData.metaUpgrades[upgrade.key];
     const maxLevel = upgrade.costs.length;
     const nextCost = upgrade.costs[level];
     const canBuy = nextCost !== undefined && saveData.copper >= nextCost;
 
-    const card = this.add.rectangle(x, y, 204, 238, 0x0d1712, 0.94).setStrokeStyle(1, 0xd6c28d, 0.64);
-    this.addToContent(card);
-    this.addIcon(upgrade.iconKey, x, y - 76, 54);
-    this.addToContent(this.add.text(x, y - 34, upgrade.title, {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "22px",
-      fontStyle: "bold"
-    }).setOrigin(0.5));
-    this.addToContent(this.add.text(x, y - 2, `${upgrade.description} ${upgrade.effect}`, {
-      color: "#d8ead9",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "16px"
-    }).setOrigin(0.5));
-    this.addToContent(this.add.text(x, y + 30, `等级 ${level}/${maxLevel}`, {
-      color: "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "18px",
-      fontStyle: "bold"
-    }).setOrigin(0.5));
-    this.addToContent(this.add.text(x, y + 60, nextCost === undefined ? "已达上限" : `下一阶 ${nextCost} 铜钱`, {
-      color: nextCost === undefined ? "#9fb2a0" : "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "16px"
-    }).setOrigin(0.5));
+    this.addIcon(upgrade.iconKey, centerX - 262, y, 40);
+    this.addToContent(this.add.text(centerX - 228, y - 15, upgrade.title, {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_TITLE,
+      fontSize: "20px"
+    }).setOrigin(0, 0.5).setResolution(2));
+    this.addToContent(this.add.text(centerX - 228, y + 15, `${upgrade.description} ${upgrade.effect} · 等级 ${level}/${maxLevel}`, {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "13px"
+    }).setOrigin(0, 0.5).setResolution(2));
 
-    const button = createTextButton(this, x, y + 94, nextCost === undefined ? "已满" : "提升", () => this.purchaseMetaUpgrade(upgrade), 144, 44);
+    const button = addMinimalMenuRow(this, centerX + 180, y, nextCost === undefined ? "已满" : `提升 · ${nextCost} 铜钱`, () => this.purchaseMetaUpgrade(upgrade), { fontSize: 18 });
     button.setEnabled(canBuy);
-    this.addToContent(button);
+    this.addToContent(button.container);
+    // 卡片底部 1px 低透 hairline 分隔
+    this.addToContent(this.add.rectangle(centerX, y + 46, 600, 1, PALETTE.accentGold, 0.16));
   }
 
-  private addProbabilityRows(panelWidth: number, panelY: number, panelHeight: number): void {
-    const centerX = this.scale.width / 2;
-    const dotX = centerX - panelWidth / 2 + 62;
-    const rarityX = centerX - panelWidth / 2 + 112;
-    const labelX = centerX + 82;
-    const rowStartY = panelY - panelHeight / 2 + 28;
+  /**
+   * 概率列表（无面板）：稀有度名书法 20px 按 PALETTE.rarity 着色（左缘 leftX）、
+   * 说明 13px 次级色、说明与概率之间居中虚线引导、概率 FONT_MONO 右对齐（右缘 rightX）。
+   */
+  private addProbabilityRows(leftX: number, rightX: number, startY: number, rowGap: number): void {
     const rows = [
-      { rarity: "common" as ScriptureRarity, chance: "普通 65%", label: "残页 / 铜钱返还" },
-      { rarity: "rare" as ScriptureRarity, chance: "精良 25%", label: "外观 / 成长碎片" },
-      { rarity: "elite" as ScriptureRarity, chance: "上乘 9%", label: "稀有心法碎片" },
-      { rarity: "epic" as ScriptureRarity, chance: "绝学 1%", label: "称号卷轴" }
+      { rarity: "common" as ScriptureRarity, chance: "65%", label: "残页 / 铜钱返还" },
+      { rarity: "rare" as ScriptureRarity, chance: "25%", label: "外观 / 成长碎片" },
+      { rarity: "elite" as ScriptureRarity, chance: "9%", label: "稀有心法碎片" },
+      { rarity: "epic" as ScriptureRarity, chance: "1%", label: "称号卷轴" }
     ];
 
     rows.forEach((row, index) => {
-      const y = rowStartY + index * 26;
-      this.addToContent(this.add.circle(dotX, y, 7, Phaser.Display.Color.HexStringToColor(RARITY_COLORS[row.rarity]).color, 0.8));
-      this.addToContent(this.add.text(rarityX, y, row.chance, {
+      const y = startY + index * rowGap;
+      this.addToContent(this.add.text(leftX, y, RARITY_LABELS[row.rarity], {
         color: RARITY_COLORS[row.rarity],
-        fontFamily: "system-ui, sans-serif",
-        fontSize: "17px",
+        fontFamily: FONT_TITLE,
+        fontSize: "20px"
+      }).setOrigin(0, 0.5).setResolution(2));
+      const desc = this.addToContent(this.add.text(leftX + 92, y, row.label, {
+        color: PALETTE.textSecondary,
+        fontFamily: FONT_BODY,
+        fontSize: "13px"
+      }).setOrigin(0, 0.5).setResolution(2));
+      const pct = this.addToContent(this.add.text(rightX, y, row.chance, {
+        color: PALETTE.textPrimary,
+        fontFamily: FONT_MONO,
+        fontSize: "15px",
         fontStyle: "bold"
-      }).setOrigin(0, 0.5));
-      this.addToContent(this.add.text(labelX, y, row.label, {
-        color: "#d8ead9",
-        fontFamily: "system-ui, sans-serif",
-        fontSize: "17px"
-      }).setOrigin(0, 0.5));
+      }).setOrigin(1, 0.5).setResolution(2));
+      const dotsFrom = leftX + 92 + desc.displayWidth + 16;
+      const dotsTo = rightX - pct.displayWidth - 16;
+      if (dotsTo > dotsFrom) {
+        this.addToContent(this.createDottedLeader(dotsFrom, dotsTo, y));
+      }
     });
+  }
+
+  /** 虚线引导：1px 圆点、6px 间隔、低透白（对应原型 border-bottom dotted）。 */
+  private createDottedLeader(fromX: number, toX: number, y: number): Phaser.GameObjects.Graphics {
+    const graphics = this.add.graphics();
+    graphics.fillStyle(0xffffff, 0.26);
+    for (let x = fromX; x <= toX; x += 6) {
+      graphics.fillCircle(x, y, 1);
+    }
+    return graphics;
   }
 
   private installDebugShowcaseKeys(): void {
@@ -496,9 +597,37 @@ export class ScriptureScene extends Phaser.Scene {
     }
 
     setSaveData(this, saveData);
-    getAudioSystem(this).playPlaceholder("scripture_reveal_common");
-    this.renderView();
-    this.showResultPanel(results);
+    getAudioSystem(this).playPlaceholder(getRevealAudioEvent(results));
+    this.playRevealPrelude(results);
+  }
+
+  /** 揭示前奏：淡出 → 重建视图 + 全屏 ADD 光图脉冲 → 淡入进入揭示。 */
+  private playRevealPrelude(results: ScripturePullResult[]): void {
+    const camera = this.cameras.main;
+    camera.fadeOut(150, 10, 10, 10);
+    camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.renderView();
+      this.showResultPanel(results);
+      camera.fadeIn(220, 10, 10, 10);
+      if (this.textures.exists("vfx_scripture_reveal")) {
+        const overlay = this.add.image(this.scale.width / 2, this.scale.height / 2, "vfx_scripture_reveal")
+          .setDisplaySize(this.scale.width, this.scale.height)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setAlpha(0)
+          .setDepth(90);
+        this.tweens.add({
+          targets: overlay,
+          alpha: 0.8,
+          duration: 420,
+          yoyo: true,
+          ease: Phaser.Math.Easing.Sine.InOut,
+          onComplete: () => overlay.destroy()
+        });
+      }
+      if (getHighestRarity(results) !== "common") {
+        camera.shake(80, 0.004);
+      }
+    });
   }
 
   private generateScriptureResult(saveData: SaveData): ScripturePullResult {
@@ -549,20 +678,33 @@ export class ScriptureScene extends Phaser.Scene {
     this.resultPanel?.destroy(true);
     this.pendingLayoutTargets = [];
     this.resultHiddenObjects.forEach((gameObject) => gameObject.setVisible(false));
+    this.clearRevealState();
     const isTen = results.length > 1;
     const panelWidth = isTen ? getSafePanelWidth(this, 800) : getSafePanelWidth(this, 640, 80);
     const panelHeight = 140;
     const y = 424;
     const panelKey = isTen ? "ui_panel_scripture_result_ten" : "ui_panel_scripture_result_single";
-    const background = this.textures.exists(panelKey)
-      ? this.add.image(0, 0, panelKey).setDisplaySize(panelWidth, panelHeight)
-      : this.add.rectangle(0, 0, panelWidth, panelHeight, 0x11140f, 0.93).setStrokeStyle(2, 0xd6c28d, 0.72);
-    background.setInteractive({ useHandCursor: true });
+    // 面板底防御链：专用结果贴图 → ui_panel_modal 九宫格 → 描金矩形
+    let background: Phaser.GameObjects.Image | Phaser.GameObjects.NineSlice | Phaser.GameObjects.Rectangle;
+    if (this.textures.exists(panelKey)) {
+      background = this.add.image(0, 0, panelKey).setDisplaySize(panelWidth, panelHeight);
+    } else if (this.textures.exists("ui_panel_modal")) {
+      background = this.add.nineslice(0, 0, "ui_panel_modal", undefined, panelWidth, panelHeight, 45, 45, 45, 45).setOrigin(0.5);
+    } else {
+      background = this.add.rectangle(0, 0, panelWidth, panelHeight, 0x11140f, 0.93).setStrokeStyle(2, 0xd6c28d, 0.72);
+    }
+    background.setInteractive(new Phaser.Geom.Rectangle(0, 0, panelWidth, panelHeight), Phaser.Geom.Rectangle.Contains);
+    if (background.input) {
+      background.input.cursor = "pointer";
+    }
     background.on(Phaser.Input.Events.POINTER_DOWN, () => this.dismissResultPanel());
     const children: Phaser.GameObjects.GameObject[] = [background];
+    // 分区小标题"所得"：压在面板顶边上（backing 遮描边），样式同"掉落概览"
+    children.push(...this.createSectionHeaderObjects("所得", 0, -66, 200, { backing: true }));
 
     if (isTen) {
       children.push(...this.createTenResultCards(results));
+      children.push(this.createSkipRevealText(panelWidth));
     } else {
       children.push(...this.createSingleResultCard(results[0]));
     }
@@ -571,14 +713,26 @@ export class ScriptureScene extends Phaser.Scene {
     this.resultPanel = this.add.container(this.scale.width / 2, y, children);
     this.content?.add(this.resultPanel);
     this.refreshLayoutTunerOverlay();
+    if (isTen) {
+      this.startTenReveal(results);
+    }
   }
 
   private dismissResultPanel(): void {
     this.destroyLayoutTunerOverlay();
+    this.clearRevealState();
     this.resultPanel?.destroy(true);
     this.resultPanel = undefined;
     this.pendingLayoutTargets = [];
     this.resultHiddenObjects.forEach((gameObject) => gameObject.setVisible(true));
+  }
+
+  /** 清理进行中的揭示动画状态（定时器/十连条目/翻面 Tween）。 */
+  private clearRevealState(): void {
+    this.revealTimers.forEach((timer) => timer.remove(false));
+    this.revealTimers = [];
+    this.tenRevealEntries.forEach((entry) => this.tweens.killTweensOf(entry.slot));
+    this.tenRevealEntries = [];
   }
 
   private showSwArt017SingleResultShowcase(): void {
@@ -629,10 +783,10 @@ export class ScriptureScene extends Phaser.Scene {
       this.add.rectangle(0, 0, 780, 148, 0x101914, 0.96).setStrokeStyle(2, 0xd6c28d, 0.72),
       this.add.text(0, -56, "奖励 / 补偿 / 角标", {
         color: "#f7f0d0",
-        fontFamily: "system-ui, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "18px",
         fontStyle: "bold"
-      }).setOrigin(0.5)
+      }).setOrigin(0.5).setResolution(2)
     ];
 
     items.forEach((item, index) => {
@@ -640,10 +794,10 @@ export class ScriptureScene extends Phaser.Scene {
       children.push(this.createIconObject(item.key, x, -14, 46));
       children.push(this.add.text(x, 38, item.label, {
         color: "#d8ead9",
-        fontFamily: "system-ui, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "12px",
         align: "center"
-      }).setOrigin(0.5));
+      }).setOrigin(0.5).setResolution(2));
     });
 
     this.debugOverlay = this.add.container(this.scale.width / 2, 454, children).setDepth(30);
@@ -652,37 +806,57 @@ export class ScriptureScene extends Phaser.Scene {
 
   private createSingleResultCard(result: ScripturePullResult): Phaser.GameObjects.GameObject[] {
     const objects: Phaser.GameObjects.GameObject[] = [];
-    objects.push(this.createTunableRewardSlot("single.rewardSlot", result.reward.iconKey, result.reward.rarity, -261.8, 1.4, 58, 82));
+    const slot = this.createTunableRewardSlot("single.rewardSlot", result.reward.iconKey, result.reward.rarity, -261.8, 1.4, 58, 82);
+    objects.push(slot);
+    this.setSlotIconVisible(slot, false);
 
     const rarityText = `${RARITY_LABELS[result.reward.rarity]}  ${result.reward.title} x${result.reward.amount}`;
-    objects.push(this.registerLayoutTunerTarget("single.title", this.add.text(-185.7, 0, rarityText, {
+    const title = this.registerLayoutTunerTarget("single.title", this.add.text(-185.7, 0, rarityText, {
       color: RARITY_COLORS[result.reward.rarity],
-      fontFamily: "system-ui, sans-serif",
+      fontFamily: FONT_TITLE,
       fontSize: "21px",
       fontStyle: "bold"
-    }).setOrigin(0, 0.5)));
+    }).setOrigin(0, 0.5).setResolution(2));
+    objects.push(title);
+    title.setVisible(false);
 
+    const postRevealObjects: Array<Phaser.GameObjects.Text | Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle> = [];
     const detail = result.pityTriggered ? "保底触发" : result.duplicate ? "重复奖励" : "已收入收藏";
-    objects.push(this.registerLayoutTunerTarget("single.detail", this.add.text(54.9, -12.8, detail, {
+    const detailText = this.registerLayoutTunerTarget("single.detail", this.add.text(54.9, -12.8, detail, {
       color: "#d6c28d",
-      fontFamily: "system-ui, sans-serif",
+      fontFamily: FONT_BODY,
       fontSize: "18px"
-    }).setOrigin(0, 0.5)));
+    }).setOrigin(0, 0.5).setResolution(2));
+    objects.push(detailText);
+    postRevealObjects.push(detailText);
 
     if (result.duplicate && result.compensation) {
-      objects.push(this.registerLayoutTunerTarget("single.compLabel", this.add.text(58.3, 16.1, "转化补偿", {
+      const compLabel = this.registerLayoutTunerTarget("single.compLabel", this.add.text(58.3, 16.1, "转化补偿", {
         color: "#d8ead9",
-        fontFamily: "system-ui, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "17px",
         fontStyle: "bold"
-      }).setOrigin(0, 0.5)));
-      objects.push(this.registerLayoutTunerTarget("single.compIcon", this.createIconObject(result.compensation.iconKey, 173, 0, 38)));
-      objects.push(this.registerLayoutTunerTarget("single.compText", this.add.text(205, 0, `${result.compensation.title} x${result.compensation.amount}`, {
+      }).setOrigin(0, 0.5).setResolution(2));
+      const compIcon = this.registerLayoutTunerTarget("single.compIcon", this.createIconObject(result.compensation.iconKey, 173, 0, 38));
+      const compText = this.registerLayoutTunerTarget("single.compText", this.add.text(205, 0, `${result.compensation.title} x${result.compensation.amount}`, {
         color: "#f7f0d0",
-        fontFamily: "system-ui, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "17px"
-      }).setOrigin(0, 0.5)));
+      }).setOrigin(0, 0.5).setResolution(2));
+      objects.push(compLabel, compIcon, compText);
+      postRevealObjects.push(compLabel, compIcon, compText);
     }
+
+    postRevealObjects.forEach((gameObject) => gameObject.setVisible(false));
+    this.revealTimers.push(this.time.delayedCall(280, () => {
+      this.flipSlot(slot, result.reward.rarity, true, () => {
+        title.setVisible(true);
+        postRevealObjects.forEach((gameObject) => gameObject.setVisible(true));
+        if (result.pityTriggered) {
+          this.addPityFx(slot, title);
+        }
+      });
+    }));
 
     return objects;
   }
@@ -715,30 +889,46 @@ export class ScriptureScene extends Phaser.Scene {
   private createSmallResultCard(slotX: number, slotY: number, labelX: number, labelY: number, result: ScripturePullResult): Phaser.GameObjects.GameObject[] {
     const objects: Phaser.GameObjects.GameObject[] = [];
     const prefix = `ten.${this.pendingLayoutTargets.filter((entry) => entry.id.startsWith("ten.") && entry.id.endsWith(".slot")).length + 1}`;
-    objects.push(this.createTunableRewardSlot(`${prefix}.slot`, result.reward.iconKey, result.reward.rarity, slotX, slotY, 40, 52));
+    const slot = this.createTunableRewardSlot(`${prefix}.slot`, result.reward.iconKey, result.reward.rarity, slotX, slotY, 40, 52);
+    objects.push(slot);
+    this.setSlotIconVisible(slot, false);
     const label = result.duplicate ? "补偿" : result.pityTriggered ? "保底" : RARITY_LABELS[result.reward.rarity];
-    objects.push(this.registerLayoutTunerTarget(`${prefix}.label`, this.add.text(labelX, labelY, label, {
+    const labelText = this.registerLayoutTunerTarget(`${prefix}.label`, this.add.text(labelX, labelY, label, {
       color: result.duplicate || result.pityTriggered ? "#f6d472" : RARITY_COLORS[result.reward.rarity],
-      fontFamily: "system-ui, sans-serif",
+      fontFamily: FONT_BODY,
       fontSize: "12px",
       fontStyle: "bold"
-    }).setOrigin(0.5)));
+    }).setOrigin(0.5).setResolution(2));
+    objects.push(labelText);
+    labelText.setVisible(false);
+    this.tenRevealEntries.push({ slot, label: labelText, result, revealed: false });
     return objects;
   }
 
-  private addTabButton(x: number, label: string, view: ScriptureView): void {
-    const button = createTextButton(this, x, 96, label, () => {
+  /** 文字页签：选中 FONT_TITLE 20px 芥金 + 笔触下划线；未选中 16px 次级色；hover 变金。 */
+  private addViewTab(x: number, label: string, view: ScriptureView): void {
+    const selected = this.activeView === view;
+    const text = this.addToContent(this.add.text(x, 126, label, {
+      color: selected ? PALETTE.accentGoldCss : PALETTE.textSecondary,
+      fontFamily: FONT_TITLE,
+      fontSize: selected ? "20px" : "16px"
+    }).setOrigin(0.5).setResolution(2));
+    if (selected) {
+      // minimalTheme 未公开导出笔触纹理，按规格回退为 2px 芥金短线（随文本宽度）
+      this.addToContent(this.add.rectangle(x, 148, Math.max(48, text.displayWidth * 0.92), 2, PALETTE.accentGold, 0.9));
+      return;
+    }
+    text.setInteractive({ useHandCursor: true });
+    text.on(Phaser.Input.Events.POINTER_OVER, () => text.setColor(PALETTE.accentGoldCss));
+    text.on(Phaser.Input.Events.POINTER_OUT, () => text.setColor(PALETTE.textSecondary));
+    text.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      if (this.activeView === view) {
+        return;
+      }
+      getAudioSystem(this).playPlaceholder("ui_click");
       this.activeView = view;
       this.renderView();
-    }, 196, 44);
-    button.setAlpha(this.activeView === view ? 1 : 0.7);
-    this.addToContent(button);
-  }
-
-  private addCleanPanel(x: number, y: number, width: number, height: number, alpha = 0.88, stroke = 0xd6c28d, strokeAlpha = 0.35): Phaser.GameObjects.Rectangle {
-    const panel = this.add.rectangle(x, y, width, height, 0x0f1813, alpha).setStrokeStyle(1, stroke, strokeAlpha);
-    this.addToContent(panel);
-    return panel;
+    });
   }
 
   private addIcon(textureKey: string, x: number, y: number, size: number): void {
@@ -752,9 +942,35 @@ export class ScriptureScene extends Phaser.Scene {
     return this.add.rectangle(x, y, size, size, 0x2f5b4f, 1).setStrokeStyle(2, 0xd6c28d, 0.86);
   }
 
-  private createCompactRarityFrameObject(rarity: ScriptureRarity, x: number, y: number, size: number): Phaser.GameObjects.Rectangle {
-    const color = Phaser.Display.Color.HexStringToColor(RARITY_COLORS[rarity]).color;
-    return this.add.rectangle(x, y, size, size, color, 0).setStrokeStyle(2, color, 0.82);
+  /**
+   * 稀有度框：优先使用 ui_frame_rarity_* 贴图；elite/epic 叠 ADD 呼吸流光副本。
+   * 无贴图时回退为原来的描边矩形。
+   */
+  private createCompactRarityFrameObject(rarity: ScriptureRarity, x: number, y: number, size: number): Phaser.GameObjects.GameObject {
+    const textureKey = `ui_frame_rarity_${rarity}`;
+    if (!this.textures.exists(textureKey)) {
+      const color = Phaser.Display.Color.HexStringToColor(RARITY_COLORS[rarity]).color;
+      return this.add.rectangle(x, y, size, size, color, 0).setStrokeStyle(2, color, 0.82);
+    }
+    const frame = this.add.image(0, 0, textureKey).setDisplaySize(size, size);
+    if (rarity !== "elite" && rarity !== "epic") {
+      frame.setPosition(x, y);
+      return frame;
+    }
+    const glow = this.add.image(0, 0, textureKey)
+      .setDisplaySize(size, size)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.3);
+    const breathing = this.tweens.add({
+      targets: glow,
+      alpha: 0.7,
+      duration: 720,
+      yoyo: true,
+      repeat: -1,
+      ease: Phaser.Math.Easing.Sine.InOut
+    });
+    glow.once(Phaser.GameObjects.Events.DESTROY, () => breathing.remove());
+    return this.add.container(x, y, [frame, glow]);
   }
 
   private createTunableRewardSlot(
@@ -766,21 +982,153 @@ export class ScriptureScene extends Phaser.Scene {
     iconSize: number,
     frameSize: number
   ): Phaser.GameObjects.Container {
-    const slot = this.add.container(x, y, [
-      this.createIconObject(iconKey, 0, 0, iconSize),
-      this.createCompactRarityFrameObject(rarity, 0, 0, frameSize)
-    ]);
+    const icon = this.createIconObject(iconKey, 0, 0, iconSize);
+    const frame = this.createCompactRarityFrameObject(rarity, 0, 0, frameSize);
+    const slot = this.add.container(x, y, [icon, frame]);
     slot.setSize(frameSize, frameSize);
+    slot.setData("icon", icon);
     return this.registerLayoutTunerTarget(id, slot);
+  }
+
+  private setSlotIconVisible(slot: Phaser.GameObjects.Container, visible: boolean): void {
+    const icon = slot.getData("icon") as Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle | undefined;
+    icon?.setVisible(visible);
+  }
+
+  private getSlotWorldPosition(slot: Phaser.GameObjects.Container): { x: number; y: number } {
+    return {
+      x: (this.resultPanel?.x ?? 0) + slot.x,
+      y: (this.resultPanel?.y ?? 0) + slot.y
+    };
+  }
+
+  /** 卡槽翻面：scaleY→0（120ms）→ 亮出图标 + 稀有度反馈 → scaleY→1（Back.easeOut）。 */
+  private flipSlot(slot: Phaser.GameObjects.Container, rarity: ScriptureRarity, flash: boolean, onRevealed?: () => void): void {
+    this.tweens.killTweensOf(slot);
+    const flipDown = this.tweens.add({
+      targets: slot,
+      scaleY: 0,
+      duration: 120,
+      ease: Phaser.Math.Easing.Quadratic.In,
+      onComplete: () => {
+        this.setSlotIconVisible(slot, true);
+        const juice = JuiceSystem.get(this);
+        if (flash) {
+          juice.rarityFlash(rarity);
+        }
+        if (rarity === "elite" || rarity === "epic") {
+          const world = this.getSlotWorldPosition(slot);
+          juice.goldBurst(world.x, world.y, 42);
+        }
+        onRevealed?.();
+        const flipUp = this.tweens.add({
+          targets: slot,
+          scaleY: 1,
+          duration: 240,
+          ease: Phaser.Math.Easing.Back.Out
+        });
+        slot.once(Phaser.GameObjects.Events.DESTROY, () => flipUp.remove());
+      }
+    });
+    slot.once(Phaser.GameObjects.Events.DESTROY, () => flipDown.remove());
+  }
+
+  /** 十连错峰揭示：普通在前，精良及以上排到后半段拉期待。 */
+  private startTenReveal(results: ScripturePullResult[]): void {
+    const order = results
+      .map((_, index) => index)
+      .sort((a, b) => getRarityRank(results[a].reward.rarity) - getRarityRank(results[b].reward.rarity));
+    order.forEach((slotIndex, orderPosition) => {
+      this.revealTimers.push(this.time.delayedCall(240 + orderPosition * 120, () => {
+        this.revealTenEntry(slotIndex, false);
+      }));
+    });
+  }
+
+  private revealTenEntry(slotIndex: number, instant: boolean): void {
+    const entry = this.tenRevealEntries[slotIndex];
+    if (!entry || entry.revealed) {
+      return;
+    }
+    entry.revealed = true;
+    if (instant) {
+      this.tweens.killTweensOf(entry.slot);
+      entry.slot.setScale(1, 1);
+      this.setSlotIconVisible(entry.slot, true);
+      entry.label.setVisible(true);
+      if (entry.result.pityTriggered) {
+        this.addPityFx(entry.slot, entry.label);
+      }
+      return;
+    }
+    const rarity = entry.result.reward.rarity;
+    this.flipSlot(entry.slot, rarity, rarity === "elite" || rarity === "epic", () => {
+      entry.label.setVisible(true);
+      if (entry.result.pityTriggered) {
+        this.addPityFx(entry.slot, entry.label);
+      }
+    });
+  }
+
+  /** 跳过热区：立即补全所有未揭示格。 */
+  private createSkipRevealText(panelWidth: number): Phaser.GameObjects.Text {
+    const text = this.add.text(panelWidth / 2 - 56, -84, "跳过", {
+      color: "#d6c28d",
+      fontFamily: FONT_BODY,
+      fontSize: "15px",
+      fontStyle: "bold"
+    }).setOrigin(0.5).setResolution(2);
+    text.setInteractive({ useHandCursor: true });
+    text.on(Phaser.Input.Events.POINTER_DOWN, (_pointer: Phaser.Input.Pointer, _x: number, _y: number, event?: Phaser.Types.Input.EventData) => {
+      event?.stopPropagation();
+      this.skipTenReveal();
+    });
+    return text;
+  }
+
+  private skipTenReveal(): void {
+    this.revealTimers.forEach((timer) => timer.remove(false));
+    this.revealTimers = [];
+    this.tenRevealEntries.forEach((_entry, index) => this.revealTenEntry(index, true));
+  }
+
+  /** 保底演出：金色粒子尾迹 + 标题金色脉动（承接 scripture_pity_triggered）。 */
+  private addPityFx(slot: Phaser.GameObjects.Container, title: Phaser.GameObjects.Text): void {
+    title.setTint(0xf6d472);
+    this.tweens.add({
+      targets: title,
+      alpha: 0.55,
+      duration: 420,
+      yoyo: true,
+      repeat: 3,
+      ease: Phaser.Math.Easing.Sine.InOut,
+      onComplete: () => title.setAlpha(1)
+    });
+    JuiceSystem.get(this); // 确保 juice_* 程序化纹理已生成
+    if (!this.textures.exists("juice_spark")) {
+      return;
+    }
+    const world = this.getSlotWorldPosition(slot);
+    const trail = this.add.particles(world.x, world.y, "juice_spark", {
+      speed: { min: 30, max: 90 },
+      lifespan: 520,
+      scale: { start: 0.9, end: 0 },
+      alpha: { start: 0.9, end: 0 },
+      frequency: 110,
+      tint: [0xf6d472, 0xfff3c4, 0xa99a20],
+      blendMode: Phaser.BlendModes.ADD
+    });
+    trail.setDepth(85);
+    this.time.delayedCall(2800, () => trail.destroy());
   }
 
   private createResultContinueText(_panelWidth: number): Phaser.GameObjects.Text {
     const text = this.add.text(0, -84, "继续", {
       color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
+      fontFamily: FONT_BODY,
       fontSize: "16px",
       fontStyle: "bold"
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setResolution(2);
     text.setInteractive({ useHandCursor: true });
     text.on(Phaser.Input.Events.POINTER_DOWN, () => this.dismissResultPanel());
     return text;
@@ -818,7 +1166,7 @@ export class ScriptureScene extends Phaser.Scene {
       fontFamily: "monospace",
       fontSize: "13px",
       padding: { x: 8, y: 6 }
-    }).setDepth(2001).setScrollFactor(0);
+    }).setDepth(2001).setScrollFactor(0).setResolution(2);
     children.push(this.layoutTunerInfo);
 
     this.layoutTunerHandles = [];
@@ -841,7 +1189,7 @@ export class ScriptureScene extends Phaser.Scene {
         fontFamily: "monospace",
         fontSize: "10px",
         padding: { x: 3, y: 2 }
-      }).setOrigin(0.5);
+      }).setOrigin(0.5).setResolution(2);
       const handle: LayoutTunerHandle = { ...entry, box, label };
       box.on(Phaser.Input.Events.POINTER_DOWN, () => this.selectLayoutHandle(handle));
       box.on(Phaser.Input.Events.DRAG, (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
@@ -991,6 +1339,40 @@ export class ScriptureScene extends Phaser.Scene {
     this.content?.add(gameObject);
     return gameObject;
   }
+}
+
+function getRarityRank(rarity: ScriptureRarity): number {
+  switch (rarity) {
+    case "epic":
+      return 3;
+    case "elite":
+      return 2;
+    case "rare":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function getHighestRarity(results: ScripturePullResult[]): ScriptureRarity {
+  let highest: ScriptureRarity = "common";
+  results.forEach((result) => {
+    if (getRarityRank(result.reward.rarity) > getRarityRank(highest)) {
+      highest = result.reward.rarity;
+    }
+  });
+  return highest;
+}
+
+function getRevealAudioEvent(results: ScripturePullResult[]): string {
+  const highest = getHighestRarity(results);
+  if (highest === "elite" || highest === "epic") {
+    return "scripture_reveal_epic";
+  }
+  if (highest === "rare") {
+    return "scripture_reveal_rare";
+  }
+  return "scripture_reveal_common";
 }
 
 function rollRarity(): ScriptureRarity {

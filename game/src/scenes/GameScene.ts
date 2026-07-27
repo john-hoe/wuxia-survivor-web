@@ -1,15 +1,18 @@
 import Phaser from "phaser";
+import { heavyHitFocusConfig, narrativeTintConfig, stageConfig, stageVisualConfig, vignetteDynamicsConfig, weatherVisualConfig } from "../data/gameConfig";
+import type { WeatherKind } from "../data/gameConfig";
 import type { InsightOption, PendingInsight } from "../data/progression";
 import { isSkillId, type AdvanceKeyId, type SkillId } from "../data/skills";
 import { BossSystem, type BossDefeatSummary, type BossSystemSnapshot } from "../systems/BossSystem";
 import { EnemyDirectorSystem, type EnemyDirectorSnapshot } from "../systems/EnemyDirectorSystem";
 import { HeroHealthSystem, type DamageResult, type HeroHealthSnapshot } from "../systems/HeroHealthSystem";
 import { HeroMovementSystem, type HeroMovementSnapshot } from "../systems/HeroMovementSystem";
+import { JuiceSystem } from "../systems/JuiceSystem";
 import { ProgressionSystem, type ProgressionSnapshot } from "../systems/ProgressionSystem";
 import { saveSystem } from "../systems/SaveSystem";
 import { SkillSystem, type SkillSystemSnapshot } from "../systems/SkillSystem";
-import { createArtPanel } from "../ui/ArtPanel";
 import { DebugPanel } from "../ui/DebugPanel";
+import { PALETTE, FONT_BODY, FONT_MONO, FONT_TITLE, fadeIn } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
 import { getAudioSystem, getConfigLoadResult, getSaveData, getScreenState, prepareScreenTransition, setRunSummary } from "../utils/registry";
@@ -21,9 +24,40 @@ const DEBUG_DAMAGE_AMOUNT = 18;
 const DEBUG_HEAL_AMOUNT = 25;
 const DEBUG_BOSS_DAMAGE_AMOUNT = 700;
 const INSIGHT_RECOVERY_AMOUNT = 20;
-const HUD_HEALTH_FILL_MAX_WIDTH = 124;
-const HUD_HEALTH_BAR_X = 82;
-const HUD_HEALTH_BAR_Y = 45;
+// ── P3 HUD 顶栏布局常量（960×56 横带，内容垂直中心 y=33）──────────────
+const HUD_STRIP_HEIGHT = 56;
+const HUD_DEPTH_STRIP = 91;
+const HUD_DEPTH_CONTENT = 92;
+const HUD_DEPTH_TEXT = 93;
+// 左区：等级徽章 + 生命条
+const HUD_EMBLEM_X = 40;
+const HUD_EMBLEM_SIZE = 52;
+const HUD_HEALTH_BAR_X = 72;
+const HUD_HEALTH_BAR_Y = 33;
+const HUD_HEALTH_BAR_WIDTH = 170;
+const HUD_HEALTH_BAR_HEIGHT = 12;
+// 中区：内力分段条
+const HUD_INNER_BAR_X = 390;
+const HUD_INNER_BAR_Y = 33;
+const HUD_INNER_BAR_WIDTH = 220;
+const HUD_INNER_BAR_HEIGHT = 10;
+const HUD_INNER_VALUE_X = 616;
+// 右区：时间 / 击杀 / 暂停
+const HUD_TIME_X = 706;
+const HUD_KILLS_X = 800;
+const HUD_LABEL_Y = 15;
+const HUD_VALUE_Y = 34;
+// Boss 血条：顶栏正下方
+const BOSS_BAR_Y = 68;
+const BOSS_BAR_WIDTH = 420;
+
+/** 装饰物微动画元数据：残旗呼吸 / 竹丛错相位摆动 / 灯笼轻晃。 */
+type ScatterPropSway = {
+  kind: "flag" | "bamboo" | "lantern";
+  phase: number;
+  baseRotation: number;
+  baseScaleY: number;
+};
 
 export class GameScene extends Phaser.Scene {
   private debugPanel?: DebugPanel;
@@ -47,28 +81,59 @@ export class GameScene extends Phaser.Scene {
   private groundTile?: Phaser.GameObjects.TileSprite;
   private roadTile?: Phaser.GameObjects.TileSprite;
   private roadAccentTile?: Phaser.GameObjects.TileSprite;
-  private backgroundProps: Array<{
-    image: Phaser.GameObjects.Image;
-    baseX: number;
-    baseY: number;
-    parallaxX: number;
-    parallaxY: number;
-    marginX: number;
-    marginY: number;
-  }> = [];
-  private hudStatsText?: Phaser.GameObjects.Text;
+  private gateImage?: Phaser.GameObjects.Image;
+  private fogTile?: Phaser.GameObjects.TileSprite;
+  private scatterProps = new Map<string, { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway }>();
+  private propSlotSizePx = 256;
+  private bossDimOverlay?: Phaser.GameObjects.Rectangle;
+  private bossDimActive = false;
+  // ── 竹雨听风：天气层 / 色温叙事 / 动态暗角 / 重击聚焦 ──
+  private fogBandTile?: Phaser.GameObjects.TileSprite;
+  private vignetteDynamic?: Phaser.GameObjects.Image;
+  private narrativeDim?: Phaser.GameObjects.Rectangle;
+  private narrativeTint?: Phaser.GameObjects.Rectangle;
+  private hitFocusOverlay?: Phaser.GameObjects.Rectangle;
+  private weatherKind: WeatherKind = "clear";
+  private leafEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
+  private rainNearEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
+  private rainFarEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
+  private snowEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
+  private windSway = 0.7;
+  private windSwayTarget = 0.7;
+  private nextRippleAtMs = 0;
+  private eliteTintActive = false;
+  private bossTintActive = false;
+  private narrativeAlertOn = false;
+  private eliteTintFallback?: Phaser.Time.TimerEvent;
+  private vignetteTighten = 0;
+  private lowHpPulseTween?: Phaser.Tweens.Tween;
+  private wasLowHp = false;
+  private killMilestonesHit = new Set<number>();
+  private insightOpening = false;
+  private deathTransitionQueued = false;
+  private bossEndQueued = false;
+  private hudLevelText?: Phaser.GameObjects.Text;
   private hudHealthFill?: Phaser.GameObjects.Rectangle;
   private hudHealthGlow?: Phaser.GameObjects.Rectangle;
-  private hudRunText?: Phaser.GameObjects.Text;
+  private hudHealthText?: Phaser.GameObjects.Text;
+  private hudTimeText?: Phaser.GameObjects.Text;
+  private hudKillsText?: Phaser.GameObjects.Text;
   private bossHudBack?: Phaser.GameObjects.Rectangle;
   private bossHudFill?: Phaser.GameObjects.Rectangle;
   private bossHudText?: Phaser.GameObjects.Text;
   private bossHudTip?: Phaser.GameObjects.Text;
-  private innerPowerText?: Phaser.GameObjects.Text;
+  private innerPowerLabel?: Phaser.GameObjects.Text;
+  private innerPowerSlot?: Phaser.GameObjects.Rectangle;
+  private innerPowerBorder?: Phaser.GameObjects.Rectangle;
   private innerPowerFill?: Phaser.GameObjects.Rectangle;
+  private innerPowerText?: Phaser.GameObjects.Text;
+  private innerPowerTicks?: Phaser.GameObjects.Graphics;
+  private innerPowerTickMax = -1;
   private skillSlotFrames: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle> = [];
   private skillSlotIcons: Array<Phaser.GameObjects.Image | undefined> = [];
   private skillSlotTexts: Phaser.GameObjects.Text[] = [];
+  private skillSlotKeyHints: Phaser.GameObjects.Text[] = [];
+  private skillSlotCooldownMasks: Phaser.GameObjects.Rectangle[] = [];
   private stageScrollX = 0;
   private stageScrollY = 0;
   private elapsedMs = 0;
@@ -94,6 +159,32 @@ export class GameScene extends Phaser.Scene {
     this.heroLevel = 1;
     this.kills = 0;
     this.innerPower = "0/24";
+    this.insightOpening = false;
+    this.deathTransitionQueued = false;
+    this.bossEndQueued = false;
+    this.bossDimActive = false;
+    this.bossDimOverlay = undefined;
+    this.lowHpPulseTween = undefined;
+    this.wasLowHp = false;
+    this.killMilestonesHit.clear();
+    this.weatherKind = "clear";
+    this.windSway = weatherVisualConfig.windSwayByKind.clear;
+    this.windSwayTarget = this.windSway;
+    this.nextRippleAtMs = 0;
+    this.eliteTintActive = false;
+    this.bossTintActive = false;
+    this.narrativeAlertOn = false;
+    this.vignetteTighten = 0;
+    this.eliteTintFallback = undefined;
+    this.fogBandTile = undefined;
+    this.vignetteDynamic = undefined;
+    this.narrativeDim = undefined;
+    this.narrativeTint = undefined;
+    this.hitFocusOverlay = undefined;
+    this.leafEmitter = undefined;
+    this.rainNearEmitter = undefined;
+    this.rainFarEmitter = undefined;
+    this.snowEmitter = undefined;
     const saveData = getSaveData(this);
     const metaUpgrades = saveData.metaUpgrades;
     const baseMaxHp = Math.round(100 * (1 + metaUpgrades.max_hp * 0.05));
@@ -157,6 +248,26 @@ export class GameScene extends Phaser.Scene {
     });
     this.latestSkillSnapshot = this.skillSystem.getSnapshot();
     this.drawHud();
+
+    const juice = JuiceSystem.get(this);
+    juice.setLowVfx(getSaveData(this).settings.lowVfxMode);
+    juice.startAmbient();
+    const suspendAudio = (): void => {
+      (getAudioSystem(this) as any).suspendAll?.();
+    };
+    const resumeAudio = (): void => {
+      (getAudioSystem(this) as any).resumeAll?.();
+    };
+    this.events.on(Phaser.Scenes.Events.PAUSE, suspendAudio);
+    this.events.on(Phaser.Scenes.Events.RESUME, resumeAudio);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.events.off(Phaser.Scenes.Events.PAUSE, suspendAudio);
+      this.events.off(Phaser.Scenes.Events.RESUME, resumeAudio);
+      JuiceSystem.get(this).stopAmbient();
+      (getAudioSystem(this) as any)?.stopMusic?.(400);
+    });
+    fadeIn(this);
+
     this.debugPanel = new DebugPanel(this, 16, 96, getConfigLoadResult(this).config.debug.debugPanelDefaultVisible);
 
     const keyboard = this.input.keyboard;
@@ -224,6 +335,31 @@ export class GameScene extends Phaser.Scene {
     const unsubscribeInsightSelected = eventBus.on<{ optionId?: string; cardId?: string }>("insight_option_selected", (payload) => {
       this.applyInsightSelection(payload.optionId ?? payload.cardId ?? "");
     });
+    // 色温叙事：精英预警压暗泛朱砂；精英被击杀/消失或兜底计时后回落。
+    const unsubscribeEliteWarning = eventBus.on<{ warningSeconds?: number }>("enemy_elite_warning_started", (payload) => {
+      this.setEliteNarrativeAlert(true, payload?.warningSeconds);
+    });
+    const clearEliteOnEnd = (payload?: { enemyId?: string }): void => {
+      if (payload?.enemyId === "wooden_dummy_elite") {
+        this.setEliteNarrativeAlert(false);
+      }
+    };
+    const unsubscribeEliteKilled = eventBus.on<{ enemyId?: string }>("enemy_killed", clearEliteOnEnd);
+    const unsubscribeEliteDespawned = eventBus.on<{ enemyId?: string }>("enemy_despawned", clearEliteOnEnd);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      unsubscribeEliteWarning();
+      unsubscribeEliteKilled();
+      unsubscribeEliteDespawned();
+      this.eliteTintFallback?.remove();
+      this.eliteTintFallback = undefined;
+      for (const emitter of [this.leafEmitter, this.rainNearEmitter, this.rainFarEmitter, this.snowEmitter]) {
+        emitter?.destroy();
+      }
+      this.leafEmitter = undefined;
+      this.rainNearEmitter = undefined;
+      this.rainFarEmitter = undefined;
+      this.snowEmitter = undefined;
+    });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       unsubscribeBossSpawnRequested();
       unsubscribeInsightSelected();
@@ -245,6 +381,8 @@ export class GameScene extends Phaser.Scene {
       this.heroHealth = undefined;
       this.latestHealth = undefined;
     });
+
+    (getAudioSystem(this) as any)?.playMusic?.("music_stage_qingshi");
   }
 
   update(_time: number, delta: number): void {
@@ -257,6 +395,8 @@ export class GameScene extends Phaser.Scene {
       this.updateStageScroll(this.latestMovement);
       this.updateHeroView(this.latestMovement);
     }
+
+    this.updateAtmosphere(activeDeltaMs);
 
     if (this.heroHealth) {
       this.latestHealth = this.heroHealth.update(activeDeltaMs);
@@ -298,8 +438,11 @@ export class GameScene extends Phaser.Scene {
 
   private drawPlaceholderStage(): void {
     this.ensureStageTextures();
-    this.backgroundProps = [];
-    this.cameras.main.setBackgroundColor("#33483e");
+    this.ensureAtmosphereTextures();
+    this.scatterProps.clear();
+    this.cameras.main.setBackgroundColor(PALETTE.worldBg);
+    const chunkSize = getConfigLoadResult(this).config.stage.backgroundChunkSizePx;
+    this.propSlotSizePx = Math.max(160, Math.floor(chunkSize / stageVisualConfig.propSlotDivisions));
     const hasOfficialGround = this.textures.exists("ground_qingshi_base");
     const hasOfficialRoad = this.textures.exists("road_ribbon_a");
     const groundTexture = hasOfficialGround ? "ground_qingshi_base" : "qingshi_ground_tile";
@@ -319,7 +462,7 @@ export class GameScene extends Phaser.Scene {
       stageWidth + 256,
       Math.max(stageHeight, 512),
       roadTexture
-    ).setDepth(-25).setAlpha(hasOfficialRoad ? 0.46 : 1);
+    ).setDepth(-25).setAlpha(hasOfficialRoad ? 0.6 : 1);
 
     if (this.textures.exists("road_ribbon_b")) {
       this.roadAccentTile = this.add.tileSprite(
@@ -328,43 +471,604 @@ export class GameScene extends Phaser.Scene {
         stageWidth + 256,
         Math.max(stageHeight, 512),
         "road_ribbon_b"
-      ).setDepth(-24).setAlpha(0.18);
+      ).setDepth(-24).setAlpha(0.38);
     } else {
       this.roadAccentTile = undefined;
     }
 
-    this.addBackgroundProp("distant_gate_shadow", stageWidth / 2, -92, -23, 0.12, 0.82, 0.22, 0.16);
-    this.addBackgroundProp("bamboo_edge_cluster", 132, 146, -22, 0.16, 0.86, 0.52, 0.46);
-    this.addBackgroundProp("bamboo_edge_cluster", stageWidth - 96, stageHeight - 72, -22, 0.13, 0.74, 0.48, 0.43, true);
-    this.addBackgroundProp("rock_cluster", 260, stageHeight - 108, -21, 0.28, 0.7, 0.7, 0.64);
-    this.addBackgroundProp("rock_cluster", stageWidth - 170, 168, -21, 0.22, 0.62, 0.66, 0.58, true);
-    this.addBackgroundProp("wood_stake_flag", stageWidth - 150, 214, -21, 0.28, 0.58, 0.7, 0.62);
-  }
-
-  private addBackgroundProp(
-    textureKey: string,
-    baseX: number,
-    baseY: number,
-    depth: number,
-    alpha: number,
-    scale: number,
-    parallaxX: number,
-    parallaxY: number,
-    flipX = false
-  ): void {
-    if (!this.textures.exists(textureKey)) {
-      return;
+    // 山门：叙事化远景，不进入装饰物回收池，alpha/scale 由 updateAtmosphere 按时间轴驱动。
+    if (this.textures.exists("distant_gate_shadow")) {
+      this.gateImage = this.add.image(stageWidth / 2, -46, "distant_gate_shadow")
+        .setDepth(-23)
+        .setAlpha(0.05)
+        .setScale(0.5);
+    } else {
+      this.gateImage = undefined;
     }
 
-    const image = this.add.image(baseX, baseY, textureKey)
-      .setDepth(depth)
-      .setAlpha(alpha)
-      .setScale(scale)
-      .setFlipX(flipX);
-    const frame = image.texture.getSourceImage() as HTMLImageElement | HTMLCanvasElement | undefined;
-    const marginX = Math.max(320, (frame?.width ?? 512) * scale);
-    const marginY = Math.max(240, (frame?.height ?? 512) * scale);
-    this.backgroundProps.push({ image, baseX, baseY, parallaxX, parallaxY, marginX, marginY });
+    // 氛围三层之二：雾带（暗角在最后铺，落叶由 JuiceSystem 负责）。
+    this.fogTile = this.add.tileSprite(
+      stageWidth / 2,
+      stageHeight / 2,
+      stageWidth,
+      stageHeight,
+      "atmo_fog"
+    )
+      .setDepth(88)
+      .setAlpha(stageVisualConfig.fogAlpha)
+      .setScrollFactor(0)
+      .setBlendMode(Phaser.BlendModes.SCREEN);
+    this.add.image(stageWidth / 2, stageHeight / 2, "atmo_vignette")
+      .setDisplaySize(stageWidth, stageHeight)
+      .setDepth(90)
+      .setScrollFactor(0)
+      .setBlendMode(Phaser.BlendModes.MULTIPLY);
+
+    // 竹雨听风：天气纹理 + 雾带加浓层 / 动态暗角 / 色温叙事 / 重击聚焦等屏幕层。
+    this.ensureWeatherTextures();
+    this.setupAtmosphereOverlays();
+
+    this.refreshPropScatter();
+  }
+
+  private ensureAtmosphereTextures(): void {
+    if (!this.textures.exists("atmo_vignette")) {
+      const vignette = this.textures.createCanvas("atmo_vignette", 128, 128);
+      const context = vignette?.getContext();
+      if (vignette && context) {
+        const gradient = context.createRadialGradient(64, 64, 34, 64, 64, 84);
+        gradient.addColorStop(0, "rgba(255, 255, 255, 1)");
+        gradient.addColorStop(0.58, "rgba(246, 242, 232, 1)");
+        gradient.addColorStop(1, "rgba(64, 54, 38, 1)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, 128, 128);
+        vignette.refresh();
+      }
+    }
+
+    if (!this.textures.exists("atmo_fog")) {
+      const fog = this.textures.createCanvas("atmo_fog", 256, 256);
+      const context = fog?.getContext();
+      if (fog && context) {
+        context.clearRect(0, 0, 256, 256);
+        const random = mulberry32(20260726);
+        for (let index = 0; index < 42; index += 1) {
+          const x = random() * 256;
+          const y = random() * 256;
+          const radius = 26 + random() * 64;
+          const alpha = 0.05 + random() * 0.09;
+          // 3x3 包裹绘制，保证 TileSprite 平铺无明显接缝。
+          for (let offsetX = -256; offsetX <= 256; offsetX += 256) {
+            for (let offsetY = -256; offsetY <= 256; offsetY += 256) {
+              const gradient = context.createRadialGradient(x + offsetX, y + offsetY, 0, x + offsetX, y + offsetY, radius);
+              gradient.addColorStop(0, `rgba(232, 238, 226, ${alpha})`);
+              gradient.addColorStop(1, "rgba(232, 238, 226, 0)");
+              context.fillStyle = gradient;
+              context.fillRect(x + offsetX - radius, y + offsetY - radius, radius * 2, radius * 2);
+            }
+          }
+        }
+        fog.refresh();
+      }
+    }
+  }
+
+  private refreshPropScatter(): void {
+    const slotSize = this.propSlotSizePx;
+    const margin = slotSize * 0.75;
+    const stageWidth = this.scale.width;
+    const stageHeight = this.scale.height;
+    const minI = Math.floor((this.stageScrollX - margin) / slotSize);
+    const maxI = Math.floor((this.stageScrollX + stageWidth + margin) / slotSize);
+    const minJ = Math.floor((this.stageScrollY - margin) / slotSize);
+    const maxJ = Math.floor((this.stageScrollY + stageHeight + margin) / slotSize);
+    const needed = new Set<string>();
+    for (let slotI = minI; slotI <= maxI; slotI += 1) {
+      for (let slotJ = minJ; slotJ <= maxJ; slotJ += 1) {
+        const key = `${slotI}:${slotJ}`;
+        needed.add(key);
+        if (!this.scatterProps.has(key)) {
+          const prop = this.createScatterProp(slotI, slotJ, slotSize);
+          if (prop) {
+            this.scatterProps.set(key, prop);
+          }
+        }
+      }
+    }
+
+    for (const [key, prop] of this.scatterProps) {
+      if (!needed.has(key)) {
+        prop.image.destroy();
+        this.scatterProps.delete(key);
+        continue;
+      }
+      prop.image.setPosition(prop.worldX - this.stageScrollX, prop.worldY - this.stageScrollY);
+    }
+  }
+
+  private createScatterProp(
+    slotI: number,
+    slotJ: number,
+    slotSize: number
+  ): { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway } | undefined {
+    const random = mulberry32(hashScatterSlot(slotI, slotJ));
+    if (random() > stageVisualConfig.propDensity) {
+      return undefined;
+    }
+    const typeRoll = random();
+    let textureKey = SCATTER_PROP_POOL[0].key;
+    let cumulativeWeight = 0;
+    for (const entry of SCATTER_PROP_POOL) {
+      cumulativeWeight += entry.weight;
+      if (typeRoll < cumulativeWeight) {
+        textureKey = entry.key;
+        break;
+      }
+    }
+    if (!this.textures.exists(textureKey)) {
+      return undefined;
+    }
+    const base = SCATTER_PROP_BASE[textureKey];
+    const worldX = slotI * slotSize + random() * slotSize;
+    const worldY = slotJ * slotSize + random() * slotSize;
+    const image = this.add.image(worldX - this.stageScrollX, worldY - this.stageScrollY, textureKey)
+      .setDepth(base.depth)
+      .setAlpha(base.alpha * (0.85 + random() * 0.3))
+      .setScale(base.scale * (0.85 + random() * 0.35))
+      .setFlipX(random() >= 0.5);
+    // 移动背景：残旗/竹丛/灯笼挂微动画元数据，相位由槽位种子错开。
+    let sway: ScatterPropSway | undefined;
+    if (this.getVfxDensityScale() > 0) {
+      const phase = random() * Math.PI * 2;
+      if (textureKey === "decor_flag" || textureKey === "wood_stake_flag") {
+        sway = { kind: "flag", phase, baseRotation: 0, baseScaleY: image.scaleY };
+      } else if (textureKey === "bamboo_edge_cluster") {
+        sway = { kind: "bamboo", phase, baseRotation: 0, baseScaleY: image.scaleY };
+      } else if (textureKey === "decor_lantern") {
+        sway = { kind: "lantern", phase, baseRotation: 0, baseScaleY: image.scaleY };
+      }
+    }
+    return { image, worldX, worldY, sway };
+  }
+
+  private updateAtmosphere(deltaMs: number): void {
+    const driftSeconds = this.elapsedMs / 1000;
+    if (this.fogTile) {
+      this.fogTile.tilePositionX = this.stageScrollX * stageVisualConfig.fogDriftFactor + driftSeconds * 7;
+      this.fogTile.tilePositionY = this.stageScrollY * stageVisualConfig.fogDriftFactor + driftSeconds * 4;
+    }
+
+    // 雾天气附加雾带：反向慢漂，透明度由 setWeather 补间驱动。
+    if (this.fogBandTile) {
+      this.fogBandTile.tilePositionX = this.stageScrollX * stageVisualConfig.fogDriftFactor * 0.6 - driftSeconds * 11;
+      this.fogBandTile.tilePositionY = this.stageScrollY * stageVisualConfig.fogDriftFactor * 0.5 + driftSeconds * 3;
+    }
+
+    if (this.gateImage) {
+      const focus = Phaser.Math.Clamp(this.elapsedMs / (stageVisualConfig.gateFocusSeconds * 1000), 0, 1);
+      const eased = focus * focus * (3 - 2 * focus);
+      this.gateImage.setAlpha(0.05 + 0.47 * eased);
+      this.gateImage.setScale(0.5 + 0.55 * eased);
+    }
+
+    // 风力摆动幅度向目标缓动（天气切换时平滑过渡）。
+    this.windSway += (this.windSwayTarget - this.windSway) * Math.min(1, deltaMs / 900);
+
+    this.updateWeatherTimeline();
+    this.updatePropSway();
+    this.updateWeatherRipples();
+  }
+
+  // ── 竹雨听风①：天气系统 ──────────────────────────────────────────────
+
+  /** 按局内时间轴（0-120s 晴 / 120-240s 起风 / 240s+ 微雨 / Boss 前 30s 雪或雾）切换天气。 */
+  private updateWeatherTimeline(): void {
+    if (!weatherVisualConfig.timelineEnabled) {
+      return;
+    }
+    const elapsedSeconds = this.getElapsedSeconds();
+    let desired: WeatherKind = weatherVisualConfig.timeline[0]?.kind ?? "clear";
+    for (const entry of weatherVisualConfig.timeline) {
+      if (elapsedSeconds >= entry.fromSeconds) {
+        desired = entry.kind;
+      }
+    }
+    const preBossFromSeconds = stageConfig.bossSpawnSeconds - weatherVisualConfig.preBossLeadSeconds;
+    if (elapsedSeconds >= preBossFromSeconds) {
+      desired = weatherVisualConfig.preBossKind;
+    }
+    if (desired !== this.weatherKind) {
+      this.setWeather(desired);
+    }
+  }
+
+  private setWeather(kind: WeatherKind): void {
+    this.weatherKind = kind;
+    this.windSwayTarget = weatherVisualConfig.windSwayByKind[kind] ?? 1;
+    const density = this.getVfxDensityScale();
+
+    this.leafEmitter?.stop();
+    this.rainNearEmitter?.stop();
+    this.rainFarEmitter?.stop();
+    this.snowEmitter?.stop();
+
+    if (density > 0) {
+      if (kind === "breeze") {
+        this.activateBreezeLeaves(density);
+      } else if (kind === "rain") {
+        this.activateRain(density);
+      } else if (kind === "snow") {
+        this.activateSnow(density);
+      }
+    }
+
+    // 雾天气：主雾带加浓 + 附加雾带淡入；离开时回落（VFX 全关时不加浓）。
+    const foggy = kind === "fog" && density > 0;
+    if (this.fogTile) {
+      this.tweens.killTweensOf(this.fogTile);
+      this.tweens.add({
+        targets: this.fogTile,
+        alpha: foggy ? weatherVisualConfig.foggyFogAlpha : stageVisualConfig.fogAlpha,
+        duration: 1600,
+        ease: "Sine.easeInOut"
+      });
+    }
+    if (this.fogBandTile) {
+      this.tweens.killTweensOf(this.fogBandTile);
+      this.tweens.add({
+        targets: this.fogBandTile,
+        alpha: foggy ? weatherVisualConfig.fogBandAlpha : 0,
+        duration: 1600,
+        ease: "Sine.easeInOut"
+      });
+    }
+
+    this.nextRippleAtMs = kind === "rain"
+      ? this.elapsedMs + this.rollRippleInterval()
+      : 0;
+  }
+
+  /** 起风：在 JuiceSystem 常驻落叶之上叠加一层加密落叶（风向左斜）。 */
+  private activateBreezeLeaves(density: number): void {
+    if (!this.leafEmitter) {
+      const textureKey = this.textures.exists("juice_leaf") ? "juice_leaf" : "weather_leaf";
+      this.leafEmitter = this.add.particles(0, -12, textureKey, {
+        x: { min: -20, max: this.scale.width + 60 },
+        lifespan: 8000,
+        speedY: { min: 18, max: 42 },
+        speedX: { min: -46, max: -12 },
+        rotate: { min: 0, max: 360 },
+        quantity: 1,
+        frequency: weatherVisualConfig.breezeLeafFrequencyMs,
+        scale: { min: 0.7, max: 1.4 },
+        alpha: { min: 0.35, max: 0.75 },
+        tint: [0x9aa583, 0x7d9b76, 0xb8b3a4],
+        blendMode: Phaser.BlendModes.NORMAL
+      });
+      this.leafEmitter.setScrollFactor(0);
+      this.leafEmitter.setDepth(-15);
+    }
+    this.leafEmitter.setFrequency(Math.round(weatherVisualConfig.breezeLeafFrequencyMs / density), 1);
+    this.leafEmitter.start();
+  }
+
+  /** 微雨：斜向雨丝近/远两层（近层大稀、远层小密），地面涟漪由 updateWeatherRipples 驱动。 */
+  private activateRain(density: number): void {
+    const stageWidth = this.scale.width;
+    if (!this.rainFarEmitter) {
+      this.rainFarEmitter = this.add.particles(0, -24, "weather_rain", {
+        x: { min: -60, max: stageWidth + 140 },
+        lifespan: 1150,
+        speedY: { min: 430, max: 560 },
+        speedX: { min: -120, max: -80 },
+        rotate: { min: -15, max: -11 },
+        quantity: 2,
+        frequency: weatherVisualConfig.rainFarFrequencyMs,
+        scale: { min: 0.45, max: 0.7 },
+        alpha: { min: 0.16, max: 0.28 },
+        tint: [0x9fb8c4, 0x8aa8b4],
+        blendMode: Phaser.BlendModes.NORMAL
+      });
+      this.rainFarEmitter.setScrollFactor(0);
+      this.rainFarEmitter.setDepth(86);
+    }
+    if (!this.rainNearEmitter) {
+      this.rainNearEmitter = this.add.particles(0, -24, "weather_rain", {
+        x: { min: -60, max: stageWidth + 140 },
+        lifespan: 950,
+        speedY: { min: 620, max: 780 },
+        speedX: { min: -190, max: -130 },
+        rotate: { min: -15, max: -11 },
+        quantity: 2,
+        frequency: weatherVisualConfig.rainNearFrequencyMs,
+        scale: { min: 0.9, max: 1.3 },
+        alpha: { min: 0.32, max: 0.5 },
+        tint: [0xbfd4d8, 0x9fb8c4],
+        blendMode: Phaser.BlendModes.NORMAL
+      });
+      this.rainNearEmitter.setScrollFactor(0);
+      this.rainNearEmitter.setDepth(89);
+    }
+    this.rainFarEmitter.setFrequency(Math.round(weatherVisualConfig.rainFarFrequencyMs / density), 2);
+    this.rainNearEmitter.setFrequency(Math.round(weatherVisualConfig.rainNearFrequencyMs / density), 2);
+    this.rainFarEmitter.start();
+    this.rainNearEmitter.start();
+  }
+
+  /** 雪：慢速雪花 + 风力漂移（横向速度随机分布，部分回卷）。 */
+  private activateSnow(density: number): void {
+    if (!this.snowEmitter) {
+      this.snowEmitter = this.add.particles(0, -16, "weather_snow", {
+        x: { min: -30, max: this.scale.width + 30 },
+        lifespan: 9500,
+        speedY: { min: 26, max: 54 },
+        speedX: { min: -16, max: 10 },
+        rotate: { min: 0, max: 360 },
+        quantity: 1,
+        frequency: weatherVisualConfig.snowFrequencyMs,
+        scale: { min: 0.5, max: 1.15 },
+        alpha: { min: 0.55, max: 0.9 },
+        blendMode: Phaser.BlendModes.NORMAL
+      });
+      this.snowEmitter.setScrollFactor(0);
+      this.snowEmitter.setDepth(89);
+    }
+    this.snowEmitter.setFrequency(Math.round(weatherVisualConfig.snowFrequencyMs / density), 1);
+    this.snowEmitter.start();
+  }
+
+  /** 雨天偶发地面涟漪：随机位置细环扩散淡出。 */
+  private updateWeatherRipples(): void {
+    if (this.weatherKind !== "rain" || this.nextRippleAtMs <= 0 || this.elapsedMs < this.nextRippleAtMs) {
+      return;
+    }
+    this.nextRippleAtMs = this.elapsedMs + this.rollRippleInterval();
+    if (this.getVfxDensityScale() <= 0) {
+      return;
+    }
+    const stageWidth = this.scale.width;
+    const stageHeight = this.scale.height;
+    const rippleCount = Math.random() < 0.35 ? 2 : 1;
+    for (let index = 0; index < rippleCount; index += 1) {
+      const x = 40 + Math.random() * (stageWidth - 80);
+      const y = stageHeight * 0.35 + Math.random() * stageHeight * 0.58;
+      const ripple = this.add.ellipse(x, y, 12, 5, 0xffffff, 0)
+        .setStrokeStyle(1, 0xcfe4e2, 0.55)
+        .setDepth(2);
+      this.tweens.add({
+        targets: ripple,
+        scaleX: 5.2,
+        scaleY: 5.2,
+        alpha: 0,
+        duration: 640,
+        ease: "Cubic.easeOut",
+        onComplete: () => ripple.destroy()
+      });
+    }
+  }
+
+  private rollRippleInterval(): number {
+    const { min, max } = weatherVisualConfig.rippleIntervalMs;
+    return min + Math.random() * Math.max(0, max - min);
+  }
+
+  // ── 竹雨听风③：移动背景（装饰物微动画） ──────────────────────────────
+
+  /** 残旗 rotation ±2° 呼吸、竹丛 scaleY 微摆（错相位）、灯笼轻晃；幅度随风力（天气）缩放。 */
+  private updatePropSway(): void {
+    if (this.windSway <= 0.01) {
+      return;
+    }
+    const timeSeconds = this.elapsedMs / 1000;
+    const sway = this.windSway;
+    for (const prop of this.scatterProps.values()) {
+      const meta = prop.sway;
+      if (!meta) {
+        continue;
+      }
+      if (meta.kind === "flag") {
+        prop.image.setRotation(meta.baseRotation + Math.sin(timeSeconds * 1.6 + meta.phase) * 0.035 * sway);
+      } else if (meta.kind === "bamboo") {
+        prop.image.scaleY = meta.baseScaleY * (1 + Math.sin(timeSeconds * 1.15 + meta.phase) * 0.028 * sway);
+      } else {
+        prop.image.setRotation(meta.baseRotation + Math.sin(timeSeconds * 1.3 + meta.phase) * 0.045 * sway);
+      }
+    }
+  }
+
+  // ── 竹雨听风②：色温叙事（精英预警/Boss 出场压暗 + 泛朱砂） ────────────
+
+  private setEliteNarrativeAlert(active: boolean, warningSeconds?: number): void {
+    this.eliteTintFallback?.remove();
+    this.eliteTintFallback = undefined;
+    this.eliteTintActive = active;
+    if (active) {
+      // 兜底：预警 + 保持时长后自动回落，避免漏听结束事件导致色调残留。
+      const holdMs = ((warningSeconds ?? 2) + narrativeTintConfig.eliteHoldSeconds) * 1000;
+      this.eliteTintFallback = this.time.delayedCall(holdMs, () => {
+        this.eliteTintFallback = undefined;
+        this.eliteTintActive = false;
+        this.refreshNarrativeAlert();
+      });
+    }
+    this.refreshNarrativeAlert();
+  }
+
+  /** 精英与 Boss 任一激活即进入叙事色调；800ms 进入、事件结束 1.2s 回落。 */
+  private refreshNarrativeAlert(): void {
+    const active = (this.eliteTintActive || this.bossTintActive) && this.getVfxDensityScale() > 0;
+    if (active === this.narrativeAlertOn) {
+      return;
+    }
+    this.narrativeAlertOn = active;
+    const dim = this.narrativeDim;
+    const tint = this.narrativeTint;
+    if (!dim || !tint) {
+      return;
+    }
+    this.tweens.killTweensOf(dim);
+    this.tweens.killTweensOf(tint);
+    const duration = active ? narrativeTintConfig.fadeInMs : narrativeTintConfig.fadeOutMs;
+    this.tweens.add({
+      targets: dim,
+      alpha: active ? narrativeTintConfig.dimAlpha : 0,
+      duration,
+      ease: "Sine.easeInOut"
+    });
+    this.tweens.add({
+      targets: tint,
+      alpha: active ? narrativeTintConfig.tintAlpha : 0,
+      duration,
+      ease: "Sine.easeInOut"
+    });
+  }
+
+  // ── 竹雨听风④：动态暗角（低血收紧 20% / Boss 战收紧 15%） ─────────────
+
+  private refreshVignetteDynamics(): void {
+    const health = this.getHealthSnapshot();
+    const boss = this.getBossSnapshot();
+    const bossActive = boss.state !== "pending" && boss.state !== "cleared" && boss.state !== "dead";
+    let tighten = 0;
+    if (this.getVfxDensityScale() > 0) {
+      if (health.isLowHp) {
+        tighten = Math.max(tighten, vignetteDynamicsConfig.lowHpTighten);
+      }
+      if (bossActive) {
+        tighten = Math.max(tighten, vignetteDynamicsConfig.bossTighten);
+      }
+    }
+    if (!this.vignetteDynamic || Math.abs(tighten - this.vignetteTighten) < 0.001) {
+      return;
+    }
+    this.vignetteTighten = tighten;
+    // 动态层按 1.3 倍屏幕铺设，scale 收紧到 1/(1+t) 时仍满幅覆盖，暗角边界向中心收拢。
+    const targetScale = 1 / (1 + tighten);
+    const targetAlpha = tighten <= 0
+      ? 0
+      : vignetteDynamicsConfig.maxAlpha * Phaser.Math.Clamp(tighten / vignetteDynamicsConfig.lowHpTighten, 0, 1);
+    this.tweens.killTweensOf(this.vignetteDynamic);
+    this.tweens.add({
+      targets: this.vignetteDynamic,
+      alpha: targetAlpha,
+      scaleX: targetScale,
+      scaleY: targetScale,
+      duration: tighten > 0 ? vignetteDynamicsConfig.tweenMs : vignetteDynamicsConfig.releaseMs,
+      ease: "Sine.easeInOut"
+    });
+  }
+
+  // ── 竹雨听风⑤：重击屏幕压暗聚焦 ──────────────────────────────────────
+
+  /** 单次掉血超过上限 20% 时全屏压暗 150ms（黑矩形 alpha 0.25 闪）。 */
+  private showHeavyHitFocus(): void {
+    if (!this.hitFocusOverlay || this.getVfxDensityScale() <= 0) {
+      return;
+    }
+    this.tweens.killTweensOf(this.hitFocusOverlay);
+    this.hitFocusOverlay.setAlpha(heavyHitFocusConfig.alpha);
+    this.tweens.add({
+      targets: this.hitFocusOverlay,
+      alpha: 0,
+      duration: heavyHitFocusConfig.durationMs,
+      ease: "Quad.easeOut"
+    });
+  }
+
+  // ── 天气/叙事共享：纹理、屏幕层、设置 ────────────────────────────────
+
+  /** 防御性读取 VFX 设置：vfxDensity === "off" 全关；low/现有 lowVfxMode 减半。 */
+  private getVfxDensityScale(): number {
+    const settings = getSaveData(this).settings as { lowVfxMode?: boolean; vfxDensity?: string } | undefined;
+    if (!settings) {
+      return 1;
+    }
+    if (settings.vfxDensity === "off") {
+      return 0;
+    }
+    if (settings.vfxDensity === "low" || settings.lowVfxMode) {
+      return 0.5;
+    }
+    return 1;
+  }
+
+  private ensureWeatherTextures(): void {
+    if (!this.textures.exists("weather_rain")) {
+      const graphics = this.add.graphics();
+      graphics.lineStyle(2, 0xffffff, 0.9);
+      graphics.lineBetween(2, 1, 2, 17);
+      graphics.generateTexture("weather_rain", 4, 18);
+      graphics.destroy();
+    }
+    if (!this.textures.exists("weather_snow")) {
+      const graphics = this.add.graphics();
+      graphics.fillStyle(0xffffff, 0.9);
+      graphics.fillCircle(4, 4, 3);
+      graphics.generateTexture("weather_snow", 8, 8);
+      graphics.destroy();
+    }
+    // JuiceSystem 的落叶纹理若尚未生成（本阶段先于其初始化）则自绘兜底。
+    if (!this.textures.exists("juice_leaf") && !this.textures.exists("weather_leaf")) {
+      const graphics = this.add.graphics();
+      graphics.fillStyle(0xffffff, 1);
+      graphics.fillEllipse(6, 4, 10, 6);
+      graphics.generateTexture("weather_leaf", 12, 8);
+      graphics.destroy();
+    }
+  }
+
+  /** 天气/叙事屏幕层：附加雾带、动态暗角、压暗、朱砂、重击聚焦（全部 scrollFactor 0、低于 HUD）。 */
+  private setupAtmosphereOverlays(): void {
+    const stageWidth = this.scale.width;
+    const stageHeight = this.scale.height;
+
+    this.fogBandTile = this.add.tileSprite(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, "atmo_fog")
+      .setDepth(87)
+      .setAlpha(0)
+      .setScrollFactor(0)
+      .setBlendMode(Phaser.BlendModes.SCREEN);
+
+    this.narrativeDim = this.add.rectangle(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, 0x050705, 0)
+      .setDepth(77)
+      .setScrollFactor(0);
+    this.narrativeTint = this.add.rectangle(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, 0x8f1a12, 0)
+      .setDepth(78)
+      .setScrollFactor(0)
+      .setBlendMode(Phaser.BlendModes.MULTIPLY);
+    this.hitFocusOverlay = this.add.rectangle(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, 0x000000, 0)
+      .setDepth(79)
+      .setScrollFactor(0);
+
+    this.vignetteDynamic = this.add.image(stageWidth / 2, stageHeight / 2, "atmo_vignette")
+      .setDisplaySize(stageWidth * 1.3, stageHeight * 1.3)
+      .setDepth(90)
+      .setScrollFactor(0)
+      .setBlendMode(Phaser.BlendModes.MULTIPLY)
+      .setAlpha(0);
+  }
+
+  private setBossDim(active: boolean): void {
+    if (active === this.bossDimActive) {
+      return;
+    }
+    this.bossDimActive = active;
+    if (!this.bossDimOverlay) {
+      this.bossDimOverlay = this.add.rectangle(
+        this.scale.width / 2,
+        this.scale.height / 2,
+        this.scale.width,
+        this.scale.height,
+        0x000000,
+        0
+      ).setDepth(76).setScrollFactor(0);
+    }
+    this.tweens.killTweensOf(this.bossDimOverlay);
+    this.tweens.add({
+      targets: this.bossDimOverlay,
+      alpha: active ? stageVisualConfig.bossDimAlpha : 0,
+      duration: active ? 700 : 900,
+      ease: "Sine.easeInOut"
+    });
   }
 
   private drawHero(): void {
@@ -403,42 +1107,131 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawHud(): void {
-    const healthPanelX = 156;
-    createArtPanel(this, "ui_hud_health_panel", healthPanelX, 48, 280, 80, 0x11140f, 0.72).setDepth(78);
-    const healthBarCenterX = HUD_HEALTH_BAR_X + HUD_HEALTH_FILL_MAX_WIDTH / 2;
-    this.hudHealthGlow = this.add.rectangle(healthBarCenterX, HUD_HEALTH_BAR_Y, HUD_HEALTH_FILL_MAX_WIDTH + 6, 18, 0x7d1616, 0.0).setDepth(79);
-    this.add.rectangle(healthBarCenterX, HUD_HEALTH_BAR_Y, HUD_HEALTH_FILL_MAX_WIDTH + 6, 18, 0x07110d, 0.9).setStrokeStyle(1, 0xd6c28d, 0.45).setDepth(80);
-    this.hudHealthFill = this.add.rectangle(HUD_HEALTH_BAR_X, HUD_HEALTH_BAR_Y, HUD_HEALTH_FILL_MAX_WIDTH, 12, 0x5fd27a, 0.95).setOrigin(0, 0.5).setDepth(81);
-    this.hudStatsText = this.add.text(healthBarCenterX, HUD_HEALTH_BAR_Y, "", {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
+    const stageWidth = this.scale.width;
+    const stripCenterY = HUD_STRIP_HEIGHT / 2;
+
+    // ── 顶部横带：ui_hud_top_strip，缺失时退化为半透明墨底矩形 + 底线 ──
+    if (this.textures.exists("ui_hud_top_strip")) {
+      this.add.image(stageWidth / 2, stripCenterY, "ui_hud_top_strip")
+        .setDisplaySize(stageWidth, HUD_STRIP_HEIGHT)
+        .setScrollFactor(0)
+        .setDepth(HUD_DEPTH_STRIP);
+    } else {
+      this.add.rectangle(stageWidth / 2, stripCenterY, stageWidth, HUD_STRIP_HEIGHT, 0x0e1a15, 0.92)
+        .setScrollFactor(0)
+        .setDepth(HUD_DEPTH_STRIP);
+      this.add.rectangle(stageWidth / 2, HUD_STRIP_HEIGHT - 1, stageWidth, 2, PALETTE.legacyGold, 0.66)
+        .setScrollFactor(0)
+        .setDepth(HUD_DEPTH_STRIP);
+    }
+
+    // ── 左区：等级徽章 + 生命条 ──
+    if (this.textures.exists("ui_hud_emblem_frame")) {
+      this.add.image(HUD_EMBLEM_X, stripCenterY, "ui_hud_emblem_frame")
+        .setDisplaySize(HUD_EMBLEM_SIZE, HUD_EMBLEM_SIZE)
+        .setDepth(HUD_DEPTH_CONTENT);
+    } else {
+      this.add.circle(HUD_EMBLEM_X, stripCenterY, HUD_EMBLEM_SIZE / 2, 0x101c16, 0.92)
+        .setStrokeStyle(2, PALETTE.legacyGold, 0.85)
+        .setDepth(HUD_DEPTH_CONTENT);
+    }
+    this.hudLevelText = this.add.text(HUD_EMBLEM_X, stripCenterY, "1", {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_MONO,
+      fontSize: "18px",
+      fontStyle: "bold",
+      stroke: "#101010",
+      strokeThickness: 2
+    }).setOrigin(0.5).setDepth(HUD_DEPTH_TEXT).setResolution(2);
+
+    this.add.text(HUD_HEALTH_BAR_X, HUD_LABEL_Y, "生命", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "11px"
+    }).setOrigin(0, 0.5).setDepth(HUD_DEPTH_CONTENT).setResolution(2);
+    const healthBarCenterX = HUD_HEALTH_BAR_X + HUD_HEALTH_BAR_WIDTH / 2;
+    this.hudHealthGlow = this.add.rectangle(
+      healthBarCenterX, HUD_HEALTH_BAR_Y,
+      HUD_HEALTH_BAR_WIDTH + 6, HUD_HEALTH_BAR_HEIGHT + 6,
+      PALETTE.lowHp, 0
+    ).setDepth(HUD_DEPTH_CONTENT);
+    this.add.rectangle(healthBarCenterX, HUD_HEALTH_BAR_Y, HUD_HEALTH_BAR_WIDTH, HUD_HEALTH_BAR_HEIGHT, 0x070807, 0.88)
+      .setDepth(HUD_DEPTH_CONTENT);
+    this.hudHealthFill = this.add.rectangle(
+      HUD_HEALTH_BAR_X + 1, HUD_HEALTH_BAR_Y,
+      HUD_HEALTH_BAR_WIDTH - 2, HUD_HEALTH_BAR_HEIGHT - 2,
+      PALETTE.hp, 0.95
+    ).setOrigin(0, 0.5).setDepth(HUD_DEPTH_TEXT);
+    this.add.rectangle(healthBarCenterX, HUD_HEALTH_BAR_Y, HUD_HEALTH_BAR_WIDTH + 2, HUD_HEALTH_BAR_HEIGHT + 2)
+      .setFillStyle(0x000000, 0)
+      .setStrokeStyle(1, PALETTE.legacyGold, 0.82)
+      .setDepth(HUD_DEPTH_TEXT);
+    this.hudHealthText = this.add.text(healthBarCenterX, HUD_HEALTH_BAR_Y, "", {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_MONO,
       fontSize: "13px",
       fontStyle: "bold",
-      stroke: "#07110d",
+      stroke: "#101010",
       strokeThickness: 2
-    }).setOrigin(0.5).setDepth(82);
+    }).setOrigin(0.5).setDepth(HUD_DEPTH_TEXT).setResolution(2);
 
-    createArtPanel(this, "ui_hud_inner_power_bar", this.scale.width / 2, 42, 420, 44, 0x11140f, 0.68).setDepth(78);
-    this.innerPowerFill = this.add.rectangle(this.scale.width / 2 - 186, 42, 0, 14, 0x3b9fb7, 0.78).setOrigin(0, 0.5).setDepth(79);
-    this.innerPowerText = this.add.text(this.scale.width / 2, 42, "", {
-      color: "#c7f4ff",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "18px"
-    }).setOrigin(0.5).setDepth(82);
-
-    const runPanelX = this.scale.width - 204;
-    createArtPanel(this, "ui_hud_run_panel", runPanelX, 48, 260, 80, 0x11140f, 0.72).setDepth(78);
-    this.add.rectangle(runPanelX - 16, 43, 158, 42, 0x07110d, 0.44).setStrokeStyle(1, 0x6fcfb8, 0.34).setDepth(79);
-    this.hudRunText = this.add.text(runPanelX - 86, 43, "", {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "15px",
+    // ── 中区：内力分段条 ──
+    const innerBarCenterX = HUD_INNER_BAR_X + HUD_INNER_BAR_WIDTH / 2;
+    this.innerPowerLabel = this.add.text(HUD_INNER_BAR_X, HUD_LABEL_Y, "内力", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "11px"
+    }).setOrigin(0, 0.5).setDepth(HUD_DEPTH_CONTENT).setResolution(2);
+    this.innerPowerSlot = this.add.rectangle(innerBarCenterX, HUD_INNER_BAR_Y, HUD_INNER_BAR_WIDTH, HUD_INNER_BAR_HEIGHT, 0x070807, 0.88)
+      .setDepth(HUD_DEPTH_CONTENT);
+    this.innerPowerFill = this.add.rectangle(
+      HUD_INNER_BAR_X + 1, HUD_INNER_BAR_Y,
+      0, HUD_INNER_BAR_HEIGHT - 2,
+      PALETTE.innerPower, 0.92
+    ).setOrigin(0, 0.5).setDepth(HUD_DEPTH_TEXT);
+    this.innerPowerTicks = this.add.graphics().setDepth(HUD_DEPTH_TEXT);
+    this.innerPowerBorder = this.add.rectangle(innerBarCenterX, HUD_INNER_BAR_Y, HUD_INNER_BAR_WIDTH + 2, HUD_INNER_BAR_HEIGHT + 2)
+      .setFillStyle(0x000000, 0)
+      .setStrokeStyle(1, PALETTE.legacyGold, 0.82)
+      .setDepth(HUD_DEPTH_TEXT);
+    this.innerPowerText = this.add.text(HUD_INNER_VALUE_X, HUD_INNER_BAR_Y, "", {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_MONO,
+      fontSize: "13px",
       fontStyle: "bold",
-      stroke: "#07110d",
-      strokeThickness: 2,
-      lineSpacing: 2
-    }).setOrigin(0, 0.5).setDepth(81);
-    createHudPauseButton(this, this.scale.width - 54, 48, () => this.openPause());
+      stroke: "#101010",
+      strokeThickness: 2
+    }).setOrigin(0, 0.5).setDepth(HUD_DEPTH_CONTENT).setResolution(2);
+
+    // ── 右区：时间 / 击杀 / 暂停按钮 ──
+    this.add.text(HUD_TIME_X, HUD_LABEL_Y, "时间", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "11px"
+    }).setOrigin(0, 0.5).setDepth(HUD_DEPTH_CONTENT).setResolution(2);
+    this.hudTimeText = this.add.text(HUD_TIME_X, HUD_VALUE_Y, "0:00", {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_MONO,
+      fontSize: "16px",
+      fontStyle: "bold",
+      stroke: "#101010",
+      strokeThickness: 2
+    }).setOrigin(0, 0.5).setDepth(HUD_DEPTH_CONTENT).setResolution(2);
+    this.add.text(HUD_KILLS_X, HUD_LABEL_Y, "击杀", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "11px"
+    }).setOrigin(0, 0.5).setDepth(HUD_DEPTH_CONTENT).setResolution(2);
+    this.hudKillsText = this.add.text(HUD_KILLS_X, HUD_VALUE_Y, "0", {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_MONO,
+      fontSize: "16px",
+      fontStyle: "bold",
+      stroke: "#101010",
+      strokeThickness: 2
+    }).setOrigin(0, 0.5).setDepth(HUD_DEPTH_CONTENT).setResolution(2);
+    createHudPauseButton(this, stageWidth - 36, stripCenterY, () => this.openPause());
+
     this.drawSkillSlots();
     this.drawBossHud();
     this.screenDamageEdges = createDamageEdgeFlash(this);
@@ -447,16 +1240,24 @@ export class GameScene extends Phaser.Scene {
 
   private updateHud(): void {
     const health = this.getHealthSnapshot();
-    const healthFillWidth = Math.round(HUD_HEALTH_FILL_MAX_WIDTH * Phaser.Math.Clamp(health.hpRatio, 0, 1));
-    this.hudHealthFill?.setDisplaySize(healthFillWidth, 12);
-    this.hudHealthFill?.setFillStyle(health.isLowHp ? 0xd95a4f : 0x5fd27a, 1);
+    const healthFillWidth = Math.round((HUD_HEALTH_BAR_WIDTH - 2) * Phaser.Math.Clamp(health.hpRatio, 0, 1));
+    this.hudHealthFill?.setDisplaySize(healthFillWidth, HUD_HEALTH_BAR_HEIGHT - 2);
+    this.hudHealthFill?.setFillStyle(health.isLowHp ? PALETTE.lowHp : PALETTE.hp, 1);
     this.hudHealthGlow?.setAlpha(health.isLowHp ? 0.28 + Math.sin(this.elapsedMs / 90) * 0.1 : 0);
-    this.hudStatsText?.setColor(health.isLowHp ? "#ffb5a8" : "#f7f0d0");
-    this.hudStatsText?.setText(`${health.hp}/${health.maxHp}  等级 ${this.heroLevel}`);
+    this.hudHealthText?.setColor(health.isLowHp ? PALETTE.lowHpCss : PALETTE.textPrimary);
+    this.hudHealthText?.setText(`${health.hp}/${health.maxHp}`);
+    this.hudLevelText?.setText(`${this.heroLevel}`);
+
     const progression = this.getProgressionSnapshot();
-    this.innerPowerText?.setText(`内力 ${this.innerPower}`);
-    this.innerPowerFill?.setDisplaySize(Math.round(372 * Phaser.Math.Clamp(progression.innerPowerRatio, 0, 1)), 14);
-    this.hudRunText?.setText(`时间 ${formatSeconds(this.getElapsedSeconds())}\n击杀 ${this.kills}`);
+    this.innerPowerFill?.setDisplaySize(
+      Math.round((HUD_INNER_BAR_WIDTH - 2) * Phaser.Math.Clamp(progression.innerPowerRatio, 0, 1)),
+      HUD_INNER_BAR_HEIGHT - 2
+    );
+    this.innerPowerText?.setText(this.innerPower);
+    this.updateInnerPowerTicks(progression.nextRequired);
+
+    this.hudTimeText?.setText(formatSeconds(this.getElapsedSeconds()));
+    this.hudKillsText?.setText(`${this.kills}`);
     this.updateSkillSlots();
     const hudEventKey = `${health.hp}/${health.maxHp}/${this.heroLevel}/${this.getElapsedSeconds()}`;
     if (hudEventKey !== this.lastHudEventKey) {
@@ -470,34 +1271,68 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** 按最大内力画 tick 分隔（段数变化时才重绘，避免每帧 clear） */
+  private updateInnerPowerTicks(nextRequired: number): void {
+    const segments = Phaser.Math.Clamp(Math.round(nextRequired), 1, 60);
+    if (!this.innerPowerTicks || segments === this.innerPowerTickMax) {
+      return;
+    }
+    this.innerPowerTickMax = segments;
+    const graphics = this.innerPowerTicks;
+    graphics.clear();
+    if (segments <= 1) {
+      return;
+    }
+    graphics.lineStyle(1, 0x0a0f0c, 0.72);
+    const top = HUD_INNER_BAR_Y - HUD_INNER_BAR_HEIGHT / 2;
+    const bottom = HUD_INNER_BAR_Y + HUD_INNER_BAR_HEIGHT / 2;
+    for (let index = 1; index < segments; index += 1) {
+      const x = HUD_INNER_BAR_X + (HUD_INNER_BAR_WIDTH * index) / segments;
+      graphics.lineBetween(x, top, x, bottom);
+    }
+  }
+
   private drawBossHud(): void {
     const centerX = this.scale.width / 2;
-    const y = 104;
-    const width = Phaser.Math.Clamp(this.scale.width - 280, 280, 460);
-    this.bossHudBack = this.add.rectangle(centerX, y, width, 34, 0x1d0d0b, 0.88)
-      .setStrokeStyle(2, 0xd6a15e, 0.86)
-      .setDepth(82)
+    const width = BOSS_BAR_WIDTH;
+    this.bossHudBack = this.add.rectangle(centerX, BOSS_BAR_Y, width, 18, 0x1d0d0b, 0.9)
+      .setStrokeStyle(1, PALETTE.legacyGold, 0.86)
+      .setDepth(HUD_DEPTH_STRIP)
       .setVisible(false);
-    this.bossHudFill = this.add.rectangle(centerX - width / 2 + 4, y, width - 8, 22, 0xb83a2f, 0.95)
+    this.bossHudFill = this.add.rectangle(centerX - width / 2 + 2, BOSS_BAR_Y, width - 4, 12, PALETTE.cinnabar, 0.95)
       .setOrigin(0, 0.5)
-      .setDepth(83)
+      .setDepth(HUD_DEPTH_CONTENT)
       .setVisible(false);
-    this.bossHudText = this.add.text(centerX, y - 1, "", {
+    this.bossHudText = this.add.text(centerX, BOSS_BAR_Y - 1, "", {
       color: "#fff1c7",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "16px",
+      fontFamily: FONT_TITLE,
+      fontSize: "14px",
       fontStyle: "bold"
-    }).setOrigin(0.5).setDepth(84).setVisible(false);
-    this.bossHudTip = this.add.text(centerX, y + 28, "", {
-      color: "#ffd37a",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "13px"
-    }).setOrigin(0.5).setDepth(84).setVisible(false);
+    }).setOrigin(0.5).setDepth(HUD_DEPTH_TEXT).setVisible(false).setResolution(2);
+    this.bossHudText.setStroke("#101010", 4);
+    this.bossHudTip = this.add.text(centerX, BOSS_BAR_Y + 22, "", {
+      color: PALETTE.accentGoldCss,
+      fontFamily: FONT_BODY,
+      fontSize: "13px",
+      stroke: "#101010",
+      strokeThickness: 2
+    }).setOrigin(0.5).setDepth(HUD_DEPTH_TEXT).setVisible(false).setResolution(2);
   }
 
   private updateBossHud(): void {
     const boss = this.getBossSnapshot();
     const visible = boss.state !== "pending" && boss.state !== "cleared";
+    this.setBossDim(visible && boss.state !== "dead");
+    // 色温叙事：Boss 出场压暗泛朱砂，死亡/清场后 1.2s 回落。
+    this.bossTintActive = visible && boss.state !== "dead";
+    this.refreshNarrativeAlert();
+    // Boss 战期间 Boss 血条接管顶部视觉重心，内力区让位隐藏。
+    this.innerPowerLabel?.setVisible(!visible);
+    this.innerPowerSlot?.setVisible(!visible);
+    this.innerPowerBorder?.setVisible(!visible);
+    this.innerPowerFill?.setVisible(!visible);
+    this.innerPowerText?.setVisible(!visible);
+    this.innerPowerTicks?.setVisible(!visible);
     this.bossHudBack?.setVisible(visible);
     this.bossHudFill?.setVisible(visible);
     this.bossHudText?.setVisible(visible);
@@ -506,10 +1341,10 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const fullWidth = Math.max(0, this.bossHudBack.displayWidth - 8);
+    const fullWidth = Math.max(0, this.bossHudBack.displayWidth - 4);
     const ratio = Phaser.Math.Clamp(boss.hpPercent / 100, 0, 1);
-    this.bossHudFill.setDisplaySize(Math.round(fullWidth * ratio), 22);
-    this.bossHudFill.setFillStyle(boss.hpPercent <= 25 ? 0xf05a43 : 0xb83a2f, 0.95);
+    this.bossHudFill.setDisplaySize(Math.round(fullWidth * ratio), 12);
+    this.bossHudFill.setFillStyle(boss.hpPercent <= 25 ? PALETTE.lowHp : PALETTE.cinnabar, 0.95);
     this.bossHudText?.setText(`黑风寨主  ${boss.hp}/${boss.maxHp}`);
     const attackLabel = boss.currentAttack === "charge_slash"
       ? "冲撞斩"
@@ -524,8 +1359,8 @@ export class GameScene extends Phaser.Scene {
     this.stageScrollY += movement.deltaY;
 
     if (this.groundTile) {
-      this.groundTile.tilePositionX = this.stageScrollX * 0.38;
-      this.groundTile.tilePositionY = this.stageScrollY * 0.38;
+      this.groundTile.tilePositionX = this.stageScrollX;
+      this.groundTile.tilePositionY = this.stageScrollY;
     }
 
     if (this.roadTile) {
@@ -534,14 +1369,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.roadAccentTile) {
-      this.roadAccentTile.tilePositionX = 420 + this.stageScrollX * 0.84;
-      this.roadAccentTile.tilePositionY = 128 + this.stageScrollY * 0.84;
+      this.roadAccentTile.tilePositionX = 420 + this.stageScrollX * 0.9;
+      this.roadAccentTile.tilePositionY = 128 + this.stageScrollY * 0.9;
     }
 
-    for (const prop of this.backgroundProps) {
-      prop.image.x = Phaser.Math.Wrap(prop.baseX - this.stageScrollX * prop.parallaxX, -prop.marginX, this.scale.width + prop.marginX);
-      prop.image.y = Phaser.Math.Wrap(prop.baseY - this.stageScrollY * prop.parallaxY, -prop.marginY, this.scale.height + prop.marginY);
-    }
+    this.refreshPropScatter();
   }
 
   private updateHeroView(movement: HeroMovementSnapshot): void {
@@ -600,17 +1432,51 @@ export class GameScene extends Phaser.Scene {
     this.footHpBack?.setVisible(visible);
     this.footHpFill?.setVisible(visible);
     this.footHpFill?.setDisplaySize(Math.max(0, Math.round(54 * Phaser.Math.Clamp(health.hpRatio, 0, 1))), 4);
-    this.footHpFill?.setFillStyle(health.isLowHp ? 0xd95a4f : 0x5fd27a, 1);
+    this.footHpFill?.setFillStyle(health.isLowHp ? PALETTE.lowHp : PALETTE.hp, 1);
 
+    if (health.isLowHp !== this.wasLowHp) {
+      this.wasLowHp = health.isLowHp;
+      (getAudioSystem(this) as any).setLowHp?.(health.isLowHp);
+      this.updateLowHpPulse(health.isLowHp);
+    }
+
+    const lowHpBreath = health.isLowHp ? 0.185 + Math.sin(this.elapsedMs / 320) * 0.065 : 0;
     for (const edge of this.screenDamageEdges) {
       if (edge.alpha > 0) {
         edge.setAlpha(Math.max(0, edge.alpha - deltaMs / 820));
       }
+      if (edge.alpha < lowHpBreath) {
+        edge.setAlpha(lowHpBreath);
+      }
     }
+
+    this.refreshVignetteDynamics();
+  }
+
+  private updateLowHpPulse(active: boolean): void {
+    if (!active) {
+      this.lowHpPulseTween?.stop();
+      this.lowHpPulseTween = undefined;
+      this.hudHealthGlow?.setScale(1);
+      return;
+    }
+    if (this.lowHpPulseTween || !this.hudHealthGlow) {
+      return;
+    }
+    // 血条本体每帧被 setDisplaySize 重置 scale，脉冲改作用于紧贴血条的辉光层。
+    this.lowHpPulseTween = this.tweens.add({
+      targets: this.hudHealthGlow,
+      scaleX: 1.04,
+      scaleY: 1.04,
+      duration: 380,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut"
+    });
   }
 
   private openPause(): void {
-    if (getScreenState(this) !== "game") {
+    if (getScreenState(this) !== "game" || this.bossEndQueued || this.deathTransitionQueued) {
       return;
     }
     getAudioSystem(this).playPlaceholder("pause_toggle");
@@ -621,32 +1487,47 @@ export class GameScene extends Phaser.Scene {
   }
 
   private openInsight(pendingInsight?: PendingInsight): void {
-    if (getScreenState(this) !== "game") {
+    if (getScreenState(this) !== "game" || this.insightOpening || this.bossEndQueued || this.deathTransitionQueued) {
       return;
     }
-    prepareScreenTransition(this, "insight");
-    eventBus.emit("insight_started", {});
-    eventBus.emit("insight_opened", {
-      levelBefore: pendingInsight?.levelBefore,
-      levelAfter: pendingInsight?.levelAfter,
-      options: pendingInsight?.options.map((option) => option.id) ?? []
+    this.insightOpening = true;
+    JuiceSystem.get(this).levelUp();
+    this.time.delayedCall(350, () => {
+      this.insightOpening = false;
+      if (getScreenState(this) !== "game") {
+        return;
+      }
+      prepareScreenTransition(this, "insight");
+      eventBus.emit("insight_started", {});
+      eventBus.emit("insight_opened", {
+        levelBefore: pendingInsight?.levelBefore,
+        levelAfter: pendingInsight?.levelAfter,
+        options: pendingInsight?.options.map((option) => option.id) ?? []
+      });
+      this.debugPanel?.update(this.createDebugSnapshot());
+      this.scene.pause(SCENE_KEYS.game);
+      this.scene.launch(SCENE_KEYS.insight, pendingInsight);
     });
-    this.debugPanel?.update(this.createDebugSnapshot());
-    this.scene.pause(SCENE_KEYS.game);
-    this.scene.launch(SCENE_KEYS.insight, pendingInsight);
   }
 
   private startDeathTransition(causeText = "血量耗尽", eventCause = "debug"): void {
-    if (getScreenState(this) !== "game") {
+    if (getScreenState(this) !== "game" || this.deathTransitionQueued || this.bossEndQueued) {
       return;
     }
+    this.deathTransitionQueued = true;
     const runSummary = this.createRunSummary("dead", causeText);
     setRunSummary(this, runSummary);
-    prepareScreenTransition(this, "death_transition");
-    eventBus.emit("death_transition_started", { cause: eventCause });
-    this.debugPanel?.update(this.createDebugSnapshot());
-    this.scene.pause(SCENE_KEYS.game);
-    this.scene.launch(SCENE_KEYS.deathTransition, { causeText, runSummary });
+    this.cameras.main.flash(200, 226, 74, 54);
+    this.time.delayedCall(420, () => {
+      if (getScreenState(this) !== "game") {
+        return;
+      }
+      prepareScreenTransition(this, "death_transition");
+      eventBus.emit("death_transition_started", { cause: eventCause });
+      this.debugPanel?.update(this.createDebugSnapshot());
+      this.scene.pause(SCENE_KEYS.game);
+      this.scene.launch(SCENE_KEYS.deathTransition, { causeText, runSummary });
+    });
   }
 
   private showResult(): void {
@@ -789,32 +1670,52 @@ export class GameScene extends Phaser.Scene {
     this.skillSlotFrames = [];
     this.skillSlotIcons = [];
     this.skillSlotTexts = [];
-    const slotSize = 72;
+    this.skillSlotKeyHints = [];
+    this.skillSlotCooldownMasks = [];
+    const slotSize = 64;
     const gap = 8;
     const totalWidth = slotSize * 4 + gap * 3;
     const startX = this.scale.width / 2 - totalWidth / 2 + slotSize / 2;
-    const y = this.scale.height - 42;
+    const y = this.scale.height - 40;
 
     for (let index = 0; index < 4; index += 1) {
       const x = startX + index * (slotSize + gap);
-      const frame = this.textures.exists("ui_hud_skill_slot")
-        ? this.add.image(x, y, "ui_hud_skill_slot").setDisplaySize(slotSize, slotSize).setDepth(80)
+      const frame = this.textures.exists("ui_skill_slot_frame")
+        ? this.add.image(x, y, "ui_skill_slot_frame").setDisplaySize(slotSize, slotSize).setDepth(HUD_DEPTH_CONTENT)
         : this.add.rectangle(x, y, slotSize, slotSize, 0x11140f, 0.68)
           .setStrokeStyle(1, 0xd6c28d, 0.62)
-          .setDepth(80);
+          .setDepth(HUD_DEPTH_CONTENT);
       const initialIconAssetId = getFirstExistingHudSkillIconAssetId(this);
       const icon = initialIconAssetId
-        ? this.add.image(x, y - 8, initialIconAssetId).setDisplaySize(34, 34).setDepth(81).setVisible(false)
+        ? this.add.image(x, y - 4, initialIconAssetId).setDisplaySize(44, 44).setDepth(HUD_DEPTH_TEXT).setVisible(false)
         : undefined;
-      const text = this.add.text(x, y + 18, `${index + 1}`, {
-        color: "#b8c8ba",
-        fontFamily: "system-ui, sans-serif",
-        fontSize: "12px",
-        fontStyle: "bold"
-      }).setOrigin(0.5).setDepth(81).setAlign("center");
+      // 冷却高度遮罩：自底向上的半透明暗色矩形，比例为 0 时隐藏。
+      // 注：SkillSlotSnapshot 目前不携带冷却数据，接口预留，updateSkillSlots 中恒为就绪态。
+      const cooldownMask = this.add.rectangle(x, y + slotSize / 2 - 4, slotSize - 8, 0, 0x050705, 0.62)
+        .setOrigin(0.5, 1)
+        .setDepth(HUD_DEPTH_TEXT)
+        .setVisible(false);
+      const text = this.add.text(x, y + 21, "", {
+        color: PALETTE.textSecondary,
+        fontFamily: FONT_MONO,
+        fontSize: "10px",
+        fontStyle: "bold",
+        stroke: "#101010",
+        strokeThickness: 2
+      }).setOrigin(0.5).setDepth(HUD_DEPTH_TEXT).setAlign("center").setResolution(2);
+      const keyHint = this.add.text(x - slotSize / 2 + 8, y - slotSize / 2 + 8, `${index + 1}`, {
+        color: PALETTE.textSecondary,
+        fontFamily: FONT_MONO,
+        fontSize: "10px",
+        fontStyle: "bold",
+        stroke: "#101010",
+        strokeThickness: 2
+      }).setOrigin(0.5).setDepth(HUD_DEPTH_TEXT).setResolution(2);
       this.skillSlotFrames.push(frame);
       this.skillSlotIcons.push(icon);
       this.skillSlotTexts.push(text);
+      this.skillSlotKeyHints.push(keyHint);
+      this.skillSlotCooldownMasks.push(cooldownMask);
     }
   }
 
@@ -824,24 +1725,27 @@ export class GameScene extends Phaser.Scene {
       const frame = this.skillSlotFrames[index];
       const icon = this.skillSlotIcons[index];
       const text = this.skillSlotTexts[index];
+      const cooldownMask = this.skillSlotCooldownMasks[index];
       const slot = slots[index];
+      // SkillSlotSnapshot 暂无冷却字段，遮罩恒隐藏（接口已就位）。
+      cooldownMask?.setVisible(false).setDisplaySize(56, 0);
       if (!slot) {
         setSkillSlotFrameState(frame, false, false);
         icon?.setVisible(false);
-        text?.setColor("#6f7f74");
-        text?.setText(`${index + 1}`);
+        text?.setColor(PALETTE.textSecondary);
+        text?.setText("");
         continue;
       }
 
       setSkillSlotFrameState(frame, true, slot.advanced);
       const iconAssetId = getHudSkillIconAssetId(slot.skillId, slot.advanced);
       if (icon && this.textures.exists(iconAssetId)) {
-        icon.setTexture(iconAssetId).setDisplaySize(34, 34).setVisible(true);
+        icon.setTexture(iconAssetId).setDisplaySize(44, 44).setVisible(true);
       } else {
         icon?.setVisible(false);
       }
-      text?.setColor(slot.advanced ? "#fff1a8" : "#f7f0d0");
-      text?.setText(`${getShortSkillName(slot.displayName)}\nLv${slot.level}`);
+      text?.setColor(slot.advanced ? "#fff1a8" : PALETTE.textPrimary);
+      text?.setText(`${getShortSkillName(slot.displayName)} Lv${slot.level}`);
     }
   }
 
@@ -1050,7 +1954,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     getAudioSystem(this).playPlaceholder("hero_hurt");
+    JuiceSystem.get(this).heroHurt();
     this.showHeroHurtFlash();
+    // 重击（单次掉血 >20% 上限）追加全屏压暗聚焦。
+    if (amount >= this.getHealthSnapshot().maxHp * heavyHitFocusConfig.thresholdRatio) {
+      this.showHeavyHitFocus();
+    }
     for (const edge of this.screenDamageEdges) {
       edge.setAlpha(0.3);
     }
@@ -1099,20 +2008,47 @@ export class GameScene extends Phaser.Scene {
   private handleEnemyKilled(result: Parameters<ProgressionSystem["spawnFromEnemyKill"]>[0]): void {
     this.kills += 1;
     this.progressionSystem?.spawnFromEnemyKill(result);
+    this.checkKillMilestone();
+  }
+
+  private checkKillMilestone(): void {
+    const milestone = KILL_MILESTONES.find((entry) => entry.count === this.kills);
+    if (!milestone || this.killMilestonesHit.has(milestone.count)) {
+      return;
+    }
+    this.killMilestonesHit.add(milestone.count);
+    const killsText = this.hudKillsText;
+    if (killsText) {
+      this.tweens.killTweensOf(killsText);
+      killsText.setScale(1);
+      this.tweens.add({
+        targets: killsText,
+        scale: 1.4,
+        duration: 140,
+        ease: "Back.easeOut",
+        yoyo: true
+      });
+    }
+    JuiceSystem.get(this).damageNumber(this.scale.width - 154, 72, milestone.label, "gold");
   }
 
   private handleBossDefeated(_summary: BossDefeatSummary): void {
-    if (getScreenState(this) !== "game") {
+    if (getScreenState(this) !== "game" || this.bossEndQueued) {
       return;
     }
+    this.bossEndQueued = true;
     const runSummary = this.createRunSummary("win", undefined, {
       bossDefeated: true
     });
     setRunSummary(this, runSummary);
-    prepareScreenTransition(this, "result");
+    JuiceSystem.get(this).bossDeath();
+    this.setBossDim(false);
     this.debugPanel?.update(this.createDebugSnapshot());
-    this.scene.stop(SCENE_KEYS.game);
-    this.scene.start(SCENE_KEYS.result, runSummary);
+    this.time.delayedCall(520, () => {
+      prepareScreenTransition(this, "result");
+      this.scene.stop(SCENE_KEYS.game);
+      this.scene.start(SCENE_KEYS.result, runSummary);
+    });
   }
 
   private syncProgressionSnapshot(): void {
@@ -1181,7 +2117,7 @@ export class GameScene extends Phaser.Scene {
       const ground = this.textures.createCanvas("qingshi_ground_tile", 512, 512);
       const context = ground?.getContext();
       if (ground && context) {
-        context.fillStyle = "#33483e";
+        context.fillStyle = PALETTE.worldBg;
         context.fillRect(0, 0, 512, 512);
         context.fillStyle = "rgba(216, 234, 217, 0.08)";
         for (let index = 0; index < 80; index += 1) {
@@ -1249,10 +2185,10 @@ function createDamageEdgeFlash(scene: Phaser.Scene): Phaser.GameObjects.Rectangl
   const height = scene.scale.height;
   const thickness = 56;
   const edges = [
-    scene.add.rectangle(width / 2, thickness / 2, width, thickness, 0x7d1616, 0),
-    scene.add.rectangle(width / 2, height - thickness / 2, width, thickness, 0x7d1616, 0),
-    scene.add.rectangle(thickness / 2, height / 2, thickness, height, 0x7d1616, 0),
-    scene.add.rectangle(width - thickness / 2, height / 2, thickness, height, 0x7d1616, 0)
+    scene.add.rectangle(width / 2, thickness / 2, width, thickness, PALETTE.cinnabar, 0),
+    scene.add.rectangle(width / 2, height - thickness / 2, width, thickness, PALETTE.cinnabar, 0),
+    scene.add.rectangle(thickness / 2, height / 2, thickness, height, PALETTE.cinnabar, 0),
+    scene.add.rectangle(width - thickness / 2, height / 2, thickness, height, PALETTE.cinnabar, 0)
   ];
 
   for (const edge of edges) {
@@ -1263,30 +2199,33 @@ function createDamageEdgeFlash(scene: Phaser.Scene): Phaser.GameObjects.Rectangl
   return edges;
 }
 
-function createHudPauseButton(scene: Phaser.Scene, x: number, y: number, onClick: () => void): void {
+function createHudPauseButton(scene: Phaser.Scene, x: number, y: number, onClick: () => void, size = 34): void {
   if (scene.textures.exists("ui_icon_pause")) {
-    const icon = scene.add.image(x, y, "ui_icon_pause").setDisplaySize(54, 54).setDepth(83);
-    const hitArea = scene.add.rectangle(x, y, 78, 70, 0x000000, 0).setDepth(84);
+    const baseScale = size / 96;
+    const icon = scene.add.image(x, y, "ui_icon_pause").setDisplaySize(size, size).setDepth(HUD_DEPTH_CONTENT);
+    const hitArea = scene.add.rectangle(x, y, size + 26, size + 18, 0x000000, 0).setDepth(HUD_DEPTH_TEXT);
     hitArea.setInteractive({ useHandCursor: true });
-    hitArea.on(Phaser.Input.Events.POINTER_OVER, () => icon.setScale(0.6));
-    hitArea.on(Phaser.Input.Events.POINTER_OUT, () => icon.setScale(54 / 96));
+    hitArea.on(Phaser.Input.Events.POINTER_OVER, () => icon.setScale(baseScale * 1.08));
+    hitArea.on(Phaser.Input.Events.POINTER_OUT, () => icon.setScale(baseScale));
     hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      icon.setScale(0.54);
+      icon.setScale(baseScale * 0.94);
       onClick();
     });
-    hitArea.on(Phaser.Input.Events.POINTER_UP, () => icon.setScale(0.6));
+    hitArea.on(Phaser.Input.Events.POINTER_UP, () => icon.setScale(baseScale * 1.08));
     return;
   }
 
-  const background = scene.add.rectangle(x, y, 84, 72, 0x2f5b4f, 0.95)
+  const background = scene.add.rectangle(x, y, 40, 34, 0x2f5b4f, 0.95)
     .setStrokeStyle(2, 0xd6c28d, 0.9)
-    .setDepth(82);
-  scene.add.text(x, y, "暂停", {
-    color: "#f7f0d0",
-    fontFamily: "system-ui, sans-serif",
-    fontSize: "18px",
-    fontStyle: "bold"
-  }).setOrigin(0.5).setDepth(83);
+    .setDepth(HUD_DEPTH_CONTENT);
+  scene.add.text(x, y, "II", {
+    color: PALETTE.textPrimary,
+    fontFamily: FONT_MONO,
+    fontSize: "16px",
+    fontStyle: "bold",
+    stroke: "#101010",
+    strokeThickness: 3
+  }).setOrigin(0.5).setDepth(HUD_DEPTH_TEXT).setResolution(2);
   background.setInteractive({ useHandCursor: true });
   background.on(Phaser.Input.Events.POINTER_OVER, () => background.setFillStyle(0x3a6f61, 1));
   background.on(Phaser.Input.Events.POINTER_OUT, () => background.setFillStyle(0x2f5b4f, 0.95));
@@ -1484,15 +2423,13 @@ function setSkillSlotFrameState(
   }
 
   if (frame instanceof Phaser.GameObjects.Image) {
-    const textureKey = advanced && frame.scene.textures.exists("ui_hud_skill_slot_advanced")
-      ? "ui_hud_skill_slot_advanced"
-      : "ui_hud_skill_slot";
     frame
-      .setTexture(textureKey)
-      .setDisplaySize(72, 72)
-      .setAlpha(occupied ? 1 : 0.58);
-    if (advanced && textureKey === "ui_hud_skill_slot") {
-      frame.setTint(0xfff0a4);
+      .setTexture("ui_skill_slot_frame")
+      .setDisplaySize(64, 64)
+      .setAlpha(occupied ? 1 : 0.55);
+    // 进阶槽：沿用金色 tint 框判定（新槽框无独立进阶贴图，统一 tint）
+    if (advanced && occupied) {
+      frame.setTint(0xffd977);
     } else {
       frame.clearTint();
     }
@@ -1507,4 +2444,47 @@ function isAdvanceKeyId(value: string): value is AdvanceKeyId {
   return value === "sword_manual_page"
     || value === "hidden_weapon_pouch"
     || value === "inner_force_manual";
+}
+
+const KILL_MILESTONES: Array<{ count: number; label: string }> = [
+  { count: 50, label: "五十杀！" },
+  { count: 100, label: "百杀！" },
+  { count: 200, label: "两百杀！" }
+];
+
+const SCATTER_PROP_BASE: Record<string, { depth: number; alpha: number; scale: number }> = {
+  bamboo_edge_cluster: { depth: -22, alpha: 0.5, scale: 0.74 },
+  rock_cluster: { depth: -21, alpha: 0.52, scale: 0.6 },
+  wood_stake_flag: { depth: -21, alpha: 0.48, scale: 0.62 },
+  decor_lantern: { depth: -21, alpha: 0.6, scale: 0.9 },
+  decor_flag: { depth: -21, alpha: 0.58, scale: 0.9 },
+  decor_stele: { depth: -21, alpha: 0.6, scale: 0.88 },
+  decor_winejar: { depth: -21, alpha: 0.6, scale: 0.85 }
+};
+
+// 种子散布类型池：竹丛/石堆为主，4 个 P3 新装饰物各占 8% 低权重点缀
+const SCATTER_PROP_POOL: Array<{ key: keyof typeof SCATTER_PROP_BASE; weight: number }> = [
+  { key: "bamboo_edge_cluster", weight: 0.32 },
+  { key: "rock_cluster", weight: 0.24 },
+  { key: "wood_stake_flag", weight: 0.12 },
+  { key: "decor_lantern", weight: 0.08 },
+  { key: "decor_flag", weight: 0.08 },
+  { key: "decor_stele", weight: 0.08 },
+  { key: "decor_winejar", weight: 0.08 }
+];
+
+function hashScatterSlot(slotI: number, slotJ: number): number {
+  let hash = (Math.imul(slotI, 374761393) + Math.imul(slotJ, 668265263)) | 0;
+  hash = Math.imul(hash ^ (hash >>> 13), 1274126177);
+  return (hash ^ (hash >>> 16)) >>> 0;
+}
+
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let value = Math.imul(state ^ (state >>> 15), 1 | state);
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
 }

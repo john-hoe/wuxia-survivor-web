@@ -1,10 +1,20 @@
 import Phaser from "phaser";
-import { createArtPanel, getSafePanelWidth } from "../ui/ArtPanel";
-import { createIconButton, createTextButton } from "../ui/UiButton";
+import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle } from "../ui/minimalTheme";
+import { fadeIn } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getAudioSystem } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
 import { SCENE_KEYS } from "./sceneKeys";
+
+/**
+ * 方向 C「极简碑林」：去面板化，四行大字距衬线菜单浮于压暗的游戏画面之上。
+ * 氛围底 / 书法标题 / 菜单行（含 hover 笔触下划线）由共享 minimalTheme 模块统一绘制。
+ */
+const TITLE_Y = 86;
+const FIRST_ROW_Y = 206;
+const MENU_ROW_GAP = 62;
+const MENU_FONT_SIZE = 26;
+const STAGGER_MS = 80;
 
 export class PauseScene extends Phaser.Scene {
   constructor() {
@@ -13,45 +23,77 @@ export class PauseScene extends Phaser.Scene {
 
   create(): void {
     enterScreen(this, "pause");
-    this.add.rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width, this.scale.height, 0x050705, 0.72);
-    createArtPanel(this, "ui_panel_pause", this.scale.width / 2, this.scale.height / 2 + 18, getSafePanelWidth(this, 560), 464, 0x18251f, 0.96);
-    this.add.text(this.scale.width / 2, 133, "暂停", {
-      color: "#f7f0d0",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "36px",
-      fontStyle: "bold"
-    }).setOrigin(0.5);
-    createIconButton(this, this.scale.width / 2 + 194, 133, "ui_icon_restart", () => {
-      getAudioSystem(this).playPlaceholder("ui_click");
-      this.scene.stop(SCENE_KEYS.pause);
-      this.scene.stop(SCENE_KEYS.game);
-      this.scene.start(SCENE_KEYS.game);
-    });
-    createIconButton(this, this.scale.width / 2 + 250, 133, "ui_icon_home", () => {
-      getAudioSystem(this).playPlaceholder("ui_click");
-      this.scene.stop(SCENE_KEYS.pause);
-      this.scene.stop(SCENE_KEYS.game);
-      this.scene.start(SCENE_KEYS.menu);
+    const centerX = this.scale.width / 2;
+    const centerY = this.scale.height / 2;
+
+    // 半透明墨底压暗游戏画面（暂停语义，保留在氛围底之下）
+    this.add.rectangle(centerX, centerY, this.scale.width, this.scale.height, 0x050705, 0.66);
+    addMinimalBackdrop(this);
+    addMinimalTitle(this, "暂停", TITLE_Y, 46, "歇");
+
+    const rows: Array<{ label: string; highlight?: boolean; onClick: () => void }> = [
+      { label: "继续", highlight: true, onClick: () => this.resumeGame() },
+      {
+        label: "重新开始",
+        onClick: () => {
+          getAudioSystem(this).playPlaceholder("ui_click");
+          this.fadeOutThen(() => {
+            this.scene.stop(SCENE_KEYS.pause);
+            this.scene.stop(SCENE_KEYS.game);
+            this.scene.start(SCENE_KEYS.game);
+          });
+        }
+      },
+      {
+        label: "回主菜单",
+        onClick: () => {
+          getAudioSystem(this).playPlaceholder("ui_click");
+          this.fadeOutThen(() => {
+            this.scene.stop(SCENE_KEYS.pause);
+            this.scene.stop(SCENE_KEYS.game);
+            this.scene.start(SCENE_KEYS.menu);
+          });
+        }
+      },
+      {
+        label: "设置",
+        onClick: () => {
+          getAudioSystem(this).playPlaceholder("ui_click");
+          this.scene.launch(SCENE_KEYS.settings, { returnTo: "pause" });
+          this.scene.pause(SCENE_KEYS.pause);
+        }
+      }
+    ];
+
+    // 行入场 stagger：alpha 0→1、y+10→y，逐行延迟 80ms
+    rows.forEach((row, index) => {
+      const targetY = FIRST_ROW_Y + index * MENU_ROW_GAP;
+      const handle = addMinimalMenuRow(this, centerX, targetY + 10, row.label, row.onClick, {
+        highlight: row.highlight,
+        fontSize: MENU_FONT_SIZE
+      });
+      handle.container.setAlpha(0);
+      this.tweens.add({
+        targets: handle.container,
+        alpha: 1,
+        y: targetY,
+        duration: 220,
+        delay: index * STAGGER_MS,
+        ease: Phaser.Math.Easing.Quadratic.Out
+      });
     });
 
-    createTextButton(this, this.scale.width / 2, 235, "继续", () => this.resumeGame(), 300, 64);
-    createTextButton(this, this.scale.width / 2, 298, "重新开始", () => {
-      getAudioSystem(this).playPlaceholder("ui_click");
-      this.scene.stop(SCENE_KEYS.pause);
-      this.scene.stop(SCENE_KEYS.game);
-      this.scene.start(SCENE_KEYS.game);
-    }, 300, 64);
-    createTextButton(this, this.scale.width / 2, 361, "回主菜单", () => {
-      getAudioSystem(this).playPlaceholder("ui_click");
-      this.scene.stop(SCENE_KEYS.pause);
-      this.scene.stop(SCENE_KEYS.game);
-      this.scene.start(SCENE_KEYS.menu);
-    }, 300, 64);
-    createTextButton(this, this.scale.width / 2, 424, "设置", () => {
-      getAudioSystem(this).playPlaceholder("ui_click");
-      this.scene.launch(SCENE_KEYS.settings, { returnTo: "pause" });
-      this.scene.pause(SCENE_KEYS.pause);
-    }, 300, 64);
+    fadeIn(this);
+  }
+
+  /**
+   * 暂停层的 stop+start 语义不能直接用 transitionTo：
+   * 先淡出本场景相机，淡出完成后再 stop 并 start 目标场景。
+   */
+  private fadeOutThen(action: () => void): void {
+    const camera = this.cameras.main;
+    camera.fadeOut(180, 10, 10, 10);
+    camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, action);
   }
 
   private resumeGame(): void {

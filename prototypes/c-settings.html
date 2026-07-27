@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>设置 · 方向C 极简碑林</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#0a0f0c;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .frame {
+    position:relative; width:960px; height:540px; overflow:hidden;
+    background:#0d130e;
+    box-shadow:0 0 0 1px rgba(255,255,255,.05), 0 24px 80px rgba(0,0,0,.6);
+  }
+  /* ---------- 场景层 ---------- */
+  .scene { position:absolute; inset:0; }
+  .sky {
+    position:absolute; inset:0;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #18241b 0%, #101a13 46%, #0a100c 100%);
+  }
+  .gate {
+    position:absolute; left:50%; top:64px; width:600px;
+    transform:translateX(-50%);
+    opacity:.85; filter:brightness(1.75);
+  }
+  .bamboo { position:absolute; bottom:-24px; height:560px; filter:brightness(.8); }
+  .bamboo.l { left:-218px; }
+  .bamboo.r { right:-218px; transform:scaleX(-1); }
+  .bamboo.l2 { left:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); }
+  .bamboo.r2 { right:-150px; height:410px; bottom:-36px; opacity:.35; filter:brightness(.6); transform:scaleX(-1); }
+  .veil { position:absolute; inset:0; background:rgba(7,12,9,.65); }
+  .mist {
+    position:absolute; left:0; right:0; bottom:0; height:36%;
+    background:linear-gradient(to top, rgba(238,241,234,.085) 0%, rgba(238,241,234,.03) 45%, rgba(238,241,234,0) 100%);
+  }
+  .vignette {
+    position:absolute; inset:0;
+    background:radial-gradient(90% 78% at 50% 44%, rgba(0,0,0,0) 52%, rgba(3,6,4,.55) 100%);
+  }
+  /* ---------- 内容层 ---------- */
+  .content { position:absolute; inset:0; }
+  .title-block { position:absolute; top:44px; left:0; right:0; text-align:center; }
+  h1.title {
+    display:inline-block; vertical-align:baseline;
+    font-family:"Ma Shan Zheng",cursive; font-weight:400;
+    font-size:48px; letter-spacing:.06em; color:#f4f1e6;
+    text-shadow:0 1px 2px rgba(0,0,0,.45), 0 5px 22px rgba(0,0,0,.5);
+  }
+  .seal {
+    display:inline-flex; vertical-align:baseline; margin-left:16px;
+    width:24px; height:24px; border-radius:5px;
+    background:linear-gradient(145deg,#c32323,#9c0f0f);
+    color:#fdf6ec; font-family:"Ma Shan Zheng",cursive; font-size:14px;
+    align-items:center; justify-content:center;
+    transform:rotate(-4deg) translateY(-3px);
+    box-shadow:0 1px 4px rgba(0,0,0,.55),
+      inset 0 0 0 1.5px rgba(253,246,236,.9),
+      inset 0 0 0 3px #a81212,
+      inset 0 0 7px rgba(0,0,0,.35);
+  }
+  .rows { position:absolute; top:132px; left:50%; transform:translateX(-50%); width:540px; }
+  .row {
+    height:72px; display:flex; align-items:center; justify-content:space-between;
+  }
+  .label {
+    font-family:"Noto Serif SC",serif; font-weight:600;
+    font-size:16px; letter-spacing:.3em;
+    color:rgba(240,234,216,.92);
+    text-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  /* 滑杆：2px 白 30% 细线 + 玉色小钮 */
+  .slider { display:flex; align-items:center; }
+  .track { position:relative; width:248px; height:2px; background:rgba(255,255,255,.3); border-radius:2px; }
+  .knob {
+    position:absolute; top:50%; width:13px; height:13px; border-radius:50%;
+    background:#aec6b2;
+    border:1px solid rgba(255,255,255,.55);
+    box-shadow:0 0 8px rgba(174,198,178,.45), 0 1px 3px rgba(0,0,0,.5);
+    transform:translate(-50%,-50%);
+  }
+  .val {
+    width:42px; margin-left:18px; text-align:left;
+    font-size:13px; font-weight:500; color:rgba(255,255,255,.62);
+    font-variant-numeric:tabular-nums;
+  }
+  /* 开关：极简双线胶囊 */
+  .toggle {
+    position:relative; width:46px; height:24px; border-radius:14px;
+    border:1px solid rgba(255,255,255,.35);
+  }
+  .toggle::before {
+    content:""; position:absolute; inset:3px; border-radius:10px;
+    border:1px solid rgba(255,255,255,.12);
+  }
+  .t-knob {
+    position:absolute; top:50%; left:6px; width:14px; height:14px; border-radius:50%;
+    transform:translateY(-50%);
+  }
+  .toggle.on .t-knob {
+    left:26px; background:#aec6b2;
+    box-shadow:0 0 8px rgba(174,198,178,.5), 0 1px 2px rgba(0,0,0,.5);
+  }
+  .toggle.off .t-knob {
+    left:6px; background:transparent;
+    border:1px solid rgba(255,255,255,.5);
+  }
+  .back {
+    position:absolute; left:36px; bottom:28px;
+    font-size:13px; letter-spacing:.18em;
+    color:rgba(255,255,255,.55);
+  }
+  .back span { margin-right:8px; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="scene">
+    <div class="sky"></div>
+    <img class="bamboo l2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r2" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo l" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <img class="bamboo r" src="../game/src/assets/backgrounds/bamboo_edge_cluster.png" alt="">
+    <div class="veil"></div>
+    <div class="mist"></div>
+    <div class="vignette"></div>
+  </div>
+  <div class="content">
+    <div class="title-block">
+      <h1 class="title">设置</h1><span class="seal">设</span>
+    </div>
+    <div class="rows">
+      <div class="row">
+        <div class="label">音乐</div>
+        <div class="slider">
+          <div class="track"><div class="knob" style="left:60%"></div></div>
+          <div class="val">0.6</div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="label">音效</div>
+        <div class="slider">
+          <div class="track"><div class="knob" style="left:80%"></div></div>
+          <div class="val">0.8</div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="label">静音</div>
+        <div class="toggle on"><div class="t-knob"></div></div>
+      </div>
+      <div class="row">
+        <div class="label">低特效</div>
+        <div class="toggle off"><div class="t-knob"></div></div>
+      </div>
+      <div class="row">
+        <div class="label">全屏</div>
+        <div class="toggle off"><div class="t-knob"></div></div>
+      </div>
+    </div>
+    <div class="back"><span>←</span>返回</div>
+  </div>
+</div>
+</body>
+</html>
