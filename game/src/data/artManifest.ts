@@ -1226,6 +1226,58 @@ export const artManifest: ArtManifestItem[] = [
     tags: ["background", "prop", "bamboo", "p0", "sw-art-011", "round-003", "003a"]
   },
   {
+    id: "ground_maple_base",
+    type: "background",
+    path: "backgrounds/ground_maple_base.png",
+    width: 1024,
+    height: 1024,
+    frames: 1,
+    frameRate: 0,
+    usage: "第二地图「枫叶官道」无缝夯土碎石官道地面（暖秋赭石底 + 稀疏石板 + 极少量枫红/芥金落叶）",
+    fallback: "shape",
+    required: true,
+    tags: ["background", "ground", "maple", "guandao", "map2", "p0"]
+  },
+  {
+    id: "maple_tree_cluster",
+    type: "background",
+    path: "backgrounds/maple_tree_cluster.png",
+    width: 512,
+    height: 512,
+    frames: 1,
+    frameRate: 0,
+    usage: "第二地图「枫叶官道」枫树丛（对应竹丛生态位，3/4 俯视，枫红 + 少量金橙树冠）",
+    fallback: "hidden",
+    required: false,
+    tags: ["background", "prop", "maple", "tree", "guandao", "map2", "p0"]
+  },
+  {
+    id: "decor_stone_lion",
+    type: "background",
+    path: "backgrounds/decor_stone_lion.png",
+    width: 128,
+    height: 128,
+    frames: 1,
+    frameRate: 0,
+    usage: "第二地图「枫叶官道」场景装饰 守门石狮（风化石 + 苔痕 + 底座，3/4 俯视）",
+    fallback: "shape",
+    required: true,
+    tags: ["background", "prop", "decor", "stone-lion", "guandao", "map2", "p3"]
+  },
+  {
+    id: "decor_sword_mound",
+    type: "background",
+    path: "backgrounds/decor_sword_mound.png",
+    width: 128,
+    height: 128,
+    frames: 1,
+    frameRate: 0,
+    usage: "第二地图「枫叶官道」场景装饰 断剑冢（3-5 柄锈剑插土丘，纪念感，3/4 俯视）",
+    fallback: "shape",
+    required: true,
+    tags: ["background", "prop", "decor", "sword-mound", "guandao", "map2", "p3"]
+  },
+  {
     id: "rock_cluster",
     type: "background",
     path: "backgrounds/rock_cluster.png",

@@ -1,6 +1,6 @@
 import Phaser from "phaser";
-import { heavyHitFocusConfig, narrativeTintConfig, stageConfig, stageVisualConfig, vignetteDynamicsConfig, weatherVisualConfig } from "../data/gameConfig";
-import type { WeatherKind } from "../data/gameConfig";
+import { heavyHitFocusConfig, narrativeTintConfig, stageConfig, stageMapConfig, stageVisualConfig, vignetteDynamicsConfig, weatherVisualConfig } from "../data/gameConfig";
+import type { StageMapEntry, StageMapId, WeatherKind } from "../data/gameConfig";
 import type { InsightOption, PendingInsight } from "../data/progression";
 import { isSkillId, type AdvanceKeyId, type SkillId } from "../data/skills";
 import { BossSystem, type BossDefeatSummary, type BossSystemSnapshot } from "../systems/BossSystem";
@@ -116,6 +116,12 @@ export class GameScene extends Phaser.Scene {
   private roadAccentTile?: Phaser.GameObjects.TileSprite;
   private gateImage?: Phaser.GameObjects.Image;
   private fogTile?: Phaser.GameObjects.TileSprite;
+  /** 静态暗角（drawPlaceholderStage 创建；地图切换时随地面层一起重建）。 */
+  private vignetteStatic?: Phaser.GameObjects.Image;
+  /** 当前地图 id（stageMapConfig 条目）；F2 局内切换预览时改写。 */
+  private currentMapId: StageMapId = stageMapConfig.defaultMapId;
+  /** 地图切换淡入淡出进行中：屏蔽重复 F2，避免叠化穿插。 */
+  private stageMapSwitching = false;
   private scatterProps = new Map<string, { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway }>();
   private propSlotSizePx = 256;
   private bossDimOverlay?: Phaser.GameObjects.Rectangle;
@@ -195,6 +201,9 @@ export class GameScene extends Phaser.Scene {
     this.runId = createRunId();
     this.stageScrollX = 0;
     this.stageScrollY = 0;
+    this.currentMapId = stageMapConfig.defaultMapId;
+    this.stageMapSwitching = false;
+    this.vignetteStatic = undefined;
     this.debugInsightShowcaseIndex = 0;
     this.moranCastEventSeen = false;
     this.moranKnownUnlocked = false;
@@ -240,6 +249,7 @@ export class GameScene extends Phaser.Scene {
     this.latestHealth = this.heroHealth.getSnapshot();
 
     this.drawPlaceholderStage();
+    console.debug(`[StageMap] 当前地图：${this.getCurrentStageMap().displayName} (${this.currentMapId})`);
     this.drawHero();
     this.heroMovement = new HeroMovementSystem(this, baseMoveSpeed);
     this.latestMovement = this.heroMovement.getSnapshot();
@@ -341,8 +351,10 @@ export class GameScene extends Phaser.Scene {
       const damageBoss = (): void => this.applyDebugBossDamage();
       let debugKey: Phaser.Input.Keyboard.Key | undefined;
       if (import.meta.env.DEV) {
+        const switchStageMap = (): void => this.cycleStageMapForPreview();
         debugKey = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK);
         debugKey.on("down", toggleDebug);
+        keyboard.on("keydown-F2", switchStageMap);
         keyboard.on("keydown-F3", enableP0ArtShowcase);
         keyboard.on("keydown-F4", grantMoranSkill);
         keyboard.on("keydown-F5", startInsightArtShowcase);
@@ -353,6 +365,9 @@ export class GameScene extends Phaser.Scene {
         keyboard.on("keydown-F10", healHero);
         keyboard.on("keydown-F11", spawnBoss);
         keyboard.on("keydown-F12", damageBoss);
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+          keyboard.off("keydown-F2", switchStageMap);
+        });
       }
 
       this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -513,39 +528,66 @@ export class GameScene extends Phaser.Scene {
     this.ensureStageTextures();
     this.ensureAtmosphereTextures();
     this.scatterProps.clear();
-    this.cameras.main.setBackgroundColor(PALETTE.worldBg);
     const chunkSize = getConfigLoadResult(this).config.stage.backgroundChunkSizePx;
     this.propSlotSizePx = Math.max(160, Math.floor(chunkSize / stageVisualConfig.propSlotDivisions));
-    const hasOfficialGround = this.textures.exists("ground_qingshi_base");
-    const hasOfficialRoad = this.textures.exists("road_ribbon_a");
-    const groundTexture = hasOfficialGround ? "ground_qingshi_base" : "qingshi_ground_tile";
-    const roadTexture = hasOfficialRoad ? "road_ribbon_a" : "qingshi_road_tile";
+    this.buildStageMapLayers(this.getCurrentStageMap());
+
+    // 竹雨听风：天气纹理 + 雾带加浓层 / 动态暗角 / 色温叙事 / 重击聚焦等屏幕层。
+    this.ensureWeatherTextures();
+    this.setupAtmosphereOverlays();
+
+    this.refreshPropScatter();
+  }
+
+  /** 当前地图条目（防御：配置被改坏时回落到第一张图）。 */
+  private getCurrentStageMap(): StageMapEntry {
+    return stageMapConfig.maps.find((entry) => entry.id === this.currentMapId) ?? stageMapConfig.maps[0];
+  }
+
+  /**
+   * 构建地图相关层：世界底色 / 地面平铺 / 路带（按配置）/ 山门远景 / 雾带 / 静态暗角。
+   * drawPlaceholderStage 与 F2 切换重建共用；散布物由 refreshPropScatter 另行负责。
+   */
+  private buildStageMapLayers(map: StageMapEntry): void {
     const stageWidth = this.scale.width;
     const stageHeight = this.scale.height;
+    this.cameras.main.setBackgroundColor(map.worldBg);
+
+    const hasOfficialGround = this.textures.exists(map.groundTexture);
+    const groundTexture = hasOfficialGround ? map.groundTexture : map.fallbackGroundTexture;
     this.groundTile = this.add.tileSprite(
       stageWidth / 2,
       stageHeight / 2,
       stageWidth,
       stageHeight,
       groundTexture
-    ).setDepth(-30).setAlpha(hasOfficialGround ? 0.72 : 1);
-    this.roadTile = this.add.tileSprite(
-      stageWidth / 2,
-      stageHeight / 2 + 20,
-      stageWidth + 256,
-      Math.max(stageHeight, 512),
-      roadTexture
-    ).setDepth(-25).setAlpha(hasOfficialRoad ? 0.6 : 1);
+    ).setDepth(-30).setAlpha(hasOfficialGround ? map.groundAlphaOfficial : 1);
 
-    if (this.textures.exists("road_ribbon_b")) {
-      this.roadAccentTile = this.add.tileSprite(
+    // 路带：青石山道铺设 road_ribbon_a/b；枫叶官道关闭（官道已画进地面素材）。
+    if (map.roadRibbonEnabled) {
+      const hasOfficialRoad = this.textures.exists("road_ribbon_a");
+      const roadTexture = hasOfficialRoad ? "road_ribbon_a" : "qingshi_road_tile";
+      this.roadTile = this.add.tileSprite(
         stageWidth / 2,
-        stageHeight / 2 + 12,
+        stageHeight / 2 + 20,
         stageWidth + 256,
         Math.max(stageHeight, 512),
-        "road_ribbon_b"
-      ).setDepth(-24).setAlpha(0.38);
+        roadTexture
+      ).setDepth(-25).setAlpha(hasOfficialRoad ? 0.6 : 1);
+
+      if (this.textures.exists("road_ribbon_b")) {
+        this.roadAccentTile = this.add.tileSprite(
+          stageWidth / 2,
+          stageHeight / 2 + 12,
+          stageWidth + 256,
+          Math.max(stageHeight, 512),
+          "road_ribbon_b"
+        ).setDepth(-24).setAlpha(0.38);
+      } else {
+        this.roadAccentTile = undefined;
+      }
     } else {
+      this.roadTile = undefined;
       this.roadAccentTile = undefined;
     }
 
@@ -559,7 +601,7 @@ export class GameScene extends Phaser.Scene {
       this.gateImage = undefined;
     }
 
-    // 氛围三层之二：雾带（暗角在最后铺，落叶由 JuiceSystem 负责）。
+    // 氛围三层之二：雾带（暗角在最后铺，落叶由 JuiceSystem 负责）。雾带按地图染色（白 = 不染）。
     this.fogTile = this.add.tileSprite(
       stageWidth / 2,
       stageHeight / 2,
@@ -571,17 +613,77 @@ export class GameScene extends Phaser.Scene {
       .setAlpha(stageVisualConfig.fogAlpha)
       .setScrollFactor(0)
       .setBlendMode(Phaser.BlendModes.SCREEN);
-    this.add.image(stageWidth / 2, stageHeight / 2, "atmo_vignette")
+    if (map.fogTint !== 0xffffff) {
+      this.fogTile.setTint(map.fogTint);
+    }
+    this.vignetteStatic = this.add.image(stageWidth / 2, stageHeight / 2, "atmo_vignette")
       .setDisplaySize(stageWidth, stageHeight)
       .setDepth(90)
       .setScrollFactor(0)
       .setBlendMode(Phaser.BlendModes.MULTIPLY);
+  }
 
-    // 竹雨听风：天气纹理 + 雾带加浓层 / 动态暗角 / 色温叙事 / 重击聚焦等屏幕层。
-    this.ensureWeatherTextures();
-    this.setupAtmosphereOverlays();
+  /**
+   * F2 局内切换地图（预览用）：淡出 150ms → 重建地图层 → 淡入 150ms。
+   * 只重建地面/路带/山门/雾带/静态暗角/散布/落叶 emitter；敌人/技能/时间/叙事层状态全部保留。
+   */
+  private cycleStageMapForPreview(): void {
+    if (getScreenState(this) !== "game" || this.stageMapSwitching) {
+      return;
+    }
+    const maps = stageMapConfig.maps;
+    if (maps.length < 2) {
+      return;
+    }
+    const currentIndex = Math.max(0, maps.findIndex((entry) => entry.id === this.currentMapId));
+    const next = maps[(currentIndex + 1) % maps.length];
+    this.stageMapSwitching = true;
+    const camera = this.cameras.main;
+    camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.currentMapId = next.id;
+      this.rebuildStageMapLayers();
+      console.debug(`[StageMap] 当前地图：${next.displayName} (${next.id})`);
+      camera.once(Phaser.Cameras.Scene2D.Events.FADE_IN_COMPLETE, () => {
+        this.stageMapSwitching = false;
+      });
+      camera.fadeIn(150, 0, 0, 0);
+    });
+    camera.fadeOut(150, 0, 0, 0);
+  }
 
+  /** 销毁并重建地图相关层（不触碰叙事压暗/动态暗角/重击聚焦/HUD，Boss 战氛围状态不丢）。 */
+  private rebuildStageMapLayers(): void {
+    this.groundTile?.destroy();
+    this.groundTile = undefined;
+    this.roadTile?.destroy();
+    this.roadTile = undefined;
+    this.roadAccentTile?.destroy();
+    this.roadAccentTile = undefined;
+    this.gateImage?.destroy();
+    this.gateImage = undefined;
+    this.fogTile?.destroy();
+    this.fogTile = undefined;
+    this.vignetteStatic?.destroy();
+    this.vignetteStatic = undefined;
+    this.fogBandTile?.destroy();
+    this.fogBandTile = undefined;
+    for (const prop of this.scatterProps.values()) {
+      prop.image.destroy();
+    }
+    this.scatterProps.clear();
+    // 落叶 emitter 销毁重建：起风时按新地图 tint 组重新创建。
+    this.leafEmitter?.destroy();
+    this.leafEmitter = undefined;
+
+    const map = this.getCurrentStageMap();
+    this.buildStageMapLayers(map);
+    // 附加雾带随地图重建（雾天目标透明度由下面的 setWeather 重新补间）。
+    this.createFogBandLayer(map);
     this.refreshPropScatter();
+    // 常驻落叶同步换 tint（JuiceSystem 环境层）
+    JuiceSystem.get(this).retintAmbient(map.leafTints);
+    // 重新同步天气层：雾带透明度补间 + 按当前天气重建天气 emitter（落叶换 tint）。
+    this.setWeather(this.weatherKind);
   }
 
   private ensureAtmosphereTextures(): void {
@@ -669,9 +771,10 @@ export class GameScene extends Phaser.Scene {
       return undefined;
     }
     const typeRoll = random();
-    let textureKey = SCATTER_PROP_POOL[0].key;
+    const pool = this.getCurrentStageMap().scatterPool;
+    let textureKey = pool[0]?.key ?? SCATTER_PROP_POOL[0].key;
     let cumulativeWeight = 0;
-    for (const entry of SCATTER_PROP_POOL) {
+    for (const entry of pool) {
       cumulativeWeight += entry.weight;
       if (typeRoll < cumulativeWeight) {
         textureKey = entry.key;
@@ -681,7 +784,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.textures.exists(textureKey)) {
       return undefined;
     }
-    const base = SCATTER_PROP_BASE[textureKey];
+    const base = SCATTER_PROP_BASE[textureKey] ?? { depth: -21, alpha: 0.55, scale: 0.8 };
     const worldX = slotI * slotSize + random() * slotSize;
     const worldY = slotJ * slotSize + random() * slotSize;
     const image = this.add.image(worldX - this.stageScrollX, worldY - this.stageScrollY, textureKey)
@@ -695,7 +798,7 @@ export class GameScene extends Phaser.Scene {
       const phase = random() * Math.PI * 2;
       if (textureKey === "decor_flag" || textureKey === "wood_stake_flag") {
         sway = { kind: "flag", phase, baseRotation: 0, baseScaleY: image.scaleY };
-      } else if (textureKey === "bamboo_edge_cluster") {
+      } else if (textureKey === "bamboo_edge_cluster" || textureKey === "maple_tree_cluster") {
         sway = { kind: "bamboo", phase, baseRotation: 0, baseScaleY: image.scaleY };
       } else if (textureKey === "decor_lantern") {
         sway = { kind: "lantern", phase, baseRotation: 0, baseScaleY: image.scaleY };
@@ -801,7 +904,7 @@ export class GameScene extends Phaser.Scene {
       : 0;
   }
 
-  /** 起风：在 JuiceSystem 常驻落叶之上叠加一层加密落叶（风向左斜）。 */
+  /** 起风：在 JuiceSystem 常驻落叶之上叠加一层加密落叶（风向左斜），tint 组随当前地图。 */
   private activateBreezeLeaves(density: number): void {
     if (!this.leafEmitter) {
       const textureKey = this.textures.exists("juice_leaf") ? "juice_leaf" : "weather_leaf";
@@ -815,7 +918,7 @@ export class GameScene extends Phaser.Scene {
         frequency: weatherVisualConfig.breezeLeafFrequencyMs,
         scale: { min: 0.7, max: 1.4 },
         alpha: { min: 0.35, max: 0.75 },
-        tint: [0x9aa583, 0x7d9b76, 0xb8b3a4],
+        tint: [...this.getCurrentStageMap().leafTints],
         blendMode: Phaser.BlendModes.NORMAL
       });
       this.leafEmitter.setScrollFactor(0);
@@ -1095,11 +1198,7 @@ export class GameScene extends Phaser.Scene {
     const stageWidth = this.scale.width;
     const stageHeight = this.scale.height;
 
-    this.fogBandTile = this.add.tileSprite(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, "atmo_fog")
-      .setDepth(87)
-      .setAlpha(0)
-      .setScrollFactor(0)
-      .setBlendMode(Phaser.BlendModes.SCREEN);
+    this.createFogBandLayer(this.getCurrentStageMap());
 
     this.narrativeDim = this.add.rectangle(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, 0x050705, 0)
       .setDepth(77)
@@ -1118,6 +1217,20 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setBlendMode(Phaser.BlendModes.MULTIPLY)
       .setAlpha(0);
+  }
+
+  /** 雾天气附加滚动雾带（alpha 0 起步，setWeather 补间加浓）；按地图配置染色。 */
+  private createFogBandLayer(map: StageMapEntry): void {
+    const stageWidth = this.scale.width;
+    const stageHeight = this.scale.height;
+    this.fogBandTile = this.add.tileSprite(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, "atmo_fog")
+      .setDepth(87)
+      .setAlpha(0)
+      .setScrollFactor(0)
+      .setBlendMode(Phaser.BlendModes.SCREEN);
+    if (map.fogTint !== 0xffffff) {
+      this.fogBandTile.setTint(map.fogTint);
+    }
   }
 
   private setBossDim(active: boolean): void {
@@ -2438,6 +2551,42 @@ export class GameScene extends Phaser.Scene {
         road.refresh();
       }
     }
+
+    // 枫叶官道兜底地面（官方 ground_maple_base 缺失时不崩）：暖墨褐底 + 芥金/枫红碎叶斑点。
+    const mapleFallback = stageMapConfig.maps.find((entry) => entry.id === "maple_official_road");
+    if (mapleFallback && !this.textures.exists(mapleFallback.fallbackGroundTexture)) {
+      const ground = this.textures.createCanvas(mapleFallback.fallbackGroundTexture, 512, 512);
+      const context = ground?.getContext();
+      if (ground && context) {
+        context.fillStyle = mapleFallback.worldBg;
+        context.fillRect(0, 0, 512, 512);
+        context.fillStyle = "rgba(201, 162, 75, 0.07)";
+        for (let index = 0; index < 46; index += 1) {
+          const x = (index * 97) % 512;
+          const y = (index * 163) % 512;
+          context.beginPath();
+          context.ellipse(x, y, 2 + (index % 3), 1 + (index % 2), index, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.fillStyle = "rgba(178, 58, 36, 0.08)";
+        for (let index = 0; index < 34; index += 1) {
+          const x = (index * 131) % 512;
+          const y = (index * 89) % 512;
+          context.beginPath();
+          context.ellipse(x, y, 2 + (index % 4), 1 + (index % 3), index * 0.7, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.strokeStyle = "rgba(12, 7, 4, 0.2)";
+        context.lineWidth = 2;
+        for (let x = 0; x <= 512; x += 96) {
+          context.beginPath();
+          context.moveTo(x, 0);
+          context.lineTo(x - 64, 512);
+          context.stroke();
+        }
+        ground.refresh();
+      }
+    }
   }
 }
 
@@ -2752,10 +2901,15 @@ const SCATTER_PROP_BASE: Record<string, { depth: number; alpha: number; scale: n
   decor_lantern: { depth: -21, alpha: 0.6, scale: 0.9 },
   decor_flag: { depth: -21, alpha: 0.58, scale: 0.9 },
   decor_stele: { depth: -21, alpha: 0.6, scale: 0.88 },
-  decor_winejar: { depth: -21, alpha: 0.6, scale: 0.85 }
+  decor_winejar: { depth: -21, alpha: 0.6, scale: 0.85 },
+  // 枫叶官道（素材代理由并行代理注册；缺失时 createScatterProp 按 textures.exists 跳过）
+  maple_tree_cluster: { depth: -22, alpha: 0.55, scale: 0.58 },
+  decor_stone_lion: { depth: -21, alpha: 0.62, scale: 0.9 },
+  decor_sword_mound: { depth: -21, alpha: 0.62, scale: 0.9 }
 };
 
-// 种子散布类型池：竹丛/石堆为主，4 个 P3 新装饰物各占 8% 低权重点缀
+// 青石山道散布类型池：竹丛/石堆为主，4 个 P3 新装饰物各占 8% 低权重点缀。
+// 运行时以 stageMapConfig 当前地图条目的 scatterPool 为准；此处仅作配置缺失时的兜底。
 const SCATTER_PROP_POOL: Array<{ key: keyof typeof SCATTER_PROP_BASE; weight: number }> = [
   { key: "bamboo_edge_cluster", weight: 0.32 },
   { key: "rock_cluster", weight: 0.24 },

@@ -8,6 +8,10 @@ import decorSteleUrl from "../assets/backgrounds/decor_stele.png";
 import decorWinejarUrl from "../assets/backgrounds/decor_winejar.png";
 import distantGateShadowUrl from "../assets/backgrounds/distant_gate_shadow.png";
 import groundQingshiBaseUrl from "../assets/backgrounds/ground_qingshi_base.png";
+import groundMapleBaseUrl from "../assets/backgrounds/ground_maple_base.png";
+import mapleTreeClusterUrl from "../assets/backgrounds/maple_tree_cluster.png";
+import decorStoneLionUrl from "../assets/backgrounds/decor_stone_lion.png";
+import decorSwordMoundUrl from "../assets/backgrounds/decor_sword_mound.png";
 import roadRibbonAUrl from "../assets/backgrounds/road_ribbon_a.png";
 import roadRibbonBUrl from "../assets/backgrounds/road_ribbon_b.png";
 import rockClusterUrl from "../assets/backgrounds/rock_cluster.png";
@@ -157,6 +161,10 @@ export const artAssetUrls = {
   enemy_shield_bandit_walk: enemyShieldBanditWalkUrl,
   enemy_wooden_dummy_elite_walk: enemyWoodenDummyEliteWalkUrl,
   ground_qingshi_base: groundQingshiBaseUrl,
+  ground_maple_base: groundMapleBaseUrl,
+  maple_tree_cluster: mapleTreeClusterUrl,
+  decor_stone_lion: decorStoneLionUrl,
+  decor_sword_mound: decorSwordMoundUrl,
   hero_shaoxia_hurt: heroShaoxiaHurtUrl,
   hero_shaoxia_idle: heroShaoxiaIdleUrl,
   hero_shaoxia_move: heroShaoxiaMoveUrl,

@@ -195,7 +195,7 @@ export class JuiceSystem {
   }
 
   /** 环境落叶/飞尘：全屏常驻氛围层，scrollFactor 0。 */
-  startAmbient(): void {
+  startAmbient(tintGroup?: number[]): void {
     if (this.ambientEmitter || this.lowVfx) {
       return;
     }
@@ -209,11 +209,20 @@ export class JuiceSystem {
       scale: { min: 0.5, max: 1.0 },
       alpha: { start: 0.55, end: 0 },
       frequency: 420,
-      tint: [0x9aa583, 0x7d9b76, 0xb8b3a4],
+      tint: tintGroup ?? [0x9aa583, 0x7d9b76, 0xb8b3a4],
       blendMode: Phaser.BlendModes.NORMAL
     });
     this.ambientEmitter.setScrollFactor(0);
     this.ambientEmitter.setDepth(-15);
+  }
+
+  /** 切换落叶配色（如换地图）：销毁后按新 tint 重建。 */
+  retintAmbient(tintGroup: number[]): void {
+    if (!this.ambientEmitter) {
+      return;
+    }
+    this.stopAmbient();
+    this.startAmbient(tintGroup);
   }
 
   stopAmbient(): void {
