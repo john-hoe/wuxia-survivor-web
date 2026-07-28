@@ -988,17 +988,18 @@ export class EnemyDirectorSystem {
     return enemyView;
   }
 
+  // 素材 2 倍高清化：enemy 帧尺寸 ×2，以下硬编码缩放系数全部 ÷2，保持屏幕显示尺寸不变。
   private getEnemySpriteScale(config: EnemyConfig): number {
     if (config.id === "hound") {
-      return 0.72;
+      return 0.36;
     }
     if (config.id === "shield_bandit") {
-      return 0.7;
+      return 0.35;
     }
     if (config.id === "wooden_dummy_elite") {
-      return 0.82;
+      return 0.41;
     }
-    return 0.74;
+    return 0.37;
   }
 
   private getEnemySpriteOriginY(config: EnemyConfig): number {
@@ -1222,7 +1223,8 @@ export class EnemyDirectorSystem {
     });
   }
 
-  /** 锚点到脚底的表现层距离：贴图按帧高×缩放×(1-originY) 推算，几何兜底沿用原内置阴影偏移。 */
+  /** 锚点到脚底的表现层距离：贴图按帧高×缩放×(1-originY) 推算，几何兜底沿用原内置阴影偏移。
+   *  2 倍素材适配确认：displayHeight = 帧高 × scale，帧高 ×2 且 scale ÷2 后乘积不变，自动适配无需改动。 */
   private getFootOffsetY(view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite, config: EnemyConfig): number {
     if (view instanceof Phaser.GameObjects.Sprite) {
       return Math.max(0, view.displayHeight * (1 - view.originY) - 2);
@@ -1635,17 +1637,18 @@ function getNumericData(view: Phaser.GameObjects.GameObject, key: string, fallba
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+// pulse 为叠加在 baseScale 上的"scale 单位"振幅：屏幕振幅 = 帧高 × pulse。帧尺寸 ×2 后 pulse ÷2 保持呼吸/摆动屏幕振幅不变。
 function getSpriteRoleMotion(role: EnemyConfig["role"]): { rotateMs: number; rotation: number; pulseMs: number; pulse: number } {
   if (role === "fast") {
-    return { rotateMs: 82, rotation: 0.05, pulseMs: 62, pulse: 0.026 };
+    return { rotateMs: 82, rotation: 0.05, pulseMs: 62, pulse: 0.013 };
   }
   if (role === "tank") {
-    return { rotateMs: 180, rotation: 0.025, pulseMs: 150, pulse: 0.014 };
+    return { rotateMs: 180, rotation: 0.025, pulseMs: 150, pulse: 0.007 };
   }
   if (role === "elite_pressure") {
-    return { rotateMs: 260, rotation: 0.02, pulseMs: 210, pulse: 0.012 };
+    return { rotateMs: 260, rotation: 0.02, pulseMs: 210, pulse: 0.006 };
   }
-  return { rotateMs: 150, rotation: 0.026, pulseMs: 110, pulse: 0.016 };
+  return { rotateMs: 150, rotation: 0.026, pulseMs: 110, pulse: 0.008 };
 }
 
 function getOppositeSide(side: Exclude<SpawnSide, "corner">): Exclude<SpawnSide, "corner"> {

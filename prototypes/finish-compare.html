@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>统一后处理 · 试点对比</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0f0c; color: #e8e2d2; font-family: 'Noto Sans SC', sans-serif; padding: 48px 32px 96px; }
+  header { text-align: center; margin-bottom: 40px; }
+  header h1 { font-family: 'Ma Shan Zheng', serif; font-size: 40px; font-weight: 400; letter-spacing: 5px; color: #f0ead8; }
+  header p { margin-top: 12px; color: #8a8578; font-size: 14px; }
+  .wrap { max-width: 1500px; margin: 0 auto; }
+  .card { background: #101713; border: 1px solid rgba(169,154,32,.2); border-radius: 10px; overflow: hidden; margin-bottom: 28px; }
+  .card img { display: block; width: 100%; cursor: zoom-in; }
+  .cap { padding: 14px 18px; font-size: 13px; color: #9a958a; line-height: 1.8; }
+  .cap b { color: #c8c2b2; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+  .verdict { max-width: 1500px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .verdict { grid-template-columns: 1fr; } }
+  .pill { border-radius: 10px; padding: 18px 20px; font-size: 13.5px; line-height: 1.9; }
+  .ok { background: rgba(125,155,118,.08); border: 1px solid rgba(125,155,118,.35); }
+  .warn { background: rgba(192,0,0,.07); border: 1px solid rgba(192,0,0,.35); }
+  .pill h3 { font-size: 15px; margin-bottom: 8px; }
+  .ok h3 { color: #9fc4b4; } .warn h3 { color: #e08a80; }
+  #lightbox { position: fixed; inset: 0; background: rgba(5,8,6,.94); display: none; align-items: center; justify-content: center; z-index: 99; cursor: zoom-out; }
+  #lightbox img { max-width: 95vw; max-height: 93vh; box-shadow: 0 20px 80px rgba(0,0,0,.7); }
+  #lightbox.show { display: flex; }
+</style>
+</head>
+<body>
+<header>
+  <h1>统一后处理 · 试点对比</h1>
+  <p>管线：14 色国风色板映射 → 2px 墨线描边统一 → 纸纹覆盖（杀 AI 塑料光泽）｜ 点击图片放大</p>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <img src="../.asset-gen/staging/finish/compare.png" alt="统一后处理 before/after 对比">
+    <div class="cap">
+      <b>左 BEFORE / 右 AFTER</b>，3× 放大。三行依次为：少侠待机、少侠移动、山贼喽啰。
+      处理后变化：① 色彩收敛到统一国风色板（AI 图的杂色被归拢）；② 描边统一为 2px 深墨绿墨线；③ 表面叠 3-5% 纸纹，光滑塑料感消失。
+    </div>
+  </div>
+
+  <div class="card">
+    <img src="../.asset-gen/staging/finish/zoom_face.png" alt="脸部 6 倍放大自审">
+    <div class="cap"><b>6× 脸部放大</b>：描边均匀度与纸纹颗粒的近景效果，用于检查"糊不糊"。</div>
+  </div>
+</div>
+
+<div class="verdict">
+  <div class="pill ok">
+    <h3>✅ 主角（少侠）— 通过</h3>
+    纸纹杀掉了 AI 塑料光泽，竹青/宣纸色系更"手绘"，描边干净不糊，肤色与发髻层次保留完好。可直接采用。
+  </div>
+  <div class="pill warn">
+    <h3>⚠️ 山贼 — 需调整后全量</h3>
+    头巾红被保红规则拉成亮朱砂 #c00000，太跳（原图为陶土红）；衣料暖棕被压成灰棕，少了温度。修法：色板补 2 个暖棕色、红色映射目标改为陶土红 #a03a30。
+  </div>
+</div>
+
+<div id="lightbox"><img id="lightbox-img" src="" alt=""></div>
+<script>
+  const box = document.getElementById('lightbox');
+  const boxImg = document.getElementById('lightbox-img');
+  document.querySelectorAll('.card img').forEach(img => {
+    img.addEventListener('click', () => { boxImg.src = img.src; box.classList.add('show'); });
+  });
+  box.addEventListener('click', () => box.classList.remove('show'));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') box.classList.remove('show'); });
+</script>
+</body>
+</html>

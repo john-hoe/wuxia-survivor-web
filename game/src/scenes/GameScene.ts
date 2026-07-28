@@ -104,7 +104,7 @@ export class GameScene extends Phaser.Scene {
   private latestProgression?: ProgressionSnapshot;
   private heroView?: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
   private heroShadow?: Phaser.GameObjects.Image;
-  /** 主角基础 scaleY：drawHero 时采样（现有约 0.66），呼吸/回落均乘法叠加，不写死。 */
+  /** 主角基础 scaleY：drawHero 时采样（2 倍素材后 sprite 约 0.33），呼吸/回落均乘法叠加，不写死。 */
   private heroBaseScaleY = 1;
   /** 当前移动倾斜角（弧度），指数平滑趋近目标。 */
   private heroTiltRad = 0;
@@ -1325,7 +1325,8 @@ export class GameScene extends Phaser.Scene {
       const heroSprite = this.add.sprite(centerX, centerY, "hero_shaoxia_idle")
         .setDepth(10)
         .setOrigin(0.5, 0.6)
-        .setScale(0.66);
+        // 素材 2 倍高清化：hero 帧尺寸 ×2（128→256），缩放系数 ÷2（0.66→0.33）保持屏幕显示尺寸不变。
+        .setScale(0.33);
       this.playHeroAnimation(heroSprite, "hero_shaoxia_idle");
       this.heroView = heroSprite;
     } else {
@@ -1340,7 +1341,7 @@ export class GameScene extends Phaser.Scene {
       const waist = this.add.rectangle(0, 12, 28, 8, 0x2f5b4f, 1);
       this.heroView = this.add.container(centerX, centerY, [body, facing, waist]).setDepth(10);
     }
-    // 采样基础 scaleY（sprite 约 0.66 / 占位容器 1），待机呼吸以此乘法叠加。
+    // 采样基础 scaleY（2 倍素材后 sprite 约 0.33 / 占位容器 1），待机呼吸以此乘法叠加。
     this.heroBaseScaleY = this.heroView.scaleY;
 
     this.footHpBack = this.add.rectangle(centerX - 28, centerY + 38, 56, 6, 0x070807, 0.75)

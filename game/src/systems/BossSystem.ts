@@ -119,7 +119,8 @@ const HERO_COLLISION_RADIUS = 18;
 const INTRO_OFFSET_Y = -420;
 const INTRO_TARGET_OFFSET_Y = -90;
 const IDLE_ATTACK_CHECK_MS = 250;
-const BOSS_SPRITE_SCALE = 0.58;
+// 素材 2 倍高清化：boss 帧尺寸 ×2（208→416），缩放系数 ÷2（0.58→0.29）保持屏幕显示尺寸不变。
+const BOSS_SPRITE_SCALE = 0.29;
 /** 气场升级：Boss 显示尺寸在现有 viewScale 基准上乘法叠加（碰撞半径不变） */
 const BOSS_SIZE_MULTIPLIER = 1.35;
 /** 常驻气环：半径≈视觉半径×体型倍率×1.1，呼吸 alpha 区间 */
@@ -802,6 +803,7 @@ export class BossSystem {
       bossView.setData("baseScale", spriteScale);
       bossView.setData("motionScale", 1);
       bossView.setData("facingLeft", false);
+      // shadowOffsetY 为屏幕显示空间偏移（显示尺寸不变故不改）；applyBossViewScale 全程乘法叠加 baseScale，自动适配。
       bossView.setData("shadowOffsetY", 56 * BOSS_SIZE_MULTIPLIER);
       return bossView;
     }
@@ -938,7 +940,8 @@ export class BossSystem {
     });
   }
 
-  /** 气场层：墨黑软椭圆投影（下，比气环略大）+ 朱砂气环（上），均低于 Boss view(13)。 */
+  /** 气场层：墨黑软椭圆投影（下，比气环略大）+ 朱砂气环（上），均低于 Boss view(13)。
+   *  2 倍素材适配确认：ringRadius/inkRadius 由 config.visualRadius（世界单位）推算，不含帧像素，自动适配无需改动。 */
   private createAuraViews(): { auraRing: Phaser.GameObjects.Image; inkShadow: Phaser.GameObjects.Image } {
     this.ensureAuraTextures();
     const ringRadius = this.config.visualRadius * BOSS_SIZE_MULTIPLIER * AURA_RING_RADIUS_FACTOR;
