@@ -62,7 +62,7 @@ export class MenuScene extends Phaser.Scene {
       transitionTo(this, SCENE_KEYS.game);
     }, { highlight: true, fontSize: 28 });
 
-    // 选关行（弱化小字）：读存档显示当前选，点击在双图间循环并写存档
+    // 选关行（弱化小字）：读存档显示当前选，点击按 stageMapConfig.maps 顺序循环（三图）并写存档
     const selectedMapId = this.readSelectedMapId(saveData);
     const selectedMap = stageMapConfig.maps.find((entry) => entry.id === selectedMapId) ?? stageMapConfig.maps[0];
     const mapRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP, `关卡 · ${selectedMap.displayName}`, () => {
@@ -155,7 +155,7 @@ export class MenuScene extends Phaser.Scene {
     return found ? found.id : stageMapConfig.defaultMapId;
   }
 
-  /** 选关行点击：双图循环切换 → 行内文字更新 + 金色微闪 + ui_click → 写存档。 */
+  /** 选关行点击：按 maps 数组顺序循环切换（三图） → 行内文字更新 + 金色微闪 + ui_click → 写存档。 */
   private cycleMapSelection(): void {
     const saveData = getSaveData(this);
     const maps = stageMapConfig.maps;

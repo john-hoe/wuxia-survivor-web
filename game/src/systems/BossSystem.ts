@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { heifengChiefConfig, type BossAttackId, type BossConfig, type BossId, type BossState } from "../data/bosses";
+import { heifengChiefConfig, resolveBossConfigForMap, type BossAttackId, type BossConfig, type BossId, type BossState } from "../data/bosses";
 import { eventBus } from "../utils/EventBus";
 import type { GameEventName } from "../types";
 import { getArtAnimationKey } from "../utils/artAssets";
@@ -21,6 +21,8 @@ type BossRuntime = {
   hp: number;
   worldX: number;
   worldY: number;
+  /** 出场时锁定的地图 id（stage_cleared 回放用；F2 中途切图不影响本场 Boss 归属） */
+  stageMapId: string;
   state: BossState;
   stateMs: number;
   aliveMs: number;
@@ -90,6 +92,9 @@ export type BossDamageResult = {
 
 export type BossSystemSnapshot = {
   state: BossState;
+  /** 当前 Boss 标识与名称（HUD/调试可读；可选字段，旧消费方零改动兼容） */
+  bossId?: BossId;
+  bossName?: string;
   hp: number;
   maxHp: number;
   hpPercent: number;
@@ -164,7 +169,8 @@ const DEATH_SLOWMO_SCALE = 0.3;
 const DEATH_SLOWMO_GAME_MS = Math.round(400 * DEATH_SLOWMO_SCALE);
 
 export class BossSystem {
-  private readonly config: BossConfig;
+  /** 当前激活的 Boss 配置：构造时为显式注入或默认；每次 requestSpawn 按当前地图重解（纹理缺失回退黑风寨主） */
+  private config: BossConfig;
   private runtime?: BossRuntime;
   private chooseAttackAccumulatorMs = 0;
   /** 受击溅墨在飞实例（220ms 淡出后自销毁；destroy 时兜底清理，Tween/显示对象零泄漏） */
@@ -238,6 +244,10 @@ export class BossSystem {
       return false;
     }
 
+    // 按当前地图选 Boss（显式注入 config 时优先，供测试定点覆盖）；断剑镖头纹理缺失自动回退黑风寨主
+    this.config = this.options.config ?? this.resolveBossConfigForCurrentMap();
+    const stageMapId = this.getCurrentStageMapId() ?? "qingshi_mountain_road";
+
     const heroWorld = this.options.getHeroWorld();
     const spawnWorld = {
       x: heroWorld.x,
@@ -253,6 +263,7 @@ export class BossSystem {
       hp: this.config.maxHp,
       worldX: spawnWorld.x,
       worldY: spawnWorld.y,
+      stageMapId,
       state: "intro",
       stateMs: 0,
       aliveMs: 0,
@@ -286,6 +297,8 @@ export class BossSystem {
     eventBus.emit("boss_intro_started", {
       bossId: this.config.id,
       displayName: this.config.displayName,
+      // 防御性别名：新消费方可直读 name；原有 bossId/displayName/source/waveTimeSeconds 字段不动
+      name: this.config.displayName,
       source,
       waveTimeSeconds: this.options.getElapsedSeconds()
     });
@@ -356,6 +369,8 @@ export class BossSystem {
     if (!runtime) {
       return {
         state: "pending",
+        bossId: this.config.id,
+        bossName: this.config.displayName,
         hp: 0,
         maxHp: this.config.maxHp,
         hpPercent: 0,
@@ -374,6 +389,8 @@ export class BossSystem {
 
     return {
       state: runtime.state,
+      bossId: this.config.id,
+      bossName: this.config.displayName,
       hp: runtime.hp,
       maxHp: this.config.maxHp,
       hpPercent: Math.round((runtime.hp / this.config.maxHp) * 1000) / 10,
@@ -583,7 +600,7 @@ export class BossSystem {
     runtime.stageCleared = true;
     this.transitionTo(runtime, "cleared");
     eventBus.emit("stage_cleared", {
-      stageId: "qingshi_mountain_road",
+      stageId: runtime.stageMapId,
       bossId: this.config.id,
       copperReward: this.config.copperReward
     });
@@ -802,17 +819,22 @@ export class BossSystem {
   }
 
   private createBossView(): Phaser.GameObjects.Container | Phaser.GameObjects.Sprite {
-    if (this.scene.textures.exists("boss_heifeng_idle")) {
+    const idleTextureKey = this.config.textureKeys.idle;
+    if (this.scene.textures.exists(idleTextureKey)) {
       // 体型升级：在现有 viewScale 基准上乘法叠加 1.35 倍
       const spriteScale = BOSS_SPRITE_SCALE * BOSS_SIZE_MULTIPLIER;
-      const bossView = this.scene.add.sprite(0, 0, "boss_heifeng_idle")
+      const bossView = this.scene.add.sprite(0, 0, idleTextureKey)
         .setDepth(13)
         .setOrigin(0.5, 0.66)
         .setScale(spriteScale)
         .setAlpha(0.98);
-      const animationKey = getArtAnimationKey("boss_heifeng_idle");
+      const animationKey = getArtAnimationKey(idleTextureKey);
       if (this.scene.anims.exists(animationKey)) {
         bossView.play(animationKey);
+      }
+      // 常驻配色（如断剑镖头的冷青灰）；受击闪/蓄力 tint 结束后恢复为该色
+      if (this.config.tint !== undefined) {
+        bossView.setTint(this.config.tint);
       }
       bossView.setData("bossSpriteArt", true);
       bossView.setData("baseScale", spriteScale);
@@ -1129,7 +1151,7 @@ export class BossSystem {
         if (runtime.state === "charge_windup" || runtime.state === "whirlwind_windup") {
           view.setTint(WINDUP_TINT);
         } else {
-          view.clearTint();
+          this.restoreBaseTint(view);
         }
       });
       return;
@@ -1192,8 +1214,45 @@ export class BossSystem {
 
   private clearWindupTint(runtime: BossRuntime): void {
     if (runtime.view instanceof Phaser.GameObjects.Sprite && runtime.view.getData("bossSpriteArt") === true) {
-      runtime.view.clearTint();
+      this.restoreBaseTint(runtime.view);
     }
+  }
+
+  /** tint 恢复基准：配置了常驻 tint（如断剑镖头冷青灰）则恢复该色，否则清色保持素材原色。 */
+  private restoreBaseTint(view: Phaser.GameObjects.Sprite): void {
+    if (this.config.tint !== undefined) {
+      view.setTint(this.config.tint);
+    } else {
+      view.clearTint();
+    }
+  }
+
+  /**
+   * 当前地图 id：GameScene.getCurrentStageMap() 防御性可达（private 方法经 any 桥接，缺席/异常即 undefined）。
+   * 与 EnemyDirectorSystem 同款模式；F2 热切换地图后下一次 requestSpawn 自动用新图选 Boss。
+   */
+  private getCurrentStageMapId(): string | undefined {
+    const sceneWithMap = this.scene as unknown as {
+      getCurrentStageMap?: () => { id?: unknown } | undefined;
+    };
+    try {
+      const id = sceneWithMap.getCurrentStageMap?.()?.id;
+      return typeof id === "string" ? id : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 按当前地图解析 Boss 配置；目标 Boss 的 idle 纹理缺失（素材未注册/加载失败）时
+   * 回退黑风寨主（其自身纹理缺失时再走 createBossView 几何兜底，保证不崩）。
+   */
+  private resolveBossConfigForCurrentMap(): BossConfig {
+    const config = resolveBossConfigForMap(this.getCurrentStageMapId());
+    if (!this.scene.textures.exists(config.textureKeys.idle)) {
+      return heifengChiefConfig;
+    }
+    return config;
   }
 
   /** 冲锋路径残影：最多 3 个 Boss 纹理残影，alpha 渐隐后销毁。 */
@@ -1236,7 +1295,7 @@ export class BossSystem {
     }
 
     const isAttack = isBossAttackState(runtime.state);
-    const assetId = isAttack ? "boss_heifeng_attack" : "boss_heifeng_idle";
+    const assetId = isAttack ? this.config.textureKeys.attack : this.config.textureKeys.idle;
     if (!this.scene.textures.exists(assetId)) {
       return;
     }

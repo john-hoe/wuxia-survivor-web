@@ -93,7 +93,7 @@ export class ResultScene extends Phaser.Scene {
     addMinimalTitle(this, title, TITLE_Y, TITLE_FONT_SIZE, sealChar).setStroke(titleStroke, 5);
 
     if (this.runSummary.bossDefeated) {
-      this.add.text(centerX, BOSS_LINE_Y, "头目 黑风寨主 已击败", {
+      this.add.text(centerX, BOSS_LINE_Y, "头目已被击败", {
         color: PALETTE.hpCss,
         fontFamily: FONT_BODY,
         fontSize: "14px"

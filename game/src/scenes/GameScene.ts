@@ -84,6 +84,15 @@ const DAY_NIGHT_OVERLAY_DEPTH = 76.5;
 const DAY_NIGHT_SMOOTH_MS = 500;
 /** F5 预览锁定的档位秒数（暮赭红）。 */
 const DAY_NIGHT_DEBUG_PIN_SECONDS = 330;
+// ── 夜雨破庙·永夜夜色叠加 + 石灯笼假光晕 ─────────────────────────────────
+/** 石灯笼光晕纹理键：程序化径向暖光（白心渐隐，tint 染色），按 key 缓存只生成一次。 */
+const LANTERN_GLOW_TEXTURE_KEY = "temple_lantern_glow";
+const LANTERN_GLOW_TEXTURE_SIZE = 96;
+/** 光晕暖色 tint 与呼吸基准/振幅（ADD 混合，alpha 围绕 0.35 呼吸）。 */
+const LANTERN_GLOW_TINT = 0xffc06a;
+const LANTERN_GLOW_BASE_ALPHA = 0.35;
+const LANTERN_GLOW_BREATH_AMOUNT = 0.08;
+const LANTERN_GLOW_BREATH_PERIOD_MS = 1900;
 
 /** 昼昏渐变档位 → 插值用通道对象（r/g/b 0-255 + strength）。 */
 function dayNightTierChannels(tier: DayNightTintTier): { r: number; g: number; b: number; strength: number } {
@@ -101,6 +110,13 @@ type ScatterPropSway = {
   phase: number;
   baseRotation: number;
   baseScaleY: number;
+};
+
+/** 石灯笼假光晕元数据：ADD 混合径向暖光 sprite 挂在 prop 上，相位错开呼吸。 */
+type LanternGlowMeta = {
+  image: Phaser.GameObjects.Image;
+  phase: number;
+  baseAlpha: number;
 };
 
 export class GameScene extends Phaser.Scene {
@@ -137,10 +153,12 @@ export class GameScene extends Phaser.Scene {
   private currentMapId: StageMapId = stageMapConfig.defaultMapId;
   /** 地图切换淡入淡出进行中：屏蔽重复 F2，避免叠化穿插。 */
   private stageMapSwitching = false;
-  private scatterProps = new Map<string, { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway }>();
+  private scatterProps = new Map<string, { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway; glow?: LanternGlowMeta }>();
   private propSlotSizePx = 256;
   private bossDimOverlay?: Phaser.GameObjects.Rectangle;
   private bossDimActive = false;
+  /** 夜雨破庙·永夜夜色叠加层（全屏冷蓝 MULTIPLY 常驻；仅配置了 nightOverlay 的地图创建）。 */
+  private nightOverlay?: Phaser.GameObjects.Rectangle;
   // ── 竹雨听风：天气层 / 色温叙事 / 动态暗角 / 重击聚焦 ──
   private fogBandTile?: Phaser.GameObjects.TileSprite;
   private vignetteDynamic?: Phaser.GameObjects.Image;
@@ -678,6 +696,16 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.dayNightOverlay = undefined;
     }
+
+    // 永夜夜色叠加层：仅配置了 nightOverlay 的地图（夜雨破庙）创建；冷蓝 MULTIPLY 常驻，无逐帧驱动。
+    if (map.nightOverlay) {
+      this.nightOverlay = this.add.rectangle(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, map.nightOverlay.tint, map.nightOverlay.strength)
+        .setDepth(DAY_NIGHT_OVERLAY_DEPTH)
+        .setScrollFactor(0)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY);
+    } else {
+      this.nightOverlay = undefined;
+    }
   }
 
   /**
@@ -727,8 +755,12 @@ export class GameScene extends Phaser.Scene {
     // 昼昏渐变叠加层随地图层同步重建（新地图未配置时 buildStageMapLayers 不再创建）。
     this.dayNightOverlay?.destroy();
     this.dayNightOverlay = undefined;
+    // 永夜夜色叠加层同样随地图层重建。
+    this.nightOverlay?.destroy();
+    this.nightOverlay = undefined;
     for (const prop of this.scatterProps.values()) {
       prop.image.destroy();
+      prop.glow?.image.destroy();
     }
     this.scatterProps.clear();
     // 落叶 emitter 销毁重建：起风时按新地图 tint 组重新创建。
@@ -814,10 +846,15 @@ export class GameScene extends Phaser.Scene {
     for (const [key, prop] of this.scatterProps) {
       if (!needed.has(key)) {
         prop.image.destroy();
+        prop.glow?.image.destroy();
         this.scatterProps.delete(key);
         continue;
       }
-      prop.image.setPosition(prop.worldX - this.stageScrollX, prop.worldY - this.stageScrollY);
+      const screenX = prop.worldX - this.stageScrollX;
+      const screenY = prop.worldY - this.stageScrollY;
+      prop.image.setPosition(screenX, screenY);
+      // 石灯笼光晕跟随：略上移对齐灯焰位置
+      prop.glow?.image.setPosition(screenX, screenY - prop.image.displayHeight * 0.18);
     }
   }
 
@@ -825,7 +862,7 @@ export class GameScene extends Phaser.Scene {
     slotI: number,
     slotJ: number,
     slotSize: number
-  ): { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway } | undefined {
+  ): { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway; glow?: LanternGlowMeta } | undefined {
     const random = mulberry32(hashScatterSlot(slotI, slotJ));
     if (random() > stageVisualConfig.propDensity) {
       return undefined;
@@ -864,7 +901,21 @@ export class GameScene extends Phaser.Scene {
         sway = { kind: "lantern", phase, baseRotation: 0, baseScaleY: image.scaleY };
       }
     }
-    return { image, worldX, worldY, sway };
+    // 夜雨破庙·石灯笼假光晕：ADD 混合径向暖光 sprite 挂在灯笼上，alpha 0.35 呼吸（相位随槽位种子错开）。
+    let glow: LanternGlowMeta | undefined;
+    if (textureKey === "decor_stone_lantern") {
+      this.ensureLanternGlowTexture();
+      if (this.textures.exists(LANTERN_GLOW_TEXTURE_KEY)) {
+        const glowImage = this.add.image(image.x, image.y - image.displayHeight * 0.18, LANTERN_GLOW_TEXTURE_KEY)
+          .setDepth(base.depth + 0.5)
+          .setAlpha(LANTERN_GLOW_BASE_ALPHA)
+          .setScale(image.scaleX * 1.5)
+          .setTint(LANTERN_GLOW_TINT)
+          .setBlendMode(Phaser.BlendModes.ADD);
+        glow = { image: glowImage, phase: random() * Math.PI * 2, baseAlpha: LANTERN_GLOW_BASE_ALPHA };
+      }
+    }
+    return { image, worldX, worldY, sway, glow };
   }
 
   private updateAtmosphere(deltaMs: number): void {
@@ -898,9 +949,17 @@ export class GameScene extends Phaser.Scene {
 
   // ── 竹雨听风①：天气系统 ──────────────────────────────────────────────
 
-  /** 按局内时间轴（0-120s 晴 / 120-240s 起风 / 240s+ 微雨 / Boss 前 30s 雪或雾）切换天气。 */
+  /** 按局内时间轴（0-120s 晴 / 120-240s 起风 / 240s+ 微雨 / Boss 前 30s 雪或雾）切换天气；weatherLock 图（夜雨破庙）开局锁定、不轮换。 */
   private updateWeatherTimeline(): void {
     if (!weatherVisualConfig.timelineEnabled) {
+      return;
+    }
+    // 天气锁定：该图恒定锁定天气，不走时间轴轮换、也不吃 Boss 前临战天气覆盖。
+    const weatherLock = this.getCurrentStageMap().weatherLock;
+    if (weatherLock) {
+      if (this.weatherKind !== weatherLock) {
+        this.setWeather(weatherLock);
+      }
       return;
     }
     const elapsedSeconds = this.getElapsedSeconds();
@@ -1091,12 +1150,19 @@ export class GameScene extends Phaser.Scene {
 
   // ── 竹雨听风③：移动背景（装饰物微动画） ──────────────────────────────
 
-  /** 残旗 rotation ±2° 呼吸、竹丛 scaleY 微摆（错相位）、灯笼轻晃；幅度随风力（天气）缩放。 */
+  /** 残旗 rotation ±2° 呼吸、竹丛 scaleY 微摆（错相位）、灯笼轻晃；幅度随风力（天气）缩放。石灯笼光晕呼吸独立常驻。 */
   private updatePropSway(): void {
+    const timeSeconds = this.elapsedMs / 1000;
+    // 石灯笼光晕呼吸：alpha 围绕 0.35 正弦起伏（相位随槽位错开），与风力摆动解耦、永夜常驻。
+    for (const prop of this.scatterProps.values()) {
+      const glow = prop.glow;
+      if (glow) {
+        glow.image.setAlpha(glow.baseAlpha + Math.sin((this.elapsedMs / LANTERN_GLOW_BREATH_PERIOD_MS) * Math.PI * 2 + glow.phase) * LANTERN_GLOW_BREATH_AMOUNT);
+      }
+    }
     if (this.windSway <= 0.01) {
       return;
     }
-    const timeSeconds = this.elapsedMs / 1000;
     const sway = this.windSway;
     for (const prop of this.scatterProps.values()) {
       const meta = prop.sway;
@@ -1590,6 +1656,27 @@ export class GameScene extends Phaser.Scene {
     this.spawnEnemyShowcaseForDebug();
   }
 
+  /** 石灯笼假光晕纹理：程序化径向渐变白心圆（tint 染暖色后 ADD 混合），按 key 缓存只生成一次。 */
+  private ensureLanternGlowTexture(): void {
+    if (this.textures.exists(LANTERN_GLOW_TEXTURE_KEY)) {
+      return;
+    }
+    const canvasTexture = this.textures.createCanvas(LANTERN_GLOW_TEXTURE_KEY, LANTERN_GLOW_TEXTURE_SIZE, LANTERN_GLOW_TEXTURE_SIZE);
+    const context = canvasTexture?.getContext();
+    if (!canvasTexture || !context) {
+      return;
+    }
+    context.clearRect(0, 0, LANTERN_GLOW_TEXTURE_SIZE, LANTERN_GLOW_TEXTURE_SIZE);
+    const half = LANTERN_GLOW_TEXTURE_SIZE / 2;
+    const gradient = context.createRadialGradient(half, half, 0, half, half, half);
+    gradient.addColorStop(0, "rgba(255, 255, 255, 0.95)");
+    gradient.addColorStop(0.35, "rgba(255, 255, 255, 0.45)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, LANTERN_GLOW_TEXTURE_SIZE, LANTERN_GLOW_TEXTURE_SIZE);
+    canvasTexture.refresh();
+  }
+
   /** 主角脚下软椭圆接触阴影：程序化径向渐变墨黑椭圆纹理，按 key 缓存只生成一次。 */
   private ensureHeroShadowTexture(): void {
     if (this.textures.exists(HERO_SHADOW_TEXTURE_KEY)) {
@@ -1898,7 +1985,7 @@ export class GameScene extends Phaser.Scene {
     const ratio = Phaser.Math.Clamp(boss.hpPercent / 100, 0, 1);
     this.bossHudFill.setDisplaySize(Math.round(fullWidth * ratio), 12);
     this.bossHudFill.setFillStyle(boss.hpPercent <= 25 ? PALETTE.lowHp : PALETTE.cinnabar, 0.95);
-    this.bossHudText?.setText(`黑风寨主  ${boss.hp}/${boss.maxHp}`);
+    this.bossHudText?.setText(`${boss.bossName ?? "黑风寨主"}  ${boss.hp}/${boss.maxHp}`);
     const attackLabel = boss.currentAttack === "charge_slash"
       ? "冲撞斩"
       : boss.currentAttack === "whirlwind_blade"
@@ -2804,6 +2891,42 @@ export class GameScene extends Phaser.Scene {
         ground.refresh();
       }
     }
+
+    // 夜雨破庙兜底地面（官方 ground_darktemple_base 缺失时不崩）：冷墨青底 + 碎石灰斑 + 残砖缝。
+    const templeFallback = stageMapConfig.maps.find((entry) => entry.id === "temple_ruin_nightrain");
+    if (templeFallback && !this.textures.exists(templeFallback.fallbackGroundTexture)) {
+      const ground = this.textures.createCanvas(templeFallback.fallbackGroundTexture, 512, 512);
+      const context = ground?.getContext();
+      if (ground && context) {
+        context.fillStyle = templeFallback.worldBg;
+        context.fillRect(0, 0, 512, 512);
+        context.fillStyle = "rgba(122, 138, 154, 0.08)";
+        for (let index = 0; index < 56; index += 1) {
+          const x = (index * 89) % 512;
+          const y = (index * 157) % 512;
+          context.beginPath();
+          context.ellipse(x, y, 2 + (index % 3), 1 + (index % 2), index * 0.9, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.fillStyle = "rgba(58, 68, 82, 0.12)";
+        for (let index = 0; index < 30; index += 1) {
+          const x = (index * 137) % 512;
+          const y = (index * 83) % 512;
+          context.beginPath();
+          context.ellipse(x, y, 3 + (index % 4), 2 + (index % 3), index * 0.6, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.strokeStyle = "rgba(6, 9, 13, 0.35)";
+        context.lineWidth = 2;
+        for (let x = 0; x <= 512; x += 128) {
+          context.beginPath();
+          context.moveTo(x, 0);
+          context.lineTo(x - 48, 512);
+          context.stroke();
+        }
+        ground.refresh();
+      }
+    }
   }
 }
 
@@ -3122,7 +3245,12 @@ const SCATTER_PROP_BASE: Record<string, { depth: number; alpha: number; scale: n
   // 枫叶官道（素材代理由并行代理注册；缺失时 createScatterProp 按 textures.exists 跳过）
   maple_tree_cluster: { depth: -22, alpha: 0.55, scale: 0.58 },
   decor_stone_lion: { depth: -21, alpha: 0.62, scale: 0.9 },
-  decor_sword_mound: { depth: -21, alpha: 0.62, scale: 0.9 }
+  decor_sword_mound: { depth: -21, alpha: 0.62, scale: 0.9 },
+  // 夜雨破庙（同由并行代理注册；textures.exists 防御，缺失跳过）
+  decor_broken_buddha: { depth: -22, alpha: 0.6, scale: 0.92 },
+  decor_temple_ruin: { depth: -22, alpha: 0.58, scale: 0.9 },
+  decor_stone_lantern: { depth: -21, alpha: 0.66, scale: 0.9 },
+  decor_spirit_tablet: { depth: -21, alpha: 0.6, scale: 0.88 }
 };
 
 // 青石山道散布类型池：竹丛/石堆为主，4 个 P3 新装饰物各占 8% 低权重点缀。

@@ -142,7 +142,7 @@ export const vignetteDynamicsConfig: VignetteDynamicsConfig = {
 // ── 地图配置化：青石山道 / 枫叶官道 ─────────────────────────────────────
 
 /** 局内地图条目 ID。 */
-export type StageMapId = "qingshi_mountain_road" | "maple_official_road";
+export type StageMapId = "qingshi_mountain_road" | "maple_official_road" | "temple_ruin_nightrain";
 
 /** 昼昏渐变档位：at = 局内秒数；tint = 全屏 MULTIPLY 叠加色；strength = 该层目标 alpha（0 = 无染色）。 */
 export type DayNightTintTier = {
@@ -177,6 +177,16 @@ export type StageMapEntry = {
    * tints 按 at 升序：局内时间在相邻档间逐帧插值颜色/强度，末档之后恒定保持（Boss 期停末档）。
    */
   dayNightCycle?: { tints: DayNightTintTier[] };
+  /**
+   * 天气锁定（可选；夜雨破庙 = "rain"）：该图开局即锁定此天气，
+   * 不走时间轴轮换、也不吃 Boss 前临战天气覆盖。
+   */
+  weatherLock?: WeatherKind;
+  /**
+   * 永夜叠加层（可选；夜雨破庙用）：全屏冷蓝 MULTIPLY 常驻染色，
+   * tint = 叠加色，strength = 常驻 alpha（与 dayNightCycle 互斥，二选一）。
+   */
+  nightOverlay?: { tint: number; strength: number };
 };
 
 export type StageMapConfig = {
@@ -240,6 +250,32 @@ export const stageMapConfig: StageMapConfig = {
           { at: 360, tint: 0x3a1a14, strength: 0.38 }
         ]
       }
+    },
+    {
+      id: "temple_ruin_nightrain",
+      displayName: "夜雨破庙",
+      groundTexture: "ground_darktemple_base",
+      fallbackGroundTexture: "temple_ground_tile",
+      groundAlphaOfficial: 0.85,
+      worldBg: "#0d1117",
+      worldBgInt: 0x0d1117,
+      roadRibbonEnabled: false,
+      scatterPool: [
+        { key: "decor_broken_buddha", weight: 0.18 },
+        { key: "decor_temple_ruin", weight: 0.16 },
+        { key: "decor_stone_lantern", weight: 0.14 },
+        { key: "decor_spirit_tablet", weight: 0.12 },
+        { key: "rock_cluster", weight: 0.14 },
+        { key: "decor_stele", weight: 0.12 },
+        { key: "decor_flag", weight: 0.08 },
+        { key: "decor_winejar", weight: 0.06 }
+      ],
+      // 雨丝冷蓝灰（起风落叶通道复用为雨丝染色）
+      leafTints: [0x6a7a8a, 0x8a9aaa, 0x5a6a7a],
+      fogTint: 0x7a8a9a,
+      // 永夜：不配 dayNightCycle，改为常驻冷蓝夜色叠加 + 天气锁定中雨（不走时间轴轮换）
+      weatherLock: "rain",
+      nightOverlay: { tint: 0x2a3a52, strength: 0.22 }
     }
   ]
 };

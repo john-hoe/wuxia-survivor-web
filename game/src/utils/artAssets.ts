@@ -12,6 +12,11 @@ import groundMapleBaseUrl from "../assets/backgrounds/ground_maple_base.png";
 import mapleTreeClusterUrl from "../assets/backgrounds/maple_tree_cluster.png";
 import decorStoneLionUrl from "../assets/backgrounds/decor_stone_lion.png";
 import decorSwordMoundUrl from "../assets/backgrounds/decor_sword_mound.png";
+import groundDarktempleBaseUrl from "../assets/backgrounds/ground_darktemple_base.png";
+import decorBrokenBuddhaUrl from "../assets/backgrounds/decor_broken_buddha.png";
+import decorTempleRuinUrl from "../assets/backgrounds/decor_temple_ruin.png";
+import decorStoneLanternUrl from "../assets/backgrounds/decor_stone_lantern.png";
+import decorSpiritTabletUrl from "../assets/backgrounds/decor_spirit_tablet.png";
 import roadRibbonAUrl from "../assets/backgrounds/road_ribbon_a.png";
 import roadRibbonBUrl from "../assets/backgrounds/road_ribbon_b.png";
 import rockClusterUrl from "../assets/backgrounds/rock_cluster.png";
@@ -19,6 +24,8 @@ import woodStakeFlagUrl from "../assets/backgrounds/wood_stake_flag.png";
 import dropInnerLargeUrl from "../assets/sprites/drop_inner_large.png";
 import dropInnerMediumUrl from "../assets/sprites/drop_inner_medium.png";
 import dropInnerSmallUrl from "../assets/sprites/drop_inner_small.png";
+import bossDuanjianAttackUrl from "../assets/sprites/boss_duanjian_attack.png";
+import bossDuanjianIdleUrl from "../assets/sprites/boss_duanjian_idle.png";
 import bossHeifengAttackUrl from "../assets/sprites/boss_heifeng_attack.png";
 import bossHeifengIdleUrl from "../assets/sprites/boss_heifeng_idle.png";
 import enemyBanditGruntWalkUrl from "../assets/sprites/enemy_bandit_grunt_walk.png";
@@ -27,6 +34,8 @@ import enemyShieldBanditWalkUrl from "../assets/sprites/enemy_shield_bandit_walk
 import enemyMapleBanditWalkUrl from "../assets/sprites/enemy_maple_bandit_walk.png";
 import enemyMapleWolfRunUrl from "../assets/sprites/enemy_maple_wolf_run.png";
 import enemyMapleShieldWalkUrl from "../assets/sprites/enemy_maple_shield_walk.png";
+import enemyCultistWalkUrl from "../assets/sprites/enemy_cultist_walk.png";
+import enemyScorpionRunUrl from "../assets/sprites/enemy_scorpion_run.png";
 import enemyWoodenDummyEliteWalkUrl from "../assets/sprites/enemy_wooden_dummy_elite_walk.png";
 import heroShaoxiaHurtUrl from "../assets/sprites/hero_shaoxia_hurt.png";
 import heroShaoxiaIdleUrl from "../assets/sprites/hero_shaoxia_idle.png";
@@ -152,6 +161,8 @@ import uiScrollCordUrl from "../assets/ui/ui_scroll_cord.png";
 
 export const artAssetUrls = {
   bamboo_edge_cluster: bambooEdgeClusterUrl,
+  boss_duanjian_attack: bossDuanjianAttackUrl,
+  boss_duanjian_idle: bossDuanjianIdleUrl,
   boss_heifeng_attack: bossHeifengAttackUrl,
   boss_heifeng_idle: bossHeifengIdleUrl,
   decor_flag: decorFlagUrl,
@@ -168,12 +179,19 @@ export const artAssetUrls = {
   enemy_maple_bandit_walk: enemyMapleBanditWalkUrl,
   enemy_maple_wolf_run: enemyMapleWolfRunUrl,
   enemy_maple_shield_walk: enemyMapleShieldWalkUrl,
+  enemy_cultist_walk: enemyCultistWalkUrl,
+  enemy_scorpion_run: enemyScorpionRunUrl,
   enemy_wooden_dummy_elite_walk: enemyWoodenDummyEliteWalkUrl,
   ground_qingshi_base: groundQingshiBaseUrl,
   ground_maple_base: groundMapleBaseUrl,
   maple_tree_cluster: mapleTreeClusterUrl,
   decor_stone_lion: decorStoneLionUrl,
   decor_sword_mound: decorSwordMoundUrl,
+  ground_darktemple_base: groundDarktempleBaseUrl,
+  decor_broken_buddha: decorBrokenBuddhaUrl,
+  decor_temple_ruin: decorTempleRuinUrl,
+  decor_stone_lantern: decorStoneLanternUrl,
+  decor_spirit_tablet: decorSpiritTabletUrl,
   hero_shaoxia_hurt: heroShaoxiaHurtUrl,
   hero_shaoxia_idle: heroShaoxiaIdleUrl,
   hero_shaoxia_move: heroShaoxiaMoveUrl,

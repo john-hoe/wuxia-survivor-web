@@ -32,6 +32,11 @@ export const MAP_ENEMY_TEXTURE_KEYS: Record<string, Record<string, string>> = {
     enemy_bandit_grunt_walk: "enemy_maple_bandit_walk",
     enemy_hound_run: "enemy_maple_wolf_run",
     enemy_shield_bandit_walk: "enemy_maple_shield_walk"
+  },
+  // 夜雨破庙：山贼→邪教教徒、恶犬→毒蝎（换色纹理由并行代理注册，textures.exists 缺失回退原版）
+  temple_ruin_nightrain: {
+    enemy_bandit_grunt_walk: "enemy_cultist_walk",
+    enemy_hound_run: "enemy_scorpion_run"
   }
 };
 
