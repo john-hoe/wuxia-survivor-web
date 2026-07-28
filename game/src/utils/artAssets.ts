@@ -24,6 +24,9 @@ import bossHeifengIdleUrl from "../assets/sprites/boss_heifeng_idle.png";
 import enemyBanditGruntWalkUrl from "../assets/sprites/enemy_bandit_grunt_walk.png";
 import enemyHoundRunUrl from "../assets/sprites/enemy_hound_run.png";
 import enemyShieldBanditWalkUrl from "../assets/sprites/enemy_shield_bandit_walk.png";
+import enemyMapleBanditWalkUrl from "../assets/sprites/enemy_maple_bandit_walk.png";
+import enemyMapleWolfRunUrl from "../assets/sprites/enemy_maple_wolf_run.png";
+import enemyMapleShieldWalkUrl from "../assets/sprites/enemy_maple_shield_walk.png";
 import enemyWoodenDummyEliteWalkUrl from "../assets/sprites/enemy_wooden_dummy_elite_walk.png";
 import heroShaoxiaHurtUrl from "../assets/sprites/hero_shaoxia_hurt.png";
 import heroShaoxiaIdleUrl from "../assets/sprites/hero_shaoxia_idle.png";
@@ -162,6 +165,9 @@ export const artAssetUrls = {
   enemy_bandit_grunt_walk: enemyBanditGruntWalkUrl,
   enemy_hound_run: enemyHoundRunUrl,
   enemy_shield_bandit_walk: enemyShieldBanditWalkUrl,
+  enemy_maple_bandit_walk: enemyMapleBanditWalkUrl,
+  enemy_maple_wolf_run: enemyMapleWolfRunUrl,
+  enemy_maple_shield_walk: enemyMapleShieldWalkUrl,
   enemy_wooden_dummy_elite_walk: enemyWoodenDummyEliteWalkUrl,
   ground_qingshi_base: groundQingshiBaseUrl,
   ground_maple_base: groundMapleBaseUrl,

@@ -22,6 +22,19 @@ export type EnemyConfig = {
   assetId: string;
 };
 
+/**
+ * 地图敌种换肤表：地图 id → 原版贴图 key → 换色版贴图 key。
+ * 枫叶官道三个换色纹理由 GameScene/artManifest 侧注册（EnemyDirector 用 textures.exists 防御，缺失回退原版）；
+ * 青石山道不在表内，直接用 EnemyConfig.assetId 原版。精英木人与 Boss 不换肤（表内无对应条目）。
+ */
+export const MAP_ENEMY_TEXTURE_KEYS: Record<string, Record<string, string>> = {
+  maple_official_road: {
+    enemy_bandit_grunt_walk: "enemy_maple_bandit_walk",
+    enemy_hound_run: "enemy_maple_wolf_run",
+    enemy_shield_bandit_walk: "enemy_maple_shield_walk"
+  }
+};
+
 export const enemyConfigs: Record<EnemyId, EnemyConfig> = {
   bandit_grunt: {
     id: "bandit_grunt",

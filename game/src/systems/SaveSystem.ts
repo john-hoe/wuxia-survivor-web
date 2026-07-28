@@ -106,6 +106,7 @@ export class SaveSystem {
       bestKills: this.readNonNegativeInteger(saveData.bestKills, defaultSave.bestKills),
       bestLevel: Math.max(1, this.readNonNegativeInteger(saveData.bestLevel, defaultSave.bestLevel)),
       bossDefeated: this.readBoolean(saveData.bossDefeated, defaultSave.bossDefeated),
+      lastMapId: this.readLastMapId(saveData.lastMapId),
       metaUpgrades: {
         max_hp: this.readUpgradeLevel(saveData.metaUpgrades?.max_hp, defaultSave.metaUpgrades.max_hp),
         move_speed: this.readUpgradeLevel(saveData.metaUpgrades?.move_speed, defaultSave.metaUpgrades.move_speed),
@@ -164,6 +165,11 @@ export class SaveSystem {
 
   private readBoolean(value: unknown, fallback: boolean): boolean {
     return typeof value === "boolean" ? value : fallback;
+  }
+
+  /** 选关地图 id 读档兼容：仅接受 stageMapConfig 双条目之一，其余（含缺失）回 undefined = 缺省青石。 */
+  private readLastMapId(value: unknown): string | undefined {
+    return value === "qingshi_mountain_road" || value === "maple_official_road" ? value : undefined;
   }
 
   private readVolume(value: unknown, fallback: number): number {

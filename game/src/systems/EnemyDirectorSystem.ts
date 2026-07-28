@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { combat001DirectorConfig, type EnemyDirectorConfig, type WaveDirectorState, type WaveSegment } from "../data/waves";
-import { enemyConfigs, type EnemyConfig, type EnemyId } from "../data/enemies";
+import { enemyConfigs, MAP_ENEMY_TEXTURE_KEYS, type EnemyConfig, type EnemyId } from "../data/enemies";
 import type { GameEventName } from "../types";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
@@ -1234,8 +1234,9 @@ export class EnemyDirectorSystem {
   }
 
   private createEnemyFallback(config: EnemyConfig): Phaser.GameObjects.Container | Phaser.GameObjects.Sprite {
-    if (this.scene.textures.exists(config.assetId)) {
-      return this.createEnemySprite(config, this.getEnemySpriteScale(config), this.getEnemySpriteOriginY(config));
+    const textureKey = this.resolveEnemyTextureKey(config);
+    if (this.scene.textures.exists(textureKey)) {
+      return this.createEnemySprite(config, textureKey, this.getEnemySpriteScale(config), this.getEnemySpriteOriginY(config));
     }
     if (config.id === "hound") {
       return this.createHoundFallback(config);
@@ -1249,13 +1250,47 @@ export class EnemyDirectorSystem {
     return this.createBanditFallback(config);
   }
 
-  private createEnemySprite(config: EnemyConfig, baseScale: number, originY: number): Phaser.GameObjects.Sprite {
-    const enemyView = this.scene.add.sprite(0, 0, config.assetId)
+  /**
+   * 当前地图 id：GameScene.getCurrentStageMap() 防御性可达（private 方法经 any 桥接，缺席/异常即 undefined）。
+   * F2 热切换地图后下一次 spawn 自动用新图——在场敌人不换皮，自然淘汰即可。
+   */
+  private getCurrentStageMapId(): string | undefined {
+    const sceneWithMap = this.scene as unknown as {
+      getCurrentStageMap?: () => { id?: unknown } | undefined;
+    };
+    try {
+      const id = sceneWithMap.getCurrentStageMap?.()?.id;
+      return typeof id === "string" ? id : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 敌种贴图换肤：按当前地图查 MAP_ENEMY_TEXTURE_KEYS 换色版 key，
+   * 无映射或换色纹理未注册（textures.exists 防御）时回退 EnemyConfig.assetId 原版。
+   * 精英木人与 Boss 无映射条目，恒走原版。
+   */
+  private resolveEnemyTextureKey(config: EnemyConfig): string {
+    const mapId = this.getCurrentStageMapId();
+    if (!mapId) {
+      return config.assetId;
+    }
+    const overrideKey = MAP_ENEMY_TEXTURE_KEYS[mapId]?.[config.assetId];
+    if (overrideKey && this.scene.textures.exists(overrideKey)) {
+      return overrideKey;
+    }
+    return config.assetId;
+  }
+
+  private createEnemySprite(config: EnemyConfig, textureKey: string, baseScale: number, originY: number): Phaser.GameObjects.Sprite {
+    const enemyView = this.scene.add.sprite(0, 0, textureKey)
       .setDepth(config.tier === "elite" ? 9 : 8)
       .setOrigin(0.5, originY)
       .setScale(baseScale)
       .setAlpha(0.97);
-    const animationKey = getArtAnimationKey(config.assetId);
+    // 换色版纹理自带 _anim 动画（注册侧生成），与贴图 key 一一对应
+    const animationKey = getArtAnimationKey(textureKey);
     if (this.scene.anims.exists(animationKey)) {
       enemyView.play(animationKey);
     }
@@ -1263,6 +1298,7 @@ export class EnemyDirectorSystem {
     enemyView.setData("role", config.role);
     enemyView.setData("walkMs", Phaser.Math.Between(0, 800));
     enemyView.setData("spriteArt", true);
+    enemyView.setData("textureKey", textureKey);
     enemyView.setData("animationKey", animationKey);
     enemyView.setData("baseScale", baseScale);
     return enemyView;
@@ -1388,7 +1424,8 @@ export class EnemyDirectorSystem {
     // 受击 squash 回弹：60ms 内从 0.92 恢复到 1（逐帧缩放会覆盖 Tween，故用衰减因子）
     const squash = enemy.hitSquashMs > 0 ? 1 - 0.08 * (enemy.hitSquashMs / HIT_SQUASH_MS) : 1;
     if (enemy.view instanceof Phaser.GameObjects.Sprite && enemy.view.getData("spriteArt") === true) {
-      const animationKey = (enemy.view.getData("animationKey") as string | undefined) ?? getArtAnimationKey(enemy.config.assetId);
+      const animationKey = (enemy.view.getData("animationKey") as string | undefined)
+        ?? getArtAnimationKey((enemy.view.getData("textureKey") as string | undefined) ?? enemy.config.assetId);
       if (this.scene.anims.exists(animationKey) && enemy.view.anims.currentAnim?.key !== animationKey) {
         enemy.view.play(animationKey);
       }

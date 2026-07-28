@@ -221,7 +221,11 @@ export class GameScene extends Phaser.Scene {
     this.runId = createRunId();
     this.stageScrollX = 0;
     this.stageScrollY = 0;
-    this.currentMapId = stageMapConfig.defaultMapId;
+    // 开局地图：读存档选关（lastMapId），缺失/非法回默认（青石山道）；F2 局内切换仅预览、不回写存档
+    const savedMapId = getSaveData(this).lastMapId;
+    this.currentMapId = stageMapConfig.maps.some((entry) => entry.id === savedMapId)
+      ? (savedMapId as StageMapId)
+      : stageMapConfig.defaultMapId;
     this.stageMapSwitching = false;
     this.vignetteStatic = undefined;
     this.debugInsightShowcaseIndex = 0;

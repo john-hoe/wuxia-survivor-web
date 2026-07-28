@@ -1,18 +1,27 @@
 import Phaser from "phaser";
-import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle } from "../ui/minimalTheme";
-import { FONT_BODY, fadeIn, transitionTo } from "../ui/visualConstants";
+import { stageMapConfig } from "../data/gameConfig";
+import type { StageMapId } from "../data/gameConfig";
+import { saveSystem } from "../systems/SaveSystem";
+import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle, spacedText } from "../ui/minimalTheme";
+import { FONT_BODY, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
-import { getAudioSystem, getSaveData } from "../utils/registry";
+import { getAudioSystem, getSaveData, setSaveData } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
+import type { SaveData } from "../types";
 import { SCENE_KEYS } from "./sceneKeys";
 
 const STATS_Y = 30;
 const TITLE_Y = 146;
 const MENU_FIRST_ROW_Y = 246;
 const MENU_ROW_GAP = 64;
+/** 选关行紧跟"开始闯荡"，弱化行距更紧凑 */
+const MAP_ROW_GAP = 50;
 
 export class MenuScene extends Phaser.Scene {
+  /** 选关行的文字对象（addMinimalMenuRow 容器第 0 个元素），切换时行内更新。 */
+  private mapRowText?: Phaser.GameObjects.Text;
+
   constructor() {
     super(SCENE_KEYS.menu);
   }
@@ -53,18 +62,26 @@ export class MenuScene extends Phaser.Scene {
       transitionTo(this, SCENE_KEYS.game);
     }, { highlight: true, fontSize: 28 });
 
-    const scriptureRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MENU_ROW_GAP, "翻阅秘籍", () => {
+    // 选关行（弱化小字）：读存档显示当前选，点击在双图间循环并写存档
+    const selectedMapId = this.readSelectedMapId(saveData);
+    const selectedMap = stageMapConfig.maps.find((entry) => entry.id === selectedMapId) ?? stageMapConfig.maps[0];
+    const mapRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP, `关卡 · ${selectedMap.displayName}`, () => {
+      this.cycleMapSelection();
+    }, { fontSize: 20 });
+    this.mapRowText = mapRow.container.getAt(0) as Phaser.GameObjects.Text;
+
+    const scriptureRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP + MENU_ROW_GAP, "翻阅秘籍", () => {
       getAudioSystem(this).playPlaceholder("ui_click");
       transitionTo(this, SCENE_KEYS.scripture, { returnTo: "menu" });
     }, { fontSize: 28 });
 
-    const settingsRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MENU_ROW_GAP * 2, "设置", () => {
+    const settingsRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP + MENU_ROW_GAP * 2, "设置", () => {
       getAudioSystem(this).playPlaceholder("ui_click");
       transitionTo(this, SCENE_KEYS.settings, { returnTo: "menu" });
     }, { fontSize: 28 });
 
     // 行入场 stagger：alpha 0→1、y+10→0、delay index*90
-    [startRow, scriptureRow, settingsRow].forEach((row, index) => {
+    [startRow, mapRow, scriptureRow, settingsRow].forEach((row, index) => {
       const targetY = row.container.y;
       row.container.setAlpha(0);
       row.container.y = targetY + 10;
@@ -129,6 +146,50 @@ export class MenuScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off(Phaser.Scale.Events.ENTER_FULLSCREEN, onEnterFullscreen);
       this.scale.off(Phaser.Scale.Events.LEAVE_FULLSCREEN, onLeaveFullscreen);
+    });
+  }
+
+  /** 读存档中的选关地图 id；缺失/非法时回默认（青石山道）。 */
+  private readSelectedMapId(saveData: SaveData): StageMapId {
+    const found = stageMapConfig.maps.find((entry) => entry.id === saveData.lastMapId);
+    return found ? found.id : stageMapConfig.defaultMapId;
+  }
+
+  /** 选关行点击：双图循环切换 → 行内文字更新 + 金色微闪 + ui_click → 写存档。 */
+  private cycleMapSelection(): void {
+    const saveData = getSaveData(this);
+    const maps = stageMapConfig.maps;
+    if (maps.length < 2 || !this.mapRowText) {
+      return;
+    }
+    const currentId = this.readSelectedMapId(saveData);
+    const currentIndex = Math.max(0, maps.findIndex((entry) => entry.id === currentId));
+    const next = maps[(currentIndex + 1) % maps.length];
+
+    saveData.lastMapId = next.id;
+    saveSystem.write(saveData);
+    setSaveData(this, saveData);
+
+    getAudioSystem(this).playPlaceholder("ui_click");
+
+    const text = this.mapRowText;
+    text.setText(spacedText(`关卡 · ${next.displayName}`));
+    // 金色微闪：染金 + 120ms 缩放脉冲；清色用 delayedCall（hover 会 killTweensOf(text)，避免金色残留）
+    this.tweens.killTweensOf(text);
+    text.setTint(PALETTE.accentGold);
+    this.tweens.add({
+      targets: text,
+      scaleX: 1.08,
+      scaleY: 1.08,
+      duration: 120,
+      yoyo: true,
+      ease: Phaser.Math.Easing.Sine.Out,
+      onComplete: () => {
+        text.setScale(1);
+      }
+    });
+    this.time.delayedCall(240, () => {
+      text.clearTint();
     });
   }
 

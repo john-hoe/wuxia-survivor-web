@@ -114,6 +114,8 @@ export type SaveData = {
   bestKills: number;
   bestLevel: number;
   bossDefeated: boolean;
+  /** 菜单选关记住的地图 id（"qingshi_mountain_road" | "maple_official_road"；缺省/非法 = 青石山道）。 */
+  lastMapId?: string;
   metaUpgrades: {
     max_hp: number;
     move_speed: number;
