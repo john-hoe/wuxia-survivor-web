@@ -346,14 +346,20 @@ export class ProgressionSystem {
   }
 
   private spawnMagnetTrailIfNeeded(gem: InnerPowerGemRuntime): void {
+    const vfxScale = this.getVfxDensityScale();
+    // 降级②：磁吸拖尾频率/长度减半——生成间隔 90→180ms、并发上限 24→12（"off" 全关）。
+    // 文档内力尾迹上限 80→40（docs/28-p0-fallback-ui-background-spec.md:370）：
+    // 本实现常驻上限 24 已低于低档 40，低档在 24 基础上再折半至 12，满足并严于文档。
+    const trailCap = vfxScale < 1 ? MAX_MAGNET_TRAIL_SPRITES / 2 : MAX_MAGNET_TRAIL_SPRITES;
     if (!gem.absorbing
       || gem.trailCooldownMs > 0
-      || this.magnetTrails.length >= MAX_MAGNET_TRAIL_SPRITES
+      || vfxScale <= 0
+      || this.magnetTrails.length >= trailCap
       || !this.scene.textures.exists("vfx_inner_magnet_trail")) {
       return;
     }
 
-    gem.trailCooldownMs = 90;
+    gem.trailCooldownMs = vfxScale < 1 ? 180 : 90;
     const heroScreen = this.options.getHeroScreen();
     const angle = Math.atan2(heroScreen.y - gem.view.y, heroScreen.x - gem.view.x) + Math.PI / 2;
     const trail = this.scene.add.sprite(gem.view.x, gem.view.y, "vfx_inner_magnet_trail")
@@ -393,6 +399,28 @@ export class ProgressionSystem {
   private destroyGem(index: number, _reason: "collected" | "expired"): void {
     const [gem] = this.gems.splice(index, 1);
     gem.view.destroy();
+  }
+
+  /**
+   * 防御性读取 VFX 密度档（与 GameScene.getVfxDensityScale 同语义，settings 热更即时生效）：
+   * vfxDensity === "off" → 0（全关）；vfxDensity "low" / lowVfxMode → 0.5；缺省 1。
+   * 低 VFX 降级只换参数不删功能（docs/29-character-drop-vfx-art-spec.md:430-436）。
+   */
+  private getVfxDensityScale(): number {
+    const saveData = this.scene.registry.get("saveData") as
+      | { settings?: { lowVfxMode?: boolean; vfxDensity?: string } }
+      | undefined;
+    const settings = saveData?.settings;
+    if (!settings) {
+      return 1;
+    }
+    if (settings.vfxDensity === "off") {
+      return 0;
+    }
+    if (settings.vfxDensity === "low" || settings.lowVfxMode) {
+      return 0.5;
+    }
+    return 1;
   }
 }
 

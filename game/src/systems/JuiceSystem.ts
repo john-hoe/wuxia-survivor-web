@@ -9,7 +9,7 @@ import { PALETTE, FONT_MONO } from "../ui/visualConstants";
  *
  * 用法：`JuiceSystem.get(scene).hitSpark(x, y)`。
  * 每个 Scene 一个实例，懒创建；粒子纹理用 graphics 程序化生成，零美术依赖。
- * 低 VFX 模式下粒子数量自动减半、飘字合并抑制。
+ * 低 VFX 模式下粒子数量按文档降级表 ×0.6（命中 40→24、击杀 30→18）、飘字合并抑制。
  */
 
 export type DamageKind = "normal" | "crit" | "elite" | "boss" | "heal" | "gold" | "poison";
@@ -198,7 +198,7 @@ export class JuiceSystem {
 
   /** 环境落叶/飞尘：全屏常驻氛围层，scrollFactor 0。 */
   startAmbient(tintGroup?: number[]): void {
-    if (this.ambientEmitter || this.lowVfx) {
+    if (this.ambientEmitter || this.isLowVfx()) {
       return;
     }
     const { width } = this.scene.scale;
@@ -244,8 +244,8 @@ export class JuiceSystem {
     if (this.readSettings()?.damageNumbers === false) {
       return;
     }
-    if (this.lowVfx && kind === "normal") {
-      return; // 低 VFX 模式只保留高价值飘字
+    if (this.isLowVfx() && kind === "normal") {
+      return; // 低 VFX 模式只保留高价值飘字（降级①：仅暴击/精英/Boss/收益类）
     }
     const style = DAMAGE_STYLE[kind];
     const label = this.obtainText(style);
@@ -293,7 +293,17 @@ export class JuiceSystem {
   }
 
   private q(n: number): number {
-    return this.lowVfx ? Math.max(2, Math.floor(n / 2)) : n;
+    // 降级③：低档粒子数按文档降级表统一 ×0.6（命中 40→24/s、击杀 30→18/s 同比例），保底 2。
+    // 依据 docs/28-p0-fallback-ui-background-spec.md:366-372、docs/29-character-drop-vfx-art-spec.md:430-436
+    return this.isLowVfx() ? Math.max(2, Math.round(n * 0.6)) : n;
+  }
+
+  /**
+   * 低 VFX 判定：setLowVfx 显式档（GameScene 初始化调用）+ 设置热更兜底
+   * （audioSystem.getSettings 防御性读取，设置页切"低特效"经 settings_changed 即时生效）。
+   */
+  private isLowVfx(): boolean {
+    return this.lowVfx || this.readSettings()?.lowVfxMode === true;
   }
 
   private burst(

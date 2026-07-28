@@ -1027,6 +1027,10 @@ export class SkillSystem {
     if (!this.scene.textures.exists(INK_HIT_DOT_TEXTURE)) {
       return;
     }
+    const vfxScale = this.getVfxDensityScale();
+    if (vfxScale <= 0) {
+      return;
+    }
 
     const emitter = this.scene.add.particles(screenX, screenY, INK_HIT_DOT_TEXTURE, {
       speed: { min: 18, max: 78 },
@@ -1038,7 +1042,8 @@ export class SkillSystem {
       emitting: false
     });
     emitter.setDepth(18);
-    emitter.explode(4);
+    // 降级③：命中粒子低档 ×0.6（40→24/s 同比例，4→2，保底 2 粒不删表现）
+    emitter.explode(vfxScale < 1 ? 2 : 4);
     this.scene.time.delayedCall(600, () => {
       emitter.destroy();
     });
@@ -1470,7 +1475,8 @@ export class SkillSystem {
     projectile.view.destroy();
   }
 
-  /** 投射物拖尾：emitter 跟随弹体，进阶版金色尾焰；随弹体销毁，防泄漏。 */
+  /** 投射物拖尾：emitter 跟随弹体，进阶版金色尾焰；随弹体销毁，防泄漏。
+   * 低 VFX 降级⑤：拖尾仅进阶版保留（"off" 全关）；保留的进阶拖尾频率/长度减半（30→60ms、200→100ms）。 */
   private createTrailEmitter(
     view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite,
     advanced: boolean
@@ -1478,10 +1484,15 @@ export class SkillSystem {
     if (!this.scene.textures.exists(TRAIL_TEXTURE)) {
       return undefined;
     }
+    const vfxScale = this.getVfxDensityScale();
+    if (vfxScale <= 0 || (vfxScale < 1 && !advanced)) {
+      return undefined;
+    }
+    const degraded = vfxScale < 1;
     const emitter = this.scene.add.particles(0, 0, TRAIL_TEXTURE, {
       follow: view,
-      frequency: 30,
-      lifespan: 200,
+      frequency: degraded ? 60 : 30,
+      lifespan: degraded ? 100 : 200,
       speed: { min: 8, max: 26 },
       scale: { start: 0.55, end: 0 },
       alpha: { start: 0.7, end: 0 },
@@ -1492,17 +1503,22 @@ export class SkillSystem {
     return emitter;
   }
 
-  /** 回风镖残影：每 70ms 叠一层 alpha 渐隐残影 sprite（约 2-3 层同屏），240ms 后销毁。 */
+  /** 回风镖残影：每 70ms 叠一层 alpha 渐隐残影 sprite（约 2-3 层同屏），240ms 后销毁。
+   * 低 VFX 降级⑤：残影仅进阶版保留（"off" 全关）；进阶残影间隔 70→140ms。 */
   private spawnDartGhostIfReady(orbital: OrbitalRuntime, deltaMs: number): void {
     orbital.ghostCooldownMs = Math.max(0, orbital.ghostCooldownMs - deltaMs);
     if (orbital.ghostCooldownMs > 0 || this.dartGhosts.length >= MAX_DART_GHOSTS) {
+      return;
+    }
+    const vfxScale = this.getVfxDensityScale();
+    if (vfxScale <= 0 || (vfxScale < 1 && !orbital.advanced)) {
       return;
     }
     if (!(orbital.view instanceof Phaser.GameObjects.Sprite) || orbital.view.getData("spriteArt") !== true) {
       return;
     }
 
-    orbital.ghostCooldownMs = DART_GHOST_INTERVAL_MS;
+    orbital.ghostCooldownMs = vfxScale < 1 ? DART_GHOST_INTERVAL_MS * 2 : DART_GHOST_INTERVAL_MS;
     const view = orbital.view;
     const ghost = this.scene.add.sprite(view.x, view.y, view.texture.key)
       .setDepth(14)
@@ -2001,6 +2017,28 @@ export class SkillSystem {
       x: heroScreen.x + worldX - heroWorld.x,
       y: heroScreen.y + worldY - heroWorld.y
     };
+  }
+
+  /**
+   * 防御性读取 VFX 密度档（与 GameScene.getVfxDensityScale 同语义，settings 热更即时生效）：
+   * vfxDensity === "off" → 0（全关）；vfxDensity "low" / lowVfxMode → 0.5；缺省 1。
+   * 低 VFX 降级只换参数不删功能（docs/29-character-drop-vfx-art-spec.md:430-436）。
+   */
+  private getVfxDensityScale(): number {
+    const saveData = this.scene.registry.get("saveData") as
+      | { settings?: { lowVfxMode?: boolean; vfxDensity?: string } }
+      | undefined;
+    const settings = saveData?.settings;
+    if (!settings) {
+      return 1;
+    }
+    if (settings.vfxDensity === "off") {
+      return 0;
+    }
+    if (settings.vfxDensity === "low" || settings.lowVfxMode) {
+      return 0.5;
+    }
+    return 1;
   }
 }
 

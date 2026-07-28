@@ -373,6 +373,42 @@ export class EnemyDirectorSystem {
     }
   }
 
+  /**
+   * 压测调试（GameScene F6 键，DEV only）：按当前波次段（ResolvedWaveSegment）的敌种组成
+   * 额外批量刷怪 count 个。点位：以英雄为圆心的屏外环形均布 + 角度抖动
+   * （半径 = max(屏宽,屏高)/2 + 屏外边距，逐点按主轴折算 SpawnSide 仅作记录）。
+   * 硬上限 aliveCap × 1.5 钳制防连按失控（连按可叠到 150+）；敌种复用 pickNormalEnemyId
+   * （含 spawnAfterSeconds/typeCap/新敌种解锁偏好），生成复用 spawnEnemy，不改自然刷怪逻辑。
+   * 返回本次实际刷出数量（受硬上限钳制可能少于 count）。
+   */
+  debugSpawnWaveBatch(count: number): number {
+    const segment = this.resolveSegment(this.getSegment(this.options.getElapsedSeconds()));
+    const hardCap = Math.max(1, Math.floor(segment.aliveCap * 1.5));
+    const budget = Math.min(Math.max(0, Math.floor(count)), Math.max(0, hardCap - this.enemies.length));
+    if (budget <= 0) {
+      return 0;
+    }
+
+    const heroWorld = this.options.getHeroWorld();
+    const margin = Phaser.Math.Between(this.config.spawnOutsideMinPx, this.config.spawnOutsideMaxPx);
+    const radius = Math.max(this.scene.scale.width, this.scene.scale.height) / 2 + margin;
+    let spawned = 0;
+    for (let index = 0; index < budget; index += 1) {
+      const enemyId = this.pickNormalEnemyId(segment);
+      if (!enemyId) {
+        break;
+      }
+      const angle = (Math.PI * 2 * index) / budget + Phaser.Math.FloatBetween(-0.15, 0.15);
+      this.spawnEnemy(enemyId, segment, {
+        x: heroWorld.x + Math.cos(angle) * radius,
+        y: heroWorld.y + Math.sin(angle) * radius,
+        side: getSpawnSideForAngle(angle)
+      });
+      spawned += 1;
+    }
+    return spawned;
+  }
+
   debugShowEliteWarningForShowcase(): void {
     this.clearEliteWarning();
     const heroWorld = this.options.getHeroWorld();
@@ -1967,4 +2003,14 @@ function getPerpendicularSides(side: Exclude<SpawnSide, "corner">): [Exclude<Spa
     return ["top", "bottom"];
   }
   return ["left", "right"];
+}
+
+/** 压测环形点位（角度）→ SpawnSide：按主轴取边，仅用于刷怪方向记录/连击规避统计。 */
+function getSpawnSideForAngle(angleRad: number): SpawnSide {
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  if (Math.abs(cos) >= Math.abs(sin)) {
+    return cos >= 0 ? "right" : "left";
+  }
+  return sin >= 0 ? "bottom" : "top";
 }

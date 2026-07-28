@@ -361,6 +361,9 @@ export class GameScene extends Phaser.Scene {
       };
 
       const startInsight = (): void => this.openInsight();
+      // F6：压测批量刷怪（按当前波次段敌种组成 +30，连按可叠到 aliveCap×1.5 硬上限）
+      const stressSpawnWave = (): void => this.spawnStressWaveForDebug();
+      const toggleGodMode = (): void => this.toggleGodModeForPerf();
       const startDeath = (): void => this.startDeathTransition();
       const showResult = (): void => this.showResult();
       const damageHero = (): void => this.applyDebugDamage();
@@ -382,19 +385,22 @@ export class GameScene extends Phaser.Scene {
       let debugKey: Phaser.Input.Keyboard.Key | undefined;
       if (import.meta.env.DEV) {
         const switchStageMap = (): void => this.cycleStageMapForPreview();
+        const toggleGodMode = (): void => this.toggleGodModeForPerf();
         debugKey = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK);
         debugKey.on("down", toggleDebug);
+        keyboard.on("keydown-F1", startInsight);
         keyboard.on("keydown-F2", switchStageMap);
         keyboard.on("keydown-F3", enableP0ArtShowcase);
         keyboard.on("keydown-F4", grantMoranSkill);
         keyboard.on("keydown-F5", previewDuskTier);
-        keyboard.on("keydown-F6", startInsight);
+        keyboard.on("keydown-F6", stressSpawnWave);
         keyboard.on("keydown-F7", startDeath);
         keyboard.on("keydown-F8", showResult);
         keyboard.on("keydown-F9", damageHero);
         keyboard.on("keydown-F10", healHero);
         keyboard.on("keydown-F11", spawnBoss);
         keyboard.on("keydown-F12", damageBoss);
+        keyboard.on("keydown-G", toggleGodMode);
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
           keyboard.off("keydown-F2", switchStageMap);
         });
@@ -405,15 +411,17 @@ export class GameScene extends Phaser.Scene {
         keyboard.off("keydown-P", openPause);
         debugKey?.off("down", toggleDebug);
         if (import.meta.env.DEV) {
+          keyboard.off("keydown-F1", startInsight);
           keyboard.off("keydown-F3", enableP0ArtShowcase);
           keyboard.off("keydown-F4", grantMoranSkill);
           keyboard.off("keydown-F5", previewDuskTier);
-          keyboard.off("keydown-F6", startInsight);
+          keyboard.off("keydown-F6", stressSpawnWave);
           keyboard.off("keydown-F7", startDeath);
           keyboard.off("keydown-F8", showResult);
           keyboard.off("keydown-F9", damageHero);
           keyboard.off("keydown-F10", healHero);
           keyboard.off("keydown-F11", spawnBoss);
+          keyboard.off("keydown-G", toggleGodMode);
           keyboard.off("keydown-F12", damageBoss);
         }
       });
@@ -2347,6 +2355,23 @@ export class GameScene extends Phaser.Scene {
     this.updateBossHud();
   }
 
+  /**
+   * F6 压测（DEV）：让 EnemyDirector 按当前波次段（ResolvedWaveSegment）敌种组成额外批量刷 30 敌，
+   * 点位为屏外环形；aliveCap×1.5 硬上限在 EnemyDirector.debugSpawnWaveBatch 内钳制，
+   * 连按可堆到 150+ 用于 120 敌 / 150+ 敌性能压测，不改自然刷怪逻辑。
+   */
+  private spawnStressWaveForDebug(): void {
+    if (getScreenState(this) !== "game") {
+      return;
+    }
+    const spawned = this.enemyDirector?.debugSpawnWaveBatch(30) ?? 0;
+    this.latestEnemyDirector = this.enemyDirector?.getSnapshot();
+    this.debugPanel?.update(this.createDebugSnapshot());
+    console.debug(
+      `[Stress] F6 批量刷怪 +${spawned}，当前存活 ${this.latestEnemyDirector?.enemiesAlive ?? "?"} / 硬上限 aliveCap×1.5`
+    );
+  }
+
   private enableP0ArtShowcaseForDebug(): void {
     if (getScreenState(this) !== "game") {
       return;
@@ -2509,8 +2534,16 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
+  private godModeForPerf = false;
+
+  /** DEV 性能压测专用：G 键切换无敌（不清状态、不影响其他调试）。 */
+  private toggleGodModeForPerf(): void {
+    this.godModeForPerf = !this.godModeForPerf;
+    console.debug(`[Perf] godMode=${this.godModeForPerf}`);
+  }
+
   private applyHeroDamage(amount: number, source: string): DamageResult | undefined {
-    if (getScreenState(this) !== "game") {
+    if (getScreenState(this) !== "game" || this.godModeForPerf) {
       return undefined;
     }
 
