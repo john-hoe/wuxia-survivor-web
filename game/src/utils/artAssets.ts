@@ -35,6 +35,7 @@ import vfxBossWhirlwindWarningUrl from "../assets/vfx/vfx_boss_whirlwind_warning
 import vfxDeathVignetteUrl from "../assets/vfx/vfx_death_vignette.png";
 import vfxEliteWarningUrl from "../assets/vfx/vfx_elite_warning.png";
 import vfxEnemyDieUrl from "../assets/vfx/vfx_enemy_die.png";
+import vfxGroundCrackUrl from "../assets/vfx/vfx_ground_crack.png";
 import vfxHeroHurtFlashUrl from "../assets/vfx/vfx_hero_hurt_flash.png";
 import vfxHitLightUrl from "../assets/vfx/vfx_hit_light.png";
 import vfxInkSplatUrl from "../assets/vfx/vfx_ink_splat.png";
@@ -173,6 +174,7 @@ export const artAssetUrls = {
   vfx_death_vignette: vfxDeathVignetteUrl,
   vfx_elite_warning: vfxEliteWarningUrl,
   vfx_enemy_die: vfxEnemyDieUrl,
+  vfx_ground_crack: vfxGroundCrackUrl,
   vfx_hero_hurt_flash: vfxHeroHurtFlashUrl,
   vfx_hit_light: vfxHitLightUrl,
   vfx_ink_splat: vfxInkSplatUrl,

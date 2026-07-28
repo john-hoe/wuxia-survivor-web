@@ -143,10 +143,17 @@ const AURA_TEXTURE_RING_BAND_RADIUS = 102;
 const WINDUP_SQUASH = 0.94;
 const WINDUP_RECOIL = 1.06;
 const WINDUP_RECOIL_MS = 140;
-/** 受击白闪（Boss 用金色）与 squash 回弹时长 */
+/** 受击闪（Boss 保留金色 tint）与 squash 回弹时长 */
 const HIT_FLASH_MS = 80;
 const HIT_SQUASH_MS = 60;
 const HIT_FLASH_TINT = 0xf6d472;
+/** 受击溅墨：vfx_ink_splat 前 3 帧随机单帧采样，NORMAL 混合，0.5-0.7 倍，220ms 淡出销毁 */
+const HIT_INK_SPLAT_TEXTURE = "vfx_ink_splat";
+const HIT_INK_SPLAT_FRAMES = ["0", "1", "2"];
+const HIT_INK_SPLAT_SCALE_MIN = 0.5;
+const HIT_INK_SPLAT_SCALE_MAX = 0.7;
+const HIT_INK_SPLAT_FADE_MS = 220;
+const HIT_INK_SPLAT_JITTER_PX = 10;
 /** windup 蓄力 tint（出手时清除） */
 const WINDUP_TINT = 0xff6b5e;
 /** 冲锋残影：生成间隔与单次冲锋上限 */
@@ -160,6 +167,8 @@ export class BossSystem {
   private readonly config: BossConfig;
   private runtime?: BossRuntime;
   private chooseAttackAccumulatorMs = 0;
+  /** 受击溅墨在飞实例（220ms 淡出后自销毁；destroy 时兜底清理，Tween/显示对象零泄漏） */
+  private readonly hitSplats = new Set<Phaser.GameObjects.Sprite>();
 
   constructor(private readonly scene: Phaser.Scene, private readonly options: BossSystemOptions) {
     this.config = options.config ?? heifengChiefConfig;
@@ -382,6 +391,12 @@ export class BossSystem {
   }
 
   destroy(): void {
+    // 受击溅墨在飞实例兜底清理（无论 runtime 是否仍在）
+    for (const splat of this.hitSplats) {
+      this.scene.tweens.killTweensOf(splat);
+      splat.destroy();
+    }
+    this.hitSplats.clear();
     if (!this.runtime) {
       return;
     }
@@ -1101,8 +1116,10 @@ export class BossSystem {
 
   private flashBoss(runtime: BossRuntime): void {
     runtime.hitSquashMs = HIT_SQUASH_MS;
+    // 墨滴溅身：金色 tint 保留，命中点（偏躯干）叠加小溅墨；纹理缺失时静默跳过
+    this.spawnHitInkSplat(runtime.view.x, runtime.view.y - 24, runtime.view.depth + 1);
     if (runtime.view instanceof Phaser.GameObjects.Sprite && runtime.view.getData("bossSpriteArt") === true) {
-      // 受击白闪：Boss 用金色；80ms 后恢复（windup 期恢复为蓄力 tint 而非清除）
+      // 受击闪：Boss 保留金色；80ms 后恢复（windup 期恢复为蓄力 tint 而非清除）
       const view = runtime.view;
       view.setTintFill(HIT_FLASH_TINT);
       this.scene.time.delayedCall(HIT_FLASH_MS, () => {
@@ -1124,6 +1141,45 @@ export class BossSystem {
       alpha: 1,
       duration: 110,
       ease: "Quad.easeOut"
+    });
+  }
+
+  /**
+   * 命中点小溅墨（纯表现层）：vfx_ink_splat 前 3 帧随机单帧采样，0.5-0.7 倍、随机轻旋转、
+   * NORMAL 混合（深墨贴身感，不走 ADD 亮色），220ms 淡出后销毁。
+   * 在飞实例入 hitSplats 跟踪，destroy 兜底清理，Tween/显示对象零泄漏。
+   */
+  private spawnHitInkSplat(screenX: number, screenY: number, depth: number): void {
+    if (!this.scene.textures.exists(HIT_INK_SPLAT_TEXTURE)) {
+      return;
+    }
+    const texture = this.scene.textures.get(HIT_INK_SPLAT_TEXTURE);
+    const frames = HIT_INK_SPLAT_FRAMES.filter((name) => texture.has(name));
+    const scale = Phaser.Math.FloatBetween(HIT_INK_SPLAT_SCALE_MIN, HIT_INK_SPLAT_SCALE_MAX);
+    const splat = this.scene.add.sprite(
+      screenX + Phaser.Math.Between(-HIT_INK_SPLAT_JITTER_PX, HIT_INK_SPLAT_JITTER_PX),
+      screenY + Phaser.Math.Between(-HIT_INK_SPLAT_JITTER_PX, HIT_INK_SPLAT_JITTER_PX),
+      HIT_INK_SPLAT_TEXTURE,
+      frames.length > 0 ? Phaser.Math.RND.pick(frames) : 0
+    )
+      .setDepth(depth)
+      .setScale(scale)
+      .setRotation(Phaser.Math.FloatBetween(-0.6, 0.6))
+      .setAlpha(0.92)
+      .setBlendMode(Phaser.BlendModes.NORMAL);
+    this.hitSplats.add(splat);
+    this.scene.tweens.add({
+      targets: splat,
+      alpha: 0,
+      scale: scale * 1.3,
+      duration: HIT_INK_SPLAT_FADE_MS,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.hitSplats.delete(splat);
+        if (splat.active) {
+          splat.destroy();
+        }
+      }
     });
   }
 

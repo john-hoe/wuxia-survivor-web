@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>枫叶官道 · 白昼氛围原型</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ background:#141210; }
+  body{ display:flex; align-items:center; justify-content:center; min-height:100vh; font-family:'Noto Sans SC',sans-serif; }
+
+  /* ================= 舞台 960×540 ================= */
+  .stage{
+    position:relative; width:960px; height:540px; overflow:hidden;
+    background:
+      radial-gradient(1200px 520px at 76% -8%, rgba(255,222,150,.7) 0%, rgba(255,222,150,0) 55%),
+      linear-gradient(180deg,#F8EED6 0%, #F5E3BA 26%, #EED49E 42%, #E8C48C 52%, #DFB57E 100%);
+    box-shadow:0 24px 90px rgba(0,0,0,.55);
+  }
+
+  /* ---------- 日光 ---------- */
+  .sun{
+    position:absolute; right:110px; top:-80px; width:360px; height:360px; border-radius:50%;
+    background:radial-gradient(circle, rgba(255,242,204,.95) 0%, rgba(255,216,142,.5) 34%, rgba(255,216,142,0) 70%);
+    filter:blur(2px);
+  }
+
+  /* ---------- 远关门影（暖调） ---------- */
+  .gate{
+    position:absolute; left:50%; top:102px; width:430px; margin-left:-215px; z-index:4;
+    opacity:.52; filter:sepia(.75) hue-rotate(-14deg) saturate(1.3) brightness(1.02) blur(.8px);
+  }
+
+  /* ---------- 地平线雾霭 ---------- */
+  .haze{
+    position:absolute; left:0; right:0; top:140px; height:150px; z-index:3;
+    background:linear-gradient(180deg, rgba(240,214,160,0) 0%, rgba(240,214,160,.8) 58%, rgba(233,202,150,0) 100%);
+  }
+  .mist{
+    position:absolute; width:640px; height:44px; border-radius:50%; z-index:3;
+    background:radial-gradient(closest-side, rgba(250,236,205,.8), rgba(250,236,205,0));
+    filter:blur(6px);
+  }
+  .mist.m1{ left:-90px; top:196px; }
+  .mist.m2{ right:-120px; top:224px; width:520px; opacity:.8; }
+
+  /* ---------- 地面：青石暖化为赭石 ---------- */
+  .ground{
+    position:absolute; left:-40px; right:-40px; bottom:-30px; height:370px; z-index:1;
+    background:url('../game/src/assets/backgrounds/ground_qingshi_base.png') repeat;
+    background-size:430px 430px;
+    filter:sepia(.9) hue-rotate(-6deg) saturate(1.9) brightness(1.42) contrast(.88);
+    -webkit-mask-image:linear-gradient(180deg, transparent 0%, #000 20%);
+            mask-image:linear-gradient(180deg, transparent 0%, #000 20%);
+  }
+  .ground-tone{
+    position:absolute; left:0; right:0; bottom:0; height:360px; z-index:2; pointer-events:none;
+    background:
+      linear-gradient(180deg, rgba(240,210,152,.85) 0%, rgba(240,210,152,0) 30%),
+      linear-gradient(0deg, rgba(120,70,32,.32) 0%, rgba(120,70,32,0) 28%);
+  }
+
+  /* ---------- 官道：梯形古道透视 ---------- */
+  .road{
+    position:absolute; left:50%; bottom:-6px; width:760px; height:352px; margin-left:-380px; z-index:2;
+    clip-path:polygon(46.5% 0, 53.5% 0, 74% 100%, 26% 100%);
+    background:url('../game/src/assets/backgrounds/ground_qingshi_base.png') repeat;
+    background-size:360px 360px;
+    filter:sepia(.8) hue-rotate(-4deg) saturate(1.5) brightness(1.52) contrast(.86);
+  }
+  .road-tone{
+    position:absolute; left:50%; bottom:-6px; width:760px; height:352px; margin-left:-380px; z-index:2;
+    clip-path:polygon(46.5% 0, 53.5% 0, 74% 100%, 26% 100%); pointer-events:none;
+    background:
+      linear-gradient(180deg, rgba(244,220,168,.9) 0%, rgba(244,220,168,0) 34%),
+      linear-gradient(90deg, rgba(122,72,32,.42) 0%, rgba(122,72,32,0) 16%, rgba(255,236,190,.28) 50%, rgba(122,72,32,0) 84%, rgba(122,72,32,.42) 100%);
+  }
+  /* 道中磨损暖尘 */
+  .road-dust{
+    position:absolute; left:50%; bottom:-30px; width:300px; height:420px; margin-left:-150px; z-index:2;
+    background:radial-gradient(closest-side, rgba(246,214,152,.42), rgba(246,214,152,0) 75%);
+    pointer-events:none;
+  }
+
+  /* ---------- 枫红树冠（色团成形为冠，竹叶仅作垂叶纹理） ---------- */
+  .crown-back{
+    position:absolute; width:560px; height:320px; z-index:4; pointer-events:none;
+    background:radial-gradient(closest-side, rgba(255,190,110,.5), rgba(255,190,110,0) 72%);
+  }
+  .crown-back.l{ left:-70px; top:-10px; }
+  .crown-back.r{ right:-70px; top:-30px; }
+  .crown{
+    position:absolute; width:640px; height:190px; z-index:5; pointer-events:none;
+    background:url('../game/src/assets/backgrounds/bamboo_edge_cluster.png') center top/640px 640px no-repeat;
+    filter:hue-rotate(202deg) saturate(3.0) brightness(.85) contrast(1.08);
+    -webkit-mask-image:linear-gradient(180deg, #000 30%, transparent 92%);
+            mask-image:linear-gradient(180deg, #000 30%, transparent 92%);
+  }
+  .crown.l{ left:-150px; top:-24px; transform:rotate(6deg); }
+  .crown.r{ right:-160px; top:-38px; transform:scaleX(-1) rotate(5deg); }
+  /* 冠层色团：云团状层叠成枫冠体量 */
+  .crown-blob{
+    position:absolute; z-index:4; border-radius:50%; pointer-events:none; filter:blur(20px);
+  }
+  .crown-blob.b1{ left:-90px; top:-70px; width:420px; height:230px; background:rgba(168,50,31,.62); }
+  .crown-blob.b2{ left:70px;  top:-105px; width:300px; height:190px; background:rgba(184,69,42,.55); }
+  .crown-blob.b3{ left:200px; top:-70px; width:230px; height:150px; background:rgba(201,101,46,.48); }
+  .crown-blob.b4{ left:20px;  top:18px;  width:260px; height:130px; background:rgba(143,42,26,.5); filter:blur(26px); }
+  .crown-blob.b5{ right:-90px; top:-80px; width:420px; height:230px; background:rgba(160,46,28,.62); }
+  .crown-blob.b6{ right:80px;  top:-110px; width:300px; height:190px; background:rgba(178,58,36,.55); }
+  .crown-blob.b7{ right:210px; top:-70px; width:230px; height:150px; background:rgba(208,149,60,.45); }
+  .crown-blob.b8{ right:30px;  top:14px;  width:250px; height:120px; background:rgba(140,40,24,.5); filter:blur(26px); }
+
+  /* ---------- 碑林（近大远小，没入暖雾） ---------- */
+  .stele{ position:absolute; z-index:6; filter:sepia(.5) hue-rotate(-10deg) saturate(1.05) brightness(1.0); }
+  .stele.s1{ left:238px; bottom:246px; width:42px; opacity:.55; filter:sepia(.5) hue-rotate(-10deg) brightness(1.08) blur(1.2px); }
+  .stele.s2{ left:272px; bottom:160px; width:64px; opacity:.8;  filter:sepia(.5) hue-rotate(-10deg) brightness(1.04) blur(.4px); }
+  .stele.s3{ left:196px; bottom:44px;  width:104px; }
+  .stele.s4{ right:238px; bottom:204px; width:54px; opacity:.66; filter:sepia(.5) hue-rotate(-10deg) brightness(1.12) blur(.8px); }
+
+  /* ---------- 点缀：灯笼 / 酒坛 / 旗 ---------- */
+  .lantern{ position:absolute; right:252px; bottom:88px; width:132px; z-index:7; filter:sepia(.35) saturate(1.25) brightness(1.06); }
+  .winejar{ position:absolute; left:300px; bottom:22px; width:74px; z-index:7; filter:sepia(.3) saturate(1.15) brightness(1.04); }
+  .flag{
+    position:absolute; right:176px; bottom:172px; width:94px; z-index:6; opacity:.88;
+    filter:sepia(.45) hue-rotate(-8deg) saturate(1.2) brightness(1.05) blur(.4px);
+  }
+
+  /* ---------- 投影 ---------- */
+  .shadow{
+    position:absolute; border-radius:50%; z-index:6;
+    background:radial-gradient(closest-side, rgba(80,46,18,.5), rgba(80,46,18,0) 72%);
+    filter:blur(3px);
+  }
+
+  /* ---------- 少侠（idle 第 1 帧） ---------- */
+  .hero{
+    position:absolute; left:50%; bottom:112px; width:170px; height:170px; margin-left:-85px; z-index:8;
+    background:url('../game/src/assets/sprites/hero_shaoxia_idle.png') 0 0/680px 170px no-repeat;
+  }
+  .hero-shadow{ left:50%; bottom:106px; width:120px; height:26px; margin-left:-60px; z-index:7; }
+
+  /* ---------- 飘落的枫叶 ---------- */
+  .leaf{ position:absolute; top:-40px; z-index:9; pointer-events:none; animation:fall var(--d) linear var(--dl) infinite; }
+  .leaf i{
+    display:block; width:var(--s); height:var(--s);
+    background:var(--c);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 2 L57 24 L79 12 L71 36 L97 36 L75 51 L88 74 L63 66 L56 92 L50 76 L44 92 L37 66 L12 74 L25 51 L3 36 L29 36 L21 12 L43 24 Z'/%3E%3C/svg%3E") center/contain no-repeat;
+            mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 2 L57 24 L79 12 L71 36 L97 36 L75 51 L88 74 L63 66 L56 92 L50 76 L44 92 L37 66 L12 74 L25 51 L3 36 L29 36 L21 12 L43 24 Z'/%3E%3C/svg%3E") center/contain no-repeat;
+    animation:sway var(--sd) ease-in-out var(--dl) infinite alternate;
+  }
+  @keyframes fall{ to{ transform:translateY(620px) rotate(var(--r)); } }
+  @keyframes sway{ from{ transform:translateX(-16px) rotate(-30deg); } to{ transform:translateX(16px) rotate(34deg); } }
+  .leaf.fore i{ filter:blur(1px); opacity:.92; }
+
+  /* ---------- 整体暖调 & 暗角 ---------- */
+  .tint{
+    position:absolute; inset:0; z-index:10; pointer-events:none; mix-blend-mode:multiply;
+    background:linear-gradient(180deg, rgba(255,226,170,.12), rgba(210,140,70,.14) 78%, rgba(140,80,36,.18));
+  }
+  .vignette{
+    position:absolute; inset:0; z-index:10; pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 42%, rgba(0,0,0,0) 58%, rgba(60,30,10,.28) 100%);
+  }
+
+  /* ---------- 顶部色板标注 ---------- */
+  .tag{
+    position:absolute; left:14px; top:12px; z-index:11;
+    display:flex; align-items:center; gap:10px;
+    padding:6px 12px 6px 10px; border-radius:5px;
+    background:rgba(46,30,16,.5); backdrop-filter:blur(3px);
+    color:#F4E9CE; font-size:10.5px; letter-spacing:1.2px;
+  }
+  .tag b{ font-family:'Ma Shan Zheng',serif; font-weight:400; font-size:14px; letter-spacing:2.5px; margin-right:2px; }
+  .tag .sw{ display:inline-flex; align-items:center; gap:4px; }
+  .tag .sw::before{ content:''; width:9px; height:9px; border-radius:2px; background:var(--c); box-shadow:0 0 0 1px rgba(255,244,214,.35); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="sun"></div>
+
+  <div class="ground"></div>
+  <div class="ground-tone"></div>
+  <div class="road"></div>
+  <div class="road-tone"></div>
+  <div class="road-dust"></div>
+
+  <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png" alt="">
+  <div class="haze"></div>
+  <div class="mist m1"></div>
+  <div class="mist m2"></div>
+
+  <div class="crown-blob b1"></div>
+  <div class="crown-blob b2"></div>
+  <div class="crown-blob b3"></div>
+  <div class="crown-blob b4"></div>
+  <div class="crown-blob b5"></div>
+  <div class="crown-blob b6"></div>
+  <div class="crown-blob b7"></div>
+  <div class="crown-blob b8"></div>
+  <div class="crown-back l"></div>
+  <div class="crown-back r"></div>
+  <div class="crown l"></div>
+  <div class="crown r"></div>
+
+  <img class="stele s1" src="../game/src/assets/backgrounds/decor_stele.png" alt="">
+  <img class="stele s2" src="../game/src/assets/backgrounds/decor_stele.png" alt="">
+  <img class="stele s4" src="../game/src/assets/backgrounds/decor_stele.png" alt="">
+  <img class="stele s3" src="../game/src/assets/backgrounds/decor_stele.png" alt="">
+
+  <img class="flag" src="../game/src/assets/backgrounds/decor_flag.png" alt="">
+  <img class="lantern" src="../game/src/assets/backgrounds/decor_lantern.png" alt="">
+  <img class="winejar" src="../game/src/assets/backgrounds/decor_winejar.png" alt="">
+
+  <div class="shadow hero-shadow"></div>
+  <div class="hero"></div>
+
+  <!-- 枫叶粒子 -->
+  <div class="leaf" style="left:6%;  --d:9.5s; --dl:-2s;  --sd:2.6s; --s:22px; --r:300deg; --c:#B23A24;"><i></i></div>
+  <div class="leaf" style="left:14%; --d:12s;  --dl:-7s;  --sd:3.1s; --s:15px; --r:380deg; --c:#C9652E;"><i></i></div>
+  <div class="leaf" style="left:23%; --d:8.5s; --dl:-5s;  --sd:2.3s; --s:26px; --r:260deg; --c:#A8341F;"><i></i></div>
+  <div class="leaf" style="left:31%; --d:11s;  --dl:-1s;  --sd:2.9s; --s:13px; --r:340deg; --c:#D0953C;"><i></i></div>
+  <div class="leaf" style="left:39%; --d:10s;  --dl:-8s;  --sd:2.5s; --s:19px; --r:310deg; --c:#B8452A;"><i></i></div>
+  <div class="leaf" style="left:47%; --d:13s;  --dl:-4s;  --sd:3.3s; --s:12px; --r:400deg; --c:#C9652E;"><i></i></div>
+  <div class="leaf" style="left:55%; --d:9s;   --dl:-6s;  --sd:2.4s; --s:24px; --r:280deg; --c:#B23A24;"><i></i></div>
+  <div class="leaf" style="left:63%; --d:11.5s;--dl:-3s;  --sd:2.8s; --s:16px; --r:360deg; --c:#D0953C;"><i></i></div>
+  <div class="leaf" style="left:71%; --d:8.8s; --dl:-9s;  --sd:2.2s; --s:21px; --r:290deg; --c:#A8341F;"><i></i></div>
+  <div class="leaf" style="left:79%; --d:12.5s;--dl:-5.5s;--sd:3s;   --s:14px; --r:370deg; --c:#C9652E;"><i></i></div>
+  <div class="leaf" style="left:87%; --d:10.5s;--dl:-2.5s;--sd:2.7s; --s:23px; --r:320deg; --c:#B8452A;"><i></i></div>
+  <div class="leaf" style="left:94%; --d:9.8s; --dl:-7.5s;--sd:2.5s; --s:17px; --r:300deg; --c:#D0953C;"><i></i></div>
+  <div class="leaf" style="left:18%; --d:14s;  --dl:-11s; --sd:3.4s; --s:11px; --r:420deg; --c:#B23A24;"><i></i></div>
+  <div class="leaf" style="left:68%; --d:13.5s;--dl:-10s; --sd:3.2s; --s:12px; --r:390deg; --c:#A8341F;"><i></i></div>
+  <!-- 前景大叶（浅景深） -->
+  <div class="leaf fore" style="left:10%; --d:7.5s; --dl:-4.5s; --sd:2.1s; --s:34px; --r:250deg; --c:#A8321F;"><i></i></div>
+  <div class="leaf fore" style="left:84%; --d:8.2s; --dl:-6.5s; --sd:2.4s; --s:30px; --r:290deg; --c:#B8452A;"><i></i></div>
+
+  <div class="tint"></div>
+  <div class="vignette"></div>
+
+  <div class="tag">
+    <b>枫叶官道 · 昼</b>
+    <span class="sw" style="--c:#B23A24;">枫红 B23A24</span>
+    <span class="sw" style="--c:#8A5A32;">赭石 8A5A32</span>
+    <span class="sw" style="--c:#C9A24B;">芥金 C9A24B</span>
+    <span class="sw" style="--c:#F2E7CC;">宣纸 F2E7CC</span>
+    <span class="sw" style="--c:#33453C;">墨绿 33453C</span>
+  </div>
+</div>
+</body>
+</html>

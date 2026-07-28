@@ -75,6 +75,8 @@ type WaveRuntime = {
   ageMs: number;
   durationMs: number;
   hitEnemyIds: Set<number>;
+  /** 地面残痕已 stamp：首次命中即裂；整波未命中则波结束时落地一裂，每波仅一次 */
+  crackStamped: boolean;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
 };
 
@@ -148,6 +150,10 @@ const CRIT_DAMAGE_RATIO = 2;
 const MAX_ZONES = 2;
 /** 墨层渐褪时长：最后一片领域消失后整层 alpha 线性衰减并销毁 */
 const INK_LAYER_FADE_MS = 650;
+/** 墨层持续慢渐隐：擦除间隔与单次擦除强度（约 3-4s 消隐，防止连续施放墨痕无限累积） */
+const INK_ERASE_INTERVAL_MS = 200;
+const INK_ERASE_ALPHA = 0.05;
+const INK_ERASE_TEXTURE = "ink_erase_white";
 /** 减速宽限：每跳续期 tick + 宽限，领域消失后敌人短时自愈 */
 const ZONE_SLOW_GRACE_MS = 260;
 /** 墨层 RenderTexture 深度：地面道具之上、敌人（8-9）与投射物（14）之下 */
@@ -163,6 +169,22 @@ const INK_HIT_DOT_TEXTURE = "juice_dot";
 /** 配色：墨 / 进阶芥金墨 / Lv3+ 墨缘泛青（tint 乘算微调） */
 const INK_TINT_ADVANCED = 0xa99a20;
 const INK_TINT_CYAN_EDGE = 0x9fc4b4;
+/** 震山掌地面残痕纹理（跨代理约定键，未注册时走程序化裂纹兜底） */
+const GROUND_CRACK_TEXTURE = "vfx_ground_crack";
+/** 程序化兜底裂纹纹理（192×192，生成一次全局复用） */
+const GROUND_CRACK_FALLBACK_TEXTURE = "zhenshan_crack_fallback";
+/** 地面残痕驻留：stamp 后 2.5s 内墨层保持，随后随墨层渐隐销毁 */
+const GROUND_CRACK_HOLD_MS = 2500;
+/** 地面残痕 stamp 透明度 */
+const GROUND_CRACK_ALPHA = 0.55;
+/** 回风飞镖轨道虚线点环：程序化纹理键与贴图尺寸（点环半径 120/128，留白边） */
+const HUIFENG_ORBIT_RING_TEXTURE = "huifeng_orbit_ring";
+const ORBIT_RING_TEXTURE_SIZE = 256;
+/** 轨道环透明度：基础 0.14 / 进阶 0.22（金色细环，跟随英雄与轨道半径） */
+const ORBIT_RING_ALPHA_BASE = 0.14;
+const ORBIT_RING_ALPHA_ADVANCED = 0.22;
+/** 轨道环深度：地面墨层（2）之上、敌人（8-9）之下，仅作轨道指引 */
+const ORBIT_RING_DEPTH = 4;
 
 export class SkillSystem {
   private readonly skills = new Map<SkillId, SkillRuntime>();
@@ -186,6 +208,13 @@ export class SkillSystem {
   private inkLayerWorldY = 0;
   /** stamp 用暂存 Image（不入显示列表，复用避免逐次分配） */
   private inkScratch?: Phaser.GameObjects.Image;
+  /** 墨层慢渐隐：擦除计时与暂存白块 */
+  private inkEraseTickMs = 0;
+  private inkEraseScratch?: Phaser.GameObjects.Image;
+  /** 地面残痕驻留剩余毫秒：>0 时墨层不因领域清空而渐隐（震山掌裂纹 2.5s 驻留） */
+  private inkCrackHoldMs = 0;
+  /** 回风飞镖轨道虚线点环：全部飞镖同圆心同半径，共享一条避免多条同位置叠 alpha */
+  private orbitRing?: Phaser.GameObjects.Sprite;
 
   constructor(private readonly scene: Phaser.Scene, private readonly options: SkillSystemOptions) {
     // 提前实例化 JuiceSystem，确保拖尾粒子纹理已生成
@@ -287,10 +316,15 @@ export class SkillSystem {
     for (const ghost of this.dartGhosts) {
       ghost.destroy();
     }
+    this.orbitRing?.destroy();
+    this.orbitRing = undefined;
     this.inkLayer?.destroy();
     this.inkLayer = undefined;
     this.inkScratch?.destroy();
     this.inkScratch = undefined;
+    this.inkEraseScratch?.destroy();
+    this.inkEraseScratch = undefined;
+    this.inkEraseTickMs = 0;
     this.projectiles.length = 0;
     this.orbitals.length = 0;
     this.waves.length = 0;
@@ -299,6 +333,7 @@ export class SkillSystem {
     this.dartGhosts.length = 0;
     this.hitSamples.length = 0;
     this.orbitalHitCooldowns.clear();
+    this.inkCrackHoldMs = 0;
   }
 
   unlockSkill(skillId: SkillId, level = 1): boolean {
@@ -548,6 +583,7 @@ export class SkillSystem {
       ageMs: 0,
       durationMs: WAVE_DURATION_MS,
       hitEnemyIds: new Set<number>(),
+      crackStamped: false,
       view
     };
     this.nextWaveId += 1;
@@ -662,11 +698,19 @@ export class SkillSystem {
       }
     }
 
+    this.inkCrackHoldMs = Math.max(0, this.inkCrackHoldMs - deltaMs);
     if (!this.inkLayer) {
       return;
     }
     this.syncInkLayerPosition();
-    if (this.zones.length === 0) {
+    // 持续渐隐：无论是否在施放，墨层都以低速率被擦除，防止连续施放时墨痕无限累积糊屏
+    this.inkEraseTickMs += deltaMs;
+    if (this.inkEraseTickMs >= INK_ERASE_INTERVAL_MS) {
+      this.inkEraseTickMs = 0;
+      this.eraseInkLayerPass();
+    }
+    // 领域清空且地面残痕驻留到期后整层渐隐销毁；驻留中保持原样（裂纹仍可见）
+    if (this.zones.length === 0 && this.inkCrackHoldMs <= 0) {
       const nextAlpha = this.inkLayer.alpha - deltaMs / INK_LAYER_FADE_MS;
       if (nextAlpha <= 0) {
         this.inkLayer.destroy();
@@ -675,6 +719,29 @@ export class SkillSystem {
         this.inkLayer.setAlpha(nextAlpha);
       }
     }
+  }
+
+  /** 用 destination-out 擦除做均匀慢渐隐：每 200ms 擦一次，墨痕约 3-4s 自然消隐。 */
+  private eraseInkLayerPass(): void {
+    if (!this.inkLayer) {
+      return;
+    }
+    if (!this.scene.textures.exists(INK_ERASE_TEXTURE)) {
+      const g = this.scene.add.graphics();
+      g.fillStyle(0xffffff, 1);
+      g.fillRect(0, 0, 8, 8);
+      g.generateTexture(INK_ERASE_TEXTURE, 8, 8);
+      g.destroy();
+    }
+    const scratch = this.inkEraseScratch ?? this.scene.add.image(0, 0, INK_ERASE_TEXTURE);
+    this.inkEraseScratch = scratch;
+    scratch
+      .setPosition(0, 0)
+      .setOrigin(0, 0)
+      .setDisplaySize(this.inkLayer.width, this.inkLayer.height)
+      .setAlpha(INK_ERASE_ALPHA)
+      .setVisible(true);
+    this.inkLayer.erase(scratch);
   }
 
   /** 单次跳变：域内敌人走标准技能伤害流；存活敌人经 eventBus 桥接续减速（EnemyDirector 最小通道）。 */
@@ -802,6 +869,71 @@ export class SkillSystem {
   }
 
   /**
+   * 震山掌地面残痕：波首次命中/结束时在波中心把 vfx_ground_crack stamp 到共享地面墨层
+   * （与墨染江山同一 ensureInkLayer；随机旋转 + 缩放抖动，alpha 0.55）。
+   * 驻留 2.5s：inkCrackHoldMs 归零前墨层不渐隐；纹理缺失时走程序化裂纹兜底。
+   */
+  private stampGroundCrack(wave: WaveRuntime): void {
+    const layer = this.ensureInkLayer();
+    if (!layer) {
+      return;
+    }
+
+    const textureKey = this.scene.textures.exists(GROUND_CRACK_TEXTURE)
+      ? GROUND_CRACK_TEXTURE
+      : this.ensureGroundCrackFallbackTexture();
+    if (!textureKey) {
+      return;
+    }
+
+    const scratch = this.obtainInkScratch();
+    const textureSize = this.getTextureFrameWidth(textureKey, 192);
+    scratch.setTexture(textureKey);
+    scratch.setPosition(wave.worldX - this.inkLayerWorldX, wave.worldY - this.inkLayerWorldY);
+    scratch.setRotation(Phaser.Math.FloatBetween(0, Math.PI * 2));
+    // 裂纹铺满波直径，±18% 缩放抖动避免千波一面；不上 tint（美术帧自带墨色/赭石）
+    scratch.setScale(((wave.radius * 2) / textureSize) * Phaser.Math.FloatBetween(0.82, 1.18));
+    scratch.setAlpha(GROUND_CRACK_ALPHA);
+    scratch.clearTint();
+    layer.draw(scratch);
+    this.inkCrackHoldMs = GROUND_CRACK_HOLD_MS;
+  }
+
+  /** 程序化兜底裂纹：深色砸痕 + 放射状折线裂纹，生成一次全局复用（防御残痕纹理未注册）。 */
+  private ensureGroundCrackFallbackTexture(): string | undefined {
+    if (this.scene.textures.exists(GROUND_CRACK_FALLBACK_TEXTURE)) {
+      return GROUND_CRACK_FALLBACK_TEXTURE;
+    }
+
+    const graphics = this.scene.add.graphics();
+    graphics.fillStyle(0x141814, 0.5);
+    graphics.fillEllipse(96, 96, 88, 78);
+    graphics.lineStyle(3, 0x111511, 0.9);
+    for (let index = 0; index < 7; index += 1) {
+      const angle = (Math.PI * 2 * index) / 7 + Phaser.Math.FloatBetween(-0.22, 0.22);
+      graphics.beginPath();
+      graphics.moveTo(96, 96);
+      for (let segment = 1; segment <= 3; segment += 1) {
+        const distance = 24 * segment + Phaser.Math.Between(-4, 8);
+        const jittered = angle + Phaser.Math.FloatBetween(-0.3, 0.3);
+        graphics.lineTo(96 + Math.cos(jittered) * distance, 96 + Math.sin(jittered) * distance);
+      }
+      graphics.strokePath();
+    }
+    graphics.generateTexture(GROUND_CRACK_FALLBACK_TEXTURE, 192, 192);
+    graphics.destroy();
+    return this.scene.textures.exists(GROUND_CRACK_FALLBACK_TEXTURE) ? GROUND_CRACK_FALLBACK_TEXTURE : undefined;
+  }
+
+  /** 读取纹理 0 号帧宽度（spritesheet 取首帧、单图取 __BASE），读取失败回退设计尺寸。 */
+  private getTextureFrameWidth(textureKey: string, fallbackWidth: number): number {
+    const texture = this.scene.textures.get(textureKey);
+    const frame = texture?.get(0) ?? texture?.get("__BASE");
+    const width = frame?.width;
+    return typeof width === "number" && Number.isFinite(width) && width > 0 ? width : fallbackWidth;
+  }
+
+  /**
    * 施放瞬间墨迹迸发：vfx_ink_splat 序列帧（一次性动画播完销毁，沿用 bindOneShotDestroy 模式）；
    * 纹理缺失时降级为深色扩散环。baseScale 由 updateVfx 乘算，不被缩放曲线覆盖。
    */
@@ -907,6 +1039,12 @@ export class SkillSystem {
       this.tryHitEnemiesWithOrbital(orbital, worldX, worldY, profile, targets);
       this.spawnDartGhostIfReady(orbital, deltaMs);
     }
+
+    // 轨道虚线点环：跟随英雄（轨道圆心），显示半径随当前配置
+    if (this.orbitRing && this.orbitRing.active) {
+      this.updateWorldAnchoredView(this.orbitRing, heroWorld.x, heroWorld.y);
+      this.orbitRing.setScale((profile.radius * 2) / ORBIT_RING_TEXTURE_SIZE);
+    }
   }
 
   private updateWaves(deltaMs: number, targets: CombatTargetSnapshot[]): void {
@@ -916,11 +1054,21 @@ export class SkillSystem {
       wave.ageMs += deltaMs;
       const progress = Phaser.Math.Clamp(wave.ageMs / wave.durationMs, 0, 1);
       const currentRadius = wave.radius * (0.32 + progress * 0.68);
-      const baseScale = getNumericData(wave.view, "baseScale", 1);
-      wave.view.setScale(baseScale * (0.32 + progress * 0.88));
-      wave.view.setAlpha(Math.max(0, 0.62 * (1 - progress)));
+      // 序列帧版本：扩散/渐隐由 3 帧动画承载，跳过手动插值；纹理/动画缺失时走兜底曲线
+      const frameAnimated = wave.view.getData("waveFrames") === true;
+      if (!frameAnimated) {
+        const baseScale = getNumericData(wave.view, "baseScale", 1);
+        wave.view.setScale(baseScale * (0.32 + progress * 0.88));
+        wave.view.setAlpha(Math.max(0, 0.62 * (1 - progress)));
+      }
       this.updateWorldAnchoredView(wave.view, wave.worldX, wave.worldY);
       this.tryHitEnemiesWithWave(wave, currentRadius, heroWorld, targets);
+
+      // 地面残痕：首次命中即裂；整波未命中则波结束时落地一裂（每波仅 stamp 一次）
+      if (!wave.crackStamped && (wave.hitEnemyIds.size > 0 || wave.ageMs >= wave.durationMs)) {
+        wave.crackStamped = true;
+        this.stampGroundCrack(wave);
+      }
 
       if (wave.ageMs >= wave.durationMs) {
         wave.view.destroy();
@@ -1136,6 +1284,54 @@ export class SkillSystem {
       this.nextOrbitalId += 1;
       this.orbitals.push(orbital);
     }
+    this.syncHuifengOrbitRing();
+  }
+
+  /**
+   * 回风飞镖轨道虚线点环：全部飞镖同圆心同半径，共享一条即可承载表现
+   * （逐镖各挂一条会原位叠加，0.14×N 叠出违背"细环"意图的有效透明度），
+   * 生命周期挂在 orbitals 重建流程上（等价每个飞镖都挂有轨道线）。金色细环：基础 0.14 / 进阶 0.22。
+   */
+  private syncHuifengOrbitRing(): void {
+    const hasOrbitals = this.orbitals.some((orbital) => orbital.skillId === "huifeng_dart");
+    if (!hasOrbitals) {
+      this.orbitRing?.destroy();
+      this.orbitRing = undefined;
+      return;
+    }
+
+    const runtime = this.skills.get("huifeng_dart");
+    if (!runtime) {
+      return;
+    }
+    if (!this.orbitRing || !this.orbitRing.active) {
+      const textureKey = this.ensureOrbitRingTexture();
+      if (!textureKey) {
+        return;
+      }
+      this.orbitRing = this.scene.add.sprite(0, 0, textureKey)
+        .setDepth(ORBIT_RING_DEPTH)
+        .setBlendMode(Phaser.BlendModes.NORMAL);
+    }
+    this.orbitRing.setAlpha(runtime.advanced ? ORBIT_RING_ALPHA_ADVANCED : ORBIT_RING_ALPHA_BASE);
+  }
+
+  /** 程序化轨道点环：芥金细点沿圆周均布成虚线圈（256×256，点环半径 120），生成一次全局复用。 */
+  private ensureOrbitRingTexture(): string | undefined {
+    if (this.scene.textures.exists(HUIFENG_ORBIT_RING_TEXTURE)) {
+      return HUIFENG_ORBIT_RING_TEXTURE;
+    }
+
+    const graphics = this.scene.add.graphics();
+    graphics.fillStyle(0xd8c76a, 1);
+    const dotCount = 42;
+    for (let index = 0; index < dotCount; index += 1) {
+      const angle = (Math.PI * 2 * index) / dotCount;
+      graphics.fillCircle(128 + Math.cos(angle) * 120, 128 + Math.sin(angle) * 120, 2);
+    }
+    graphics.generateTexture(HUIFENG_ORBIT_RING_TEXTURE, ORBIT_RING_TEXTURE_SIZE, ORBIT_RING_TEXTURE_SIZE);
+    graphics.destroy();
+    return this.scene.textures.exists(HUIFENG_ORBIT_RING_TEXTURE) ? HUIFENG_ORBIT_RING_TEXTURE : undefined;
   }
 
   private destroyProjectile(index: number): void {
@@ -1378,9 +1574,13 @@ export class SkillSystem {
   private createHuifengDartFallback(advanced: boolean): Phaser.GameObjects.Container | Phaser.GameObjects.Sprite {
     const artKey = advanced ? "skill_huifeng_advanced_dart" : "skill_huifeng_dart";
     if (this.scene.textures.exists(artKey)) {
+      // 素材 2 倍化适配：清单帧尺寸 ×2 后显示缩放 ÷2（设计显示尺寸 40/48，按实际帧宽推算，旧素材自适应为 1）
+      const designWidth = advanced ? 48 : 40;
+      const displayScale = designWidth / this.getTextureFrameWidth(artKey, designWidth);
       const view = this.scene.add.sprite(0, 0, artKey)
         .setDepth(15)
         .setOrigin(0.5)
+        .setScale(displayScale)
         .setAlpha(advanced ? 1 : 0.98)
         .setBlendMode(Phaser.BlendModes.ADD);
       view.setData("spriteArt", true);
@@ -1403,16 +1603,26 @@ export class SkillSystem {
   private createZhenshanWaveFallback(radius: number, advanced: boolean): Phaser.GameObjects.Container | Phaser.GameObjects.Sprite {
     const artKey = advanced ? "skill_zhenshan_advanced_wave" : "skill_zhenshan_wave";
     if (this.scene.textures.exists(artKey)) {
-      const textureWidth = advanced ? 384 : 256;
+      // 帧宽以实际 0 号帧为准（清单升级 3 帧序列后单帧宽不变、整图变宽，防御混合状态）
+      const textureWidth = this.getTextureFrameWidth(artKey, advanced ? 384 : 256);
       const baseScale = (radius * 2) / textureWidth;
       const view = this.scene.add.sprite(0, 0, artKey)
         .setDepth(12)
         .setOrigin(0.5)
-        .setAlpha(advanced ? 0.86 : 0.78)
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setScale(baseScale * 0.32);
+        .setAlpha(advanced ? 0.92 : 0.88);
+      // 墨环为深色主体，必须用 NORMAL 混合；ADD 下深墨几乎不可见
       view.setData("spriteArt", true);
       view.setData("baseScale", baseScale);
+      const animationKey = getArtAnimationKey(artKey);
+      if (this.scene.anims.exists(animationKey)) {
+        // 3 帧序列（12fps loop:false，进阶版金色帧）：出手一次播完停末帧，命中窗随波寿命持续到统一销毁
+        view.setScale(baseScale);
+        view.play(animationKey);
+        view.setData("waveFrames", true);
+      } else {
+        // 动画未注册（旧单帧清单过渡态）：退回手动 scale/alpha 插值
+        view.setScale(baseScale * 0.32);
+      }
       return view;
     }
 

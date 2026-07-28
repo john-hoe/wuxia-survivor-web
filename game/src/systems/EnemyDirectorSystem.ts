@@ -150,11 +150,20 @@ type EnemyDirectorOptions = {
 
 const KNOCKBACK_DURATION_MS = 180;
 const KNOCKBACK_CHASE_DAMPING = 0;
-/** 受击白闪时长与 squash 回弹时长（表现层，不影响数值） */
+/** 受击闪时长与 squash 回弹时长：精英保留金色 80ms，普通敌人深墨闪 60ms（表现层，不影响数值） */
 const HIT_FLASH_MS = 80;
+const NORMAL_HIT_FLASH_MS = 60;
 const HIT_SQUASH_MS = 60;
 const ELITE_HIT_TINT = 0xf6d472;
-const NORMAL_HIT_TINT = 0xffffff;
+/** 受击墨化：普通敌人深墨闪 tint（替代白闪） */
+const NORMAL_HIT_TINT = 0x1a2a22;
+/** 受击溅墨：vfx_ink_splat 前 3 帧随机单帧采样，NORMAL 混合，0.5-0.7 倍，220ms 淡出销毁 */
+const HIT_INK_SPLAT_TEXTURE = "vfx_ink_splat";
+const HIT_INK_SPLAT_FRAMES = ["0", "1", "2"];
+const HIT_INK_SPLAT_SCALE_MIN = 0.5;
+const HIT_INK_SPLAT_SCALE_MAX = 0.7;
+const HIT_INK_SPLAT_FADE_MS = 220;
+const HIT_INK_SPLAT_JITTER_PX = 7;
 const DEATH_TWEEN_MS = 200;
 /** 受击击退分级（纯表现层）：普通小怪 12-18px 沿弹道方向击退，精英 4-6px 原地抖动，Boss 无位移仅闪白 */
 const HIT_KNOCKBACK_NORMAL_MIN_PX = 12;
@@ -206,6 +215,8 @@ export class EnemyDirectorSystem {
   private readonly shadowPool: Phaser.GameObjects.Image[] = [];
   /** 死亡渐隐中的阴影（已脱离敌人实体，渐隐完成后回池；destroy 时兜底销毁） */
   private readonly fadingShadows = new Set<Phaser.GameObjects.Image>();
+  /** 受击溅墨在飞实例（220ms 淡出后自销毁；destroy 时兜底清理，Tween/显示对象零泄漏） */
+  private readonly activeSplats = new Set<Phaser.GameObjects.Sprite>();
   /** 减速请求事件退订函数（enemy_slow_requested → applySlow 桥接） */
   private readonly unsubscribeSlowRequest: () => void;
 
@@ -271,6 +282,11 @@ export class EnemyDirectorSystem {
       shadow.destroy();
     }
     this.fadingShadows.clear();
+    for (const splat of this.activeSplats) {
+      this.scene.tweens.killTweensOf(splat);
+      splat.destroy();
+    }
+    this.activeSplats.clear();
     for (const shadow of this.shadowPool) {
       shadow.destroy();
     }
@@ -1323,13 +1339,24 @@ export class EnemyDirectorSystem {
     enemy.hitOffsetAgeMs = 0;
   }
 
+  /**
+   * 受击墨化（替代白闪）：命中点生成小溅墨 + 深墨 tint 闪。
+   * 精英保留金色 tint 版本；几何兜底图形无 Tint 组件，走 alpha 微闪。
+   */
   private flashEnemyHit(enemy: EnemyRuntime): void {
     enemy.hitSquashMs = HIT_SQUASH_MS;
+    // 命中点偏躯干处溅墨（view 锚点近脚底，按碰撞半径上半身上移，封顶 14px）
+    this.spawnHitInkSplat(
+      enemy.view.x,
+      enemy.view.y - Math.min(14, enemy.config.collisionRadius * 0.5),
+      enemy.view.depth + 1
+    );
     if (enemy.view instanceof Phaser.GameObjects.Sprite && enemy.view.getData("spriteArt") === true) {
-      // 受击白闪：精英用金色，普通敌人白色；80ms 后清 tint（几何兜底图形无 Tint 组件，走 alpha 微闪）
+      // 受击墨闪：精英保留金色 80ms，普通敌人深墨 #1a2a22 60ms 后清 tint
       const view = enemy.view;
-      view.setTintFill(enemy.config.tier === "elite" ? ELITE_HIT_TINT : NORMAL_HIT_TINT);
-      this.scene.time.delayedCall(HIT_FLASH_MS, () => {
+      const isElite = enemy.config.tier === "elite";
+      view.setTintFill(isElite ? ELITE_HIT_TINT : NORMAL_HIT_TINT);
+      this.scene.time.delayedCall(isElite ? HIT_FLASH_MS : NORMAL_HIT_FLASH_MS, () => {
         if (view.active) {
           view.clearTint();
         }
@@ -1343,6 +1370,45 @@ export class EnemyDirectorSystem {
       alpha: 0.97,
       duration: 110,
       ease: "Quad.easeOut"
+    });
+  }
+
+  /**
+   * 命中点小溅墨（纯表现层）：vfx_ink_splat 前 3 帧随机单帧采样，0.5-0.7 倍、随机轻旋转、
+   * NORMAL 混合（深墨贴身感，不走 ADD 亮色），220ms 淡出后销毁。
+   * 纹理缺失时静默跳过（tint 闪仍生效）；在飞实例入 activeSplats 跟踪，destroy 兜底清理。
+   */
+  private spawnHitInkSplat(screenX: number, screenY: number, depth: number): void {
+    if (!this.scene.textures.exists(HIT_INK_SPLAT_TEXTURE)) {
+      return;
+    }
+    const texture = this.scene.textures.get(HIT_INK_SPLAT_TEXTURE);
+    const frames = HIT_INK_SPLAT_FRAMES.filter((name) => texture.has(name));
+    const scale = Phaser.Math.FloatBetween(HIT_INK_SPLAT_SCALE_MIN, HIT_INK_SPLAT_SCALE_MAX);
+    const splat = this.scene.add.sprite(
+      screenX + Phaser.Math.Between(-HIT_INK_SPLAT_JITTER_PX, HIT_INK_SPLAT_JITTER_PX),
+      screenY + Phaser.Math.Between(-HIT_INK_SPLAT_JITTER_PX, HIT_INK_SPLAT_JITTER_PX),
+      HIT_INK_SPLAT_TEXTURE,
+      frames.length > 0 ? Phaser.Math.RND.pick(frames) : 0
+    )
+      .setDepth(depth)
+      .setScale(scale)
+      .setRotation(Phaser.Math.FloatBetween(-0.6, 0.6))
+      .setAlpha(0.92)
+      .setBlendMode(Phaser.BlendModes.NORMAL);
+    this.activeSplats.add(splat);
+    this.scene.tweens.add({
+      targets: splat,
+      alpha: 0,
+      scale: scale * 1.3,
+      duration: HIT_INK_SPLAT_FADE_MS,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.activeSplats.delete(splat);
+        if (splat.active) {
+          splat.destroy();
+        }
+      }
     });
   }
 

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>枫叶官道 · 黄昏氛围原型</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ background:#120c09; }
+  body{ display:flex; align-items:center; justify-content:center; min-height:100vh; font-family:'Noto Sans SC',sans-serif; }
+
+  /* ================= 舞台 960×540 ================= */
+  .stage{
+    position:relative; width:960px; height:540px; overflow:hidden;
+    background:
+      radial-gradient(900px 460px at 26% 32%, rgba(255,170,80,.8) 0%, rgba(255,150,60,.3) 40%, rgba(255,150,60,0) 66%),
+      linear-gradient(180deg,#7E2B1C 0%, #AC4A24 24%, #D06B2D 42%, #EA9440 54%, #C9742F 100%);
+    box-shadow:0 24px 90px rgba(0,0,0,.6);
+  }
+
+  /* ---------- 落日 ---------- */
+  .sun-disc{
+    position:absolute; left:236px; top:118px; width:100px; height:100px; border-radius:50%; z-index:2;
+    background:radial-gradient(circle, #FFE9B0 0%, #FFC96E 58%, rgba(255,190,100,0) 72%);
+    filter:blur(1px);
+  }
+  .sun-glow{
+    position:absolute; left:110px; top:0px; width:380px; height:330px; border-radius:50%; z-index:1;
+    background:radial-gradient(circle, rgba(255,190,100,.65) 0%, rgba(255,160,70,.24) 45%, rgba(255,160,70,0) 70%);
+  }
+
+  /* ---------- 远关门影（暮霭中） ---------- */
+  .gate{
+    position:absolute; left:50%; top:110px; width:420px; margin-left:-210px; z-index:4;
+    opacity:.58; filter:sepia(.9) hue-rotate(-22deg) saturate(1.6) brightness(.68) blur(1px);
+  }
+
+  /* ---------- 地平线暮霭 ---------- */
+  .haze{
+    position:absolute; left:0; right:0; top:140px; height:150px; z-index:3;
+    background:linear-gradient(180deg, rgba(232,146,62,0) 0%, rgba(238,158,70,.85) 58%, rgba(210,120,52,0) 100%);
+  }
+  .mist{
+    position:absolute; width:660px; height:46px; border-radius:50%; z-index:3;
+    background:radial-gradient(closest-side, rgba(255,190,110,.55), rgba(255,190,110,0));
+    filter:blur(7px);
+  }
+  .mist.m1{ left:-110px; top:196px; }
+  .mist.m2{ right:-130px; top:226px; width:540px; opacity:.75; }
+
+  /* ---------- 地面：赭石沉入暮褐 ---------- */
+  .ground{
+    position:absolute; left:-40px; right:-40px; bottom:-30px; height:370px; z-index:1;
+    background:url('../game/src/assets/backgrounds/ground_qingshi_base.png') repeat;
+    background-size:430px 430px;
+    filter:sepia(.9) hue-rotate(-14deg) saturate(1.95) brightness(1.04) contrast(.96);
+    -webkit-mask-image:linear-gradient(180deg, transparent 0%, #000 20%);
+            mask-image:linear-gradient(180deg, transparent 0%, #000 20%);
+  }
+  .ground-tone{
+    position:absolute; left:0; right:0; bottom:0; height:360px; z-index:2; pointer-events:none;
+    background:
+      linear-gradient(180deg, rgba(230,142,62,.8) 0%, rgba(230,142,62,0) 30%),
+      linear-gradient(0deg, rgba(42,18,8,.5) 0%, rgba(42,18,8,0) 34%);
+  }
+
+  /* ---------- 官道：梯形古道透视 ---------- */
+  .road{
+    position:absolute; left:50%; bottom:-6px; width:760px; height:352px; margin-left:-380px; z-index:2;
+    clip-path:polygon(46.5% 0, 53.5% 0, 74% 100%, 26% 100%);
+    background:url('../game/src/assets/backgrounds/ground_qingshi_base.png') repeat;
+    background-size:360px 360px;
+    filter:sepia(.85) hue-rotate(-12deg) saturate(1.7) brightness(1.1) contrast(.95);
+  }
+  .road-tone{
+    position:absolute; left:50%; bottom:-6px; width:760px; height:352px; margin-left:-380px; z-index:2;
+    clip-path:polygon(46.5% 0, 53.5% 0, 74% 100%, 26% 100%); pointer-events:none;
+    background:
+      linear-gradient(180deg, rgba(244,168,80,.85) 0%, rgba(244,168,80,0) 34%),
+      linear-gradient(90deg, rgba(56,24,10,.5) 0%, rgba(56,24,10,0) 16%, rgba(255,190,100,.3) 50%, rgba(56,24,10,0) 84%, rgba(56,24,10,.5) 100%);
+  }
+  .road-dust{
+    position:absolute; left:50%; bottom:-30px; width:320px; height:420px; margin-left:-160px; z-index:2;
+    background:radial-gradient(closest-side, rgba(255,160,70,.34), rgba(255,160,70,0) 75%);
+    pointer-events:none;
+  }
+
+  /* ---------- 逆光枫冠剪影（色团成形为冠，竹叶仅作垂叶纹理） ---------- */
+  .crown-back{
+    position:absolute; width:580px; height:330px; z-index:4; pointer-events:none;
+    background:radial-gradient(closest-side, rgba(255,150,60,.5), rgba(255,150,60,0) 70%);
+  }
+  .crown-back.l{ left:-80px; top:0px; }
+  .crown-back.r{ right:-80px; top:-20px; }
+  .crown{
+    position:absolute; width:640px; height:190px; z-index:5; pointer-events:none;
+    background:url('../game/src/assets/backgrounds/bamboo_edge_cluster.png') center top/640px 640px no-repeat;
+    filter:hue-rotate(202deg) saturate(1.6) brightness(.3) contrast(1.12);
+    -webkit-mask-image:linear-gradient(180deg, #000 30%, transparent 92%);
+            mask-image:linear-gradient(180deg, #000 30%, transparent 92%);
+  }
+  .crown.l{ left:-150px; top:-24px; transform:rotate(6deg); }
+  .crown.r{ right:-160px; top:-38px; transform:scaleX(-1) rotate(5deg); }
+  .crown-blob{
+    position:absolute; z-index:4; border-radius:50%; pointer-events:none; filter:blur(20px);
+  }
+  .crown-blob.b1{ left:-90px; top:-70px; width:420px; height:230px; background:rgba(62,18,10,.72); }
+  .crown-blob.b2{ left:70px;  top:-105px; width:300px; height:190px; background:rgba(80,24,12,.64); }
+  .crown-blob.b3{ left:200px; top:-70px; width:230px; height:150px; background:rgba(94,30,15,.56); }
+  .crown-blob.b4{ left:20px;  top:18px;  width:260px; height:130px; background:rgba(50,14,8,.6); filter:blur(26px); }
+  .crown-blob.b5{ right:-90px; top:-80px; width:420px; height:230px; background:rgba(60,17,10,.72); }
+  .crown-blob.b6{ right:80px;  top:-110px; width:300px; height:190px; background:rgba(76,22,12,.64); }
+  .crown-blob.b7{ right:210px; top:-70px; width:230px; height:150px; background:rgba(90,28,14,.56); }
+  .crown-blob.b8{ right:30px;  top:14px;  width:250px; height:120px; background:rgba(48,13,8,.6); filter:blur(26px); }
+
+  /* ---------- 碑林剪影 ---------- */
+  .stele{ position:absolute; z-index:6; filter:sepia(.85) hue-rotate(-20deg) saturate(1.4) brightness(.5); }
+  .stele.s1{ left:238px; bottom:246px; width:42px; opacity:.6;  filter:sepia(.85) hue-rotate(-20deg) brightness(.75) blur(1.2px); }
+  .stele.s2{ left:272px; bottom:160px; width:64px; opacity:.85; filter:sepia(.85) hue-rotate(-20deg) brightness(.6) blur(.4px); }
+  .stele.s3{ left:196px; bottom:44px;  width:104px; }
+  .stele.s4{ right:238px; bottom:204px; width:54px; opacity:.7; filter:sepia(.85) hue-rotate(-20deg) brightness(.68) blur(.8px); }
+
+  /* ---------- 点缀 ---------- */
+  .lantern-glow{
+    position:absolute; right:240px; bottom:120px; width:160px; height:150px; border-radius:50%; z-index:6;
+    background:radial-gradient(circle, rgba(255,150,50,.7) 0%, rgba(255,120,40,.24) 45%, rgba(255,120,40,0) 70%);
+    pointer-events:none;
+  }
+  .lantern{ position:absolute; right:252px; bottom:88px; width:132px; z-index:7; filter:sepia(.6) hue-rotate(-10deg) saturate(1.8) brightness(.95); }
+  .winejar{ position:absolute; left:300px; bottom:22px; width:74px; z-index:7; filter:sepia(.7) hue-rotate(-14deg) saturate(1.3) brightness(.66); }
+  .flag{
+    position:absolute; right:176px; bottom:172px; width:94px; z-index:6; opacity:.9;
+    filter:sepia(.85) hue-rotate(-18deg) saturate(1.5) brightness(.5) blur(.4px);
+  }
+
+  /* ---------- 长影（落日在左，影投右） ---------- */
+  .longshadow{
+    position:absolute; height:10px; z-index:5; transform-origin:left center; pointer-events:none;
+    background:linear-gradient(90deg, rgba(35,14,6,.68), rgba(35,14,6,0) 82%);
+    filter:blur(2.5px);
+  }
+  .hero-longshadow{
+    position:absolute; left:calc(50% + 6px); bottom:110px; width:170px; height:170px; z-index:6;
+    background:url('../game/src/assets/sprites/hero_shaoxia_idle.png') 0 0/680px 170px no-repeat;
+    filter:brightness(0) opacity(.5) blur(2px);
+    transform-origin:50% 100%;
+    transform:skewX(-52deg) scaleY(.62);
+    pointer-events:none;
+  }
+  .contact{
+    position:absolute; border-radius:50%; z-index:6;
+    background:radial-gradient(closest-side, rgba(30,12,5,.6), rgba(30,12,5,0) 72%);
+    filter:blur(3px);
+  }
+
+  /* ---------- 少侠（idle 第 1 帧） + 逆光晕 ---------- */
+  .backlight{
+    position:absolute; left:50%; bottom:92px; width:290px; height:220px; margin-left:-145px; z-index:7;
+    background:radial-gradient(closest-side, rgba(255,170,80,.5), rgba(255,170,80,0) 72%);
+    pointer-events:none;
+  }
+  .hero{
+    position:absolute; left:50%; bottom:112px; width:170px; height:170px; margin-left:-85px; z-index:8;
+    background:url('../game/src/assets/sprites/hero_shaoxia_idle.png') 0 0/680px 170px no-repeat;
+    filter:sepia(.35) hue-rotate(-12deg) saturate(1.15) brightness(.88);
+  }
+
+  /* ---------- 飘落的枫叶（透光的橙金） ---------- */
+  .leaf{ position:absolute; top:-40px; z-index:9; pointer-events:none; animation:fall var(--d) linear var(--dl) infinite; }
+  .leaf i{
+    display:block; width:var(--s); height:var(--s);
+    background:var(--c);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 2 L57 24 L79 12 L71 36 L97 36 L75 51 L88 74 L63 66 L56 92 L50 76 L44 92 L37 66 L12 74 L25 51 L3 36 L29 36 L21 12 L43 24 Z'/%3E%3C/svg%3E") center/contain no-repeat;
+            mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 2 L57 24 L79 12 L71 36 L97 36 L75 51 L88 74 L63 66 L56 92 L50 76 L44 92 L37 66 L12 74 L25 51 L3 36 L29 36 L21 12 L43 24 Z'/%3E%3C/svg%3E") center/contain no-repeat;
+    animation:sway var(--sd) ease-in-out var(--dl) infinite alternate;
+  }
+  @keyframes fall{ to{ transform:translateY(620px) rotate(var(--r)); } }
+  @keyframes sway{ from{ transform:translateX(-18px) rotate(-34deg); } to{ transform:translateX(18px) rotate(38deg); } }
+  .leaf.fore i{ filter:blur(1px); opacity:.92; }
+
+  /* ---------- 整体暮调 & 暗角 ---------- */
+  .tint{
+    position:absolute; inset:0; z-index:10; pointer-events:none; mix-blend-mode:multiply;
+    background:linear-gradient(180deg, rgba(200,80,30,.1), rgba(160,70,26,.16) 78%, rgba(80,32,14,.24));
+  }
+  .vignette{
+    position:absolute; inset:0; z-index:10; pointer-events:none;
+    background:radial-gradient(120% 92% at 50% 44%, rgba(0,0,0,0) 50%, rgba(30,10,4,.5) 100%);
+  }
+
+  /* ---------- 顶部色板标注 ---------- */
+  .tag{
+    position:absolute; left:14px; top:12px; z-index:11;
+    display:flex; align-items:center; gap:10px;
+    padding:6px 12px 6px 10px; border-radius:5px;
+    background:rgba(30,14,8,.55); backdrop-filter:blur(3px);
+    color:#F6DEBE; font-size:10.5px; letter-spacing:1.2px;
+  }
+  .tag b{ font-family:'Ma Shan Zheng',serif; font-weight:400; font-size:14px; letter-spacing:2.5px; margin-right:2px; }
+  .tag .sw{ display:inline-flex; align-items:center; gap:4px; }
+  .tag .sw::before{ content:''; width:9px; height:9px; border-radius:2px; background:var(--c); box-shadow:0 0 0 1px rgba(255,220,180,.35); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="sun-glow"></div>
+  <div class="sun-disc"></div>
+
+  <div class="ground"></div>
+  <div class="ground-tone"></div>
+  <div class="road"></div>
+  <div class="road-tone"></div>
+  <div class="road-dust"></div>
+
+  <img class="gate" src="../game/src/assets/backgrounds/distant_gate_shadow.png" alt="">
+  <div class="haze"></div>
+  <div class="mist m1"></div>
+  <div class="mist m2"></div>
+
+  <div class="crown-blob b1"></div>
+  <div class="crown-blob b2"></div>
+  <div class="crown-blob b3"></div>
+  <div class="crown-blob b4"></div>
+  <div class="crown-blob b5"></div>
+  <div class="crown-blob b6"></div>
+  <div class="crown-blob b7"></div>
+  <div class="crown-blob b8"></div>
+  <div class="crown-back l"></div>
+  <div class="crown-back r"></div>
+  <div class="crown l"></div>
+  <div class="crown r"></div>
+
+  <img class="stele s1" src="../game/src/assets/backgrounds/decor_stele.png" alt="">
+  <img class="stele s2" src="../game/src/assets/backgrounds/decor_stele.png" alt="">
+  <img class="stele s4" src="../game/src/assets/backgrounds/decor_stele.png" alt="">
+  <img class="stele s3" src="../game/src/assets/backgrounds/decor_stele.png" alt="">
+
+  <img class="flag" src="../game/src/assets/backgrounds/decor_flag.png" alt="">
+  <div class="lantern-glow"></div>
+  <img class="lantern" src="../game/src/assets/backgrounds/decor_lantern.png" alt="">
+  <img class="winejar" src="../game/src/assets/backgrounds/decor_winejar.png" alt="">
+
+  <!-- 长影：碑 / 酒坛 / 灯笼 -->
+  <div class="longshadow" style="left:222px; bottom:48px;  width:190px; transform:rotate(-4deg) skewX(-38deg) scaleY(.8);"></div>
+  <div class="longshadow" style="left:358px; bottom:26px;  width:120px; transform:rotate(-3deg) skewX(-42deg) scaleY(.7);"></div>
+  <div class="longshadow" style="left:606px; bottom:92px;  width:200px; transform:rotate(-4deg) skewX(-40deg) scaleY(.85);"></div>
+  <div class="longshadow" style="left:296px; bottom:164px; width:130px; transform:rotate(-4deg) skewX(-40deg) scaleY(.6);"></div>
+  <div class="hero-longshadow"></div>
+  <div class="contact" style="left:50%; bottom:106px; width:120px; height:24px; margin-left:-60px;"></div>
+
+  <div class="backlight"></div>
+  <div class="hero"></div>
+
+  <!-- 枫叶粒子 -->
+  <div class="leaf" style="left:8%;  --d:9.5s; --dl:-3s;  --sd:2.6s; --s:20px; --r:310deg; --c:#E08A3C;"><i></i></div>
+  <div class="leaf" style="left:17%; --d:12s;  --dl:-8s;  --sd:3.1s; --s:14px; --r:380deg; --c:#C9662B;"><i></i></div>
+  <div class="leaf" style="left:27%; --d:8.5s; --dl:-5s;  --sd:2.3s; --s:24px; --r:270deg; --c:#B04420;"><i></i></div>
+  <div class="leaf" style="left:36%; --d:11s;  --dl:-1.5s;--sd:2.9s; --s:12px; --r:340deg; --c:#E8A04A;"><i></i></div>
+  <div class="leaf" style="left:45%; --d:10s;  --dl:-7s;  --sd:2.5s; --s:18px; --r:300deg; --c:#D4752F;"><i></i></div>
+  <div class="leaf" style="left:54%; --d:13s;  --dl:-4s;  --sd:3.3s; --s:13px; --r:400deg; --c:#C9662B;"><i></i></div>
+  <div class="leaf" style="left:63%; --d:9s;   --dl:-6s;  --sd:2.4s; --s:22px; --r:280deg; --c:#E08A3C;"><i></i></div>
+  <div class="leaf" style="left:72%; --d:11.5s;--dl:-2.5s;--sd:2.8s; --s:15px; --r:360deg; --c:#B04420;"><i></i></div>
+  <div class="leaf" style="left:81%; --d:8.8s; --dl:-9s;  --sd:2.2s; --s:19px; --r:290deg; --c:#E8A04A;"><i></i></div>
+  <div class="leaf" style="left:90%; --d:12.5s;--dl:-5.5s;--sd:3s;   --s:14px; --r:370deg; --c:#D4752F;"><i></i></div>
+  <div class="leaf" style="left:50%; --d:14s;  --dl:-11s; --sd:3.4s; --s:11px; --r:420deg; --c:#E08A3C;"><i></i></div>
+  <!-- 前景大叶（浅景深） -->
+  <div class="leaf fore" style="left:12%; --d:7.5s; --dl:-5s;   --sd:2.1s; --s:32px; --r:260deg; --c:#C9662B;"><i></i></div>
+  <div class="leaf fore" style="left:86%; --d:8.4s; --dl:-6.8s; --sd:2.4s; --s:28px; --r:300deg; --c:#D4752F;"><i></i></div>
+
+  <div class="tint"></div>
+  <div class="vignette"></div>
+
+  <div class="tag">
+    <b>枫叶官道 · 昏</b>
+    <span class="sw" style="--c:#7E2B1C;">赭红 7E2B1C</span>
+    <span class="sw" style="--c:#D4692A;">暖橙 D4692A</span>
+    <span class="sw" style="--c:#E09A3E;">残阳金 E09A3E</span>
+    <span class="sw" style="--c:#4A2A1E;">暮褐 4A2A1E</span>
+    <span class="sw" style="--c:#18100C;">夜墨 18100C</span>
+  </div>
+</div>
+</body>
+</html>
