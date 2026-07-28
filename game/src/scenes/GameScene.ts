@@ -29,10 +29,8 @@ const INSIGHT_RECOVERY_AMOUNT = 20;
 /** 技能 id 的匹配键（用 includes 兼容 "moran" 前缀的变体 id）。 */
 const MORAN_SKILL_ID_KEY = "moran";
 const MORAN_SKILL_ID = "moran_ink_zone";
-/** 施放墨晕最短间隔：防止高频施放时全屏墨晕闪烁叠加。 */
+/** 施放墨圈最短间隔：防止高频施放时墨圈叠加。 */
 const MORAN_INK_RIPPLE_MIN_INTERVAL_MS = 1500;
-/** 无 skill_cast 事件时的兜底墨晕节奏（假定冷却循环约 8s）。 */
-const MORAN_FALLBACK_RIPPLE_INTERVAL_MS = 8000;
 /** 进阶演出事件/快照双通道去重窗口。 */
 const MORAN_ADVANCE_FX_DEDUP_MS = 1500;
 // ── P3 HUD 顶栏布局常量（960×56 横带，内容垂直中心 y=33）──────────────
@@ -208,7 +206,6 @@ export class GameScene extends Phaser.Scene {
   // ── 墨染江山表现层状态（事件 + 快照双通道，防御并行代理实现差异）──
   private moranCastEventSeen = false;
   private moranKnownUnlocked = false;
-  private nextMoranFallbackRippleAtMs = 0;
   private moranInkRippleCooldownUntilMs = 0;
   private moranAdvanceFxPrev = false;
   private lastMoranAdvanceFxAtMs = -10000;
@@ -230,7 +227,6 @@ export class GameScene extends Phaser.Scene {
     this.debugInsightShowcaseIndex = 0;
     this.moranCastEventSeen = false;
     this.moranKnownUnlocked = false;
-    this.nextMoranFallbackRippleAtMs = 0;
     this.moranInkRippleCooldownUntilMs = 0;
     this.moranAdvanceFxPrev = false;
     this.lastMoranAdvanceFxAtMs = -10000;
@@ -438,14 +434,17 @@ export class GameScene extends Phaser.Scene {
     const unsubscribeInsightSelected = eventBus.on<{ optionId?: string; cardId?: string }>("insight_option_selected", (payload) => {
       this.applyInsightSelection(payload.optionId ?? payload.cardId ?? "");
     });
-    // ── 墨染江山①：施放表现 —— 订阅 SkillSystem 既有 skill_cast 事件（zone cast 若实现方单独发事件，
-    //    也会伴随/替代 skill_cast；均无则 updateMoranPresentation 的冷却循环兜底接管）。防御性订阅。
-    const unsubscribeMoranCast = eventBus.on<{ skillId?: string }>("skill_cast", (payload) => {
-      if (typeof payload?.skillId === "string" && payload.skillId.includes(MORAN_SKILL_ID_KEY)) {
-        this.moranCastEventSeen = true;
-        this.playMoranCastInkRipple();
+    // ── 墨染江山①：施放表现 —— 订阅 skill_zone_spawned（含落点坐标），在墨痕领域中心画"挥毫成阵"墨圈，
+    //    局部笔墨反馈，不再全屏明暗闪烁。
+    const unsubscribeMoranCast = eventBus.on<{ skillId?: string; worldX?: number; worldY?: number; radius?: number }>(
+      "skill_zone_spawned",
+      (payload) => {
+        if (typeof payload?.skillId === "string" && payload.skillId.includes(MORAN_SKILL_ID_KEY)) {
+          this.moranCastEventSeen = true;
+          this.playMoranZoneRing(payload.worldX, payload.worldY, payload.radius);
+        }
       }
-    });
+    );
     // ── 墨染江山②：进阶演出 —— 监听既有 skill_advanced 事件；事件丢失时由快照 advanced 跳变兜底。
     const unsubscribeMoranAdvanced = eventBus.on<{ skillId?: string }>("skill_advanced", (payload) => {
       if (typeof payload?.skillId === "string" && payload.skillId.includes(MORAN_SKILL_ID_KEY)) {
@@ -1430,7 +1429,11 @@ export class GameScene extends Phaser.Scene {
    * InkWipe 暂无覆盖率参数，按全幅快速处理；控制技能不加相机震动，避免打扰感。
    * WebGL 专属；Canvas 渲染器 inkWipeIn 返回 false 静默跳过，异常不阻断施放主流程。
    */
-  private playMoranCastInkRipple(): void {
+  /**
+   * 「挥毫成阵」局部墨圈：墨痕领域落点处，一笔墨环从起笔到合拢勾勒 350ms，再驻留淡出 300ms。
+   * 局部笔墨反馈，不改变全屏亮度（替代原全屏墨晕涟漪，避免久看明暗闪烁疲劳）。
+   */
+  private playMoranZoneRing(worldX?: number, worldY?: number, radius?: number): void {
     if (!this.scene.isActive() || getScreenState(this) !== "game") {
       return;
     }
@@ -1442,15 +1445,43 @@ export class GameScene extends Phaser.Scene {
     }
     this.moranInkRippleCooldownUntilMs = this.elapsedMs + MORAN_INK_RIPPLE_MIN_INTERVAL_MS;
     try {
-      inkWipeIn(this, {
-        mode: "center",
-        durationMs: 250,
+      const heroWorld = this.getHeroWorldPosition();
+      const heroScreen = this.getHeroScreenPosition();
+      const centerX = worldX !== undefined ? heroScreen.x + (worldX - heroWorld.x) : heroScreen.x;
+      const centerY = worldY !== undefined ? heroScreen.y + (worldY - heroWorld.y) : heroScreen.y;
+      const ringRadius = Math.max(48, radius ?? 90);
+      const ink = this.add.graphics().setDepth(64);
+      const state = { t: 0 };
+      this.tweens.add({
+        targets: state,
+        t: 1,
+        duration: 350,
+        ease: Phaser.Math.Easing.Quadratic.Out,
+        onUpdate: () => {
+          ink.clear();
+          // 主墨环：从 -90° 起笔扫到当前进度
+          ink.lineStyle(4, 0x1a1f1a, 0.85);
+          ink.beginPath();
+          ink.arc(centerX, centerY, ringRadius, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + state.t * 360));
+          ink.strokePath();
+          // 内圈淡金墨意（进阶感，极浅）
+          ink.lineStyle(2, 0xa99a20, 0.25);
+          ink.beginPath();
+          ink.arc(centerX, centerY, ringRadius * 0.82, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + state.t * 360));
+          ink.strokePath();
+        },
         onComplete: () => {
-          inkWipeOut(this, { mode: "center", durationMs: 400 });
+          this.tweens.add({
+            targets: ink,
+            alpha: 0,
+            duration: 300,
+            delay: 250,
+            onComplete: () => ink.destroy()
+          });
         }
       });
     } catch {
-      // 墨晕失败静默：技能施放主流程不受影响
+      // 表现失败静默：技能施放主流程不受影响
     }
   }
 
@@ -1509,12 +1540,6 @@ export class GameScene extends Phaser.Scene {
 
     if (!this.moranKnownUnlocked) {
       this.moranKnownUnlocked = true;
-      // 解锁后短暂等待首次施放事件；确认无事件通道后再进入兜底节奏。
-      this.nextMoranFallbackRippleAtMs = this.elapsedMs + 2200;
-    }
-    if (!this.moranCastEventSeen && this.elapsedMs >= this.nextMoranFallbackRippleAtMs) {
-      this.nextMoranFallbackRippleAtMs = this.elapsedMs + MORAN_FALLBACK_RIPPLE_INTERVAL_MS;
-      this.playMoranCastInkRipple();
     }
 
     if (moranSlot.advanced && !this.moranAdvanceFxPrev) {
