@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { heavyHitFocusConfig, narrativeTintConfig, stageConfig, stageMapConfig, stageVisualConfig, vignetteDynamicsConfig, weatherVisualConfig } from "../data/gameConfig";
-import type { StageMapEntry, StageMapId, WeatherKind } from "../data/gameConfig";
+import type { DayNightTintTier, StageMapEntry, StageMapId, WeatherKind } from "../data/gameConfig";
 import type { InsightOption, PendingInsight } from "../data/progression";
 import { isSkillId, type AdvanceKeyId, type SkillId } from "../data/skills";
 import { BossSystem, type BossDefeatSummary, type BossSystemSnapshot } from "../systems/BossSystem";
@@ -79,6 +79,23 @@ const HERO_BREATH_AMOUNT = 0.015;
 const HERO_BREATH_RECOVER_MS = 140;
 /** 死亡后阴影淡出时长，与 startDeathTransition 的 420ms 转场窗口同步。 */
 const HERO_SHADOW_DEATH_FADE_MS = 420;
+// ── 枫叶官道·昼昏渐变（stageMapEntry.dayNightCycle 驱动）─────────────────
+/** 叠加层 depth：低于叙事朱砂层（78）约 1.5、高于 Boss 压暗层（76）；地面/角色受染，HUD/飘字（91+）不染。 */
+const DAY_NIGHT_OVERLAY_DEPTH = 76.5;
+/** 颜色/强度向目标指数缓动的时间常数（毫秒，帧率无关）：切档/切图/F5 解锁均无跳变。 */
+const DAY_NIGHT_SMOOTH_MS = 500;
+/** F5 预览锁定的档位秒数（暮赭红）。 */
+const DAY_NIGHT_DEBUG_PIN_SECONDS = 330;
+
+/** 昼昏渐变档位 → 插值用通道对象（r/g/b 0-255 + strength）。 */
+function dayNightTierChannels(tier: DayNightTintTier): { r: number; g: number; b: number; strength: number } {
+  return {
+    r: (tier.tint >> 16) & 0xff,
+    g: (tier.tint >> 8) & 0xff,
+    b: tier.tint & 0xff,
+    strength: tier.strength
+  };
+}
 
 /** 装饰物微动画元数据：残旗呼吸 / 竹丛错相位摆动 / 灯笼轻晃。 */
 type ScatterPropSway = {
@@ -131,6 +148,12 @@ export class GameScene extends Phaser.Scene {
   private vignetteDynamic?: Phaser.GameObjects.Image;
   private narrativeDim?: Phaser.GameObjects.Rectangle;
   private narrativeTint?: Phaser.GameObjects.Rectangle;
+  // ── 枫叶官道·昼昏渐变：全屏 MULTIPLY 叠加层（无 dayNightCycle 配置的地图不建层）──
+  private dayNightOverlay?: Phaser.GameObjects.Rectangle;
+  /** 当前叠加状态（RGB 通道 + 强度），逐帧向时间轴目标缓动；F2 切图往返时保留，避免重建瞬间跳变。 */
+  private dayNightCurrent = { r: 255, g: 255, b: 255, strength: 0 };
+  /** F5 调试：锁定在 330s 暮赭红档便于预览；再按解除，缓动回正常时间轴。 */
+  private dayNightDebugPinned = false;
   private hitFocusOverlay?: Phaser.GameObjects.Rectangle;
   private weatherKind: WeatherKind = "clear";
   private leafEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -235,6 +258,9 @@ export class GameScene extends Phaser.Scene {
     this.vignetteDynamic = undefined;
     this.narrativeDim = undefined;
     this.narrativeTint = undefined;
+    this.dayNightOverlay = undefined;
+    this.dayNightCurrent = { r: 255, g: 255, b: 255, strength: 0 };
+    this.dayNightDebugPinned = false;
     this.hitFocusOverlay = undefined;
     this.leafEmitter = undefined;
     this.rainNearEmitter = undefined;
@@ -345,6 +371,14 @@ export class GameScene extends Phaser.Scene {
       const healHero = (): void => this.applyDebugHeal();
       const enableP0ArtShowcase = (): void => this.enableP0ArtShowcaseForDebug();
       const startInsightArtShowcase = (): void => this.startInsightArtShowcaseForDebug();
+      // F5：枫叶官道昼昏渐变预览——直接跳到 330s 暮赭红档，再按回到正常时间轴；Shift+F5：顿悟美术 showcase。
+      const previewDuskTier = (event: KeyboardEvent): void => {
+        if (event?.shiftKey) {
+          startInsightArtShowcase();
+          return;
+        }
+        this.toggleDayNightDebugPin();
+      };
       // F4：直接授予墨染江山 Lv1（内部附赠 showcase 木桩便于验证领域表现）
       const grantMoranSkill = (): void => this.grantMoranSkillForDebug();
       const spawnBoss = (): void => this.spawnBossForDebug();
@@ -357,7 +391,7 @@ export class GameScene extends Phaser.Scene {
         keyboard.on("keydown-F2", switchStageMap);
         keyboard.on("keydown-F3", enableP0ArtShowcase);
         keyboard.on("keydown-F4", grantMoranSkill);
-        keyboard.on("keydown-F5", startInsightArtShowcase);
+        keyboard.on("keydown-F5", previewDuskTier);
         keyboard.on("keydown-F6", startInsight);
         keyboard.on("keydown-F7", startDeath);
         keyboard.on("keydown-F8", showResult);
@@ -377,7 +411,7 @@ export class GameScene extends Phaser.Scene {
         if (import.meta.env.DEV) {
           keyboard.off("keydown-F3", enableP0ArtShowcase);
           keyboard.off("keydown-F4", grantMoranSkill);
-          keyboard.off("keydown-F5", startInsightArtShowcase);
+          keyboard.off("keydown-F5", previewDuskTier);
           keyboard.off("keydown-F6", startInsight);
           keyboard.off("keydown-F7", startDeath);
           keyboard.off("keydown-F8", showResult);
@@ -621,6 +655,18 @@ export class GameScene extends Phaser.Scene {
       .setDepth(90)
       .setScrollFactor(0)
       .setBlendMode(Phaser.BlendModes.MULTIPLY);
+
+    // 昼昏渐变叠加层：仅配置了 dayNightCycle 的地图（枫叶官道）创建；颜色/强度由 updateDayNightCycle 逐帧驱动。
+    if (map.dayNightCycle) {
+      this.dayNightOverlay = this.add.rectangle(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, 0xffffff, 0)
+        .setDepth(DAY_NIGHT_OVERLAY_DEPTH)
+        .setScrollFactor(0)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY);
+      // 立即应用保留的叠加状态：F2 切图往返时重建瞬间不跳变。
+      this.applyDayNightOverlay();
+    } else {
+      this.dayNightOverlay = undefined;
+    }
   }
 
   /**
@@ -667,6 +713,9 @@ export class GameScene extends Phaser.Scene {
     this.vignetteStatic = undefined;
     this.fogBandTile?.destroy();
     this.fogBandTile = undefined;
+    // 昼昏渐变叠加层随地图层同步重建（新地图未配置时 buildStageMapLayers 不再创建）。
+    this.dayNightOverlay?.destroy();
+    this.dayNightOverlay = undefined;
     for (const prop of this.scatterProps.values()) {
       prop.image.destroy();
     }
@@ -831,6 +880,7 @@ export class GameScene extends Phaser.Scene {
     this.windSway += (this.windSwayTarget - this.windSway) * Math.min(1, deltaMs / 900);
 
     this.updateWeatherTimeline();
+    this.updateDayNightCycle(deltaMs);
     this.updatePropSway();
     this.updateWeatherRipples();
   }
@@ -1050,6 +1100,100 @@ export class GameScene extends Phaser.Scene {
         prop.image.setRotation(meta.baseRotation + Math.sin(timeSeconds * 1.3 + meta.phase) * 0.045 * sway);
       }
     }
+  }
+
+  // ── 枫叶官道·昼昏渐变（白天 → 黄昏 → 入夜，全屏 MULTIPLY 低 alpha 叠加） ──
+
+  /**
+   * 每帧驱动：按局内时间（与天气时间轴同一计时源 elapsedMs）在相邻档间线性插值目标色/强度，
+   * 再向目标做帧率无关的指数缓动，切档/切图/F5 解锁均无跳变；末档（360s Boss 期）之后恒定保持。
+   */
+  private updateDayNightCycle(deltaMs: number): void {
+    const overlay = this.dayNightOverlay;
+    const cycle = this.getCurrentStageMap().dayNightCycle;
+    if (!overlay || !cycle || cycle.tints.length === 0) {
+      return;
+    }
+    const target = this.dayNightDebugPinned
+      ? this.getDayNightPinnedTarget(cycle.tints)
+      : this.sampleDayNightTarget(cycle.tints, this.elapsedMs / 1000);
+    const k = 1 - Math.exp(-deltaMs / DAY_NIGHT_SMOOTH_MS);
+    const current = this.dayNightCurrent;
+    current.r += (target.r - current.r) * k;
+    current.g += (target.g - current.g) * k;
+    current.b += (target.b - current.b) * k;
+    current.strength += (target.strength - current.strength) * k;
+    this.applyDayNightOverlay();
+  }
+
+  /** 时间轴采样：elapsedSeconds 落在相邻档间时线性插值；早于首档取首档、晚于末档守末档。 */
+  private sampleDayNightTarget(tints: DayNightTintTier[], elapsedSeconds: number): { r: number; g: number; b: number; strength: number } {
+    let prev = tints[0];
+    let next: DayNightTintTier | undefined;
+    for (const tier of tints) {
+      if (elapsedSeconds >= tier.at) {
+        prev = tier;
+      } else {
+        next = tier;
+        break;
+      }
+    }
+    const from = dayNightTierChannels(prev);
+    if (!next || next.at <= prev.at) {
+      return from;
+    }
+    const to = dayNightTierChannels(next);
+    const f = Phaser.Math.Clamp((elapsedSeconds - prev.at) / (next.at - prev.at), 0, 1);
+    return {
+      r: from.r + (to.r - from.r) * f,
+      g: from.g + (to.g - from.g) * f,
+      b: from.b + (to.b - from.b) * f,
+      strength: from.strength + (to.strength - from.strength) * f
+    };
+  }
+
+  /** F5 锁定档：取 at <= 330s 的最后一档（当前配置即 330s 暮赭红），防御配置改档后找不到精确秒数。 */
+  private getDayNightPinnedTarget(tints: DayNightTintTier[]): { r: number; g: number; b: number; strength: number } {
+    let pinned = tints[0];
+    for (const tier of tints) {
+      if (tier.at <= DAY_NIGHT_DEBUG_PIN_SECONDS) {
+        pinned = tier;
+      } else {
+        break;
+      }
+    }
+    return dayNightTierChannels(pinned);
+  }
+
+  /** 把 dayNightCurrent 写入叠加层（MULTIPLY 颜色 + alpha 强度）；强度近零时隐藏，省一次全屏混合。 */
+  private applyDayNightOverlay(): void {
+    const overlay = this.dayNightOverlay;
+    if (!overlay) {
+      return;
+    }
+    const { r, g, b, strength } = this.dayNightCurrent;
+    const clamped = Phaser.Math.Clamp(strength, 0, 1);
+    overlay.setFillStyle(Phaser.Display.Color.GetColor(Math.round(r), Math.round(g), Math.round(b)), clamped);
+    overlay.setVisible(clamped > 0.002);
+  }
+
+  /** F5（DEV）：锁定昼昏渐变到 330s 暮赭红档立即预览；再按解除，缓动回正常时间轴。 */
+  private toggleDayNightDebugPin(): void {
+    if (getScreenState(this) !== "game") {
+      return;
+    }
+    const cycle = this.getCurrentStageMap().dayNightCycle;
+    if (!cycle) {
+      console.debug("[DayNight] 当前地图未配置昼昏渐变（仅枫叶官道启用），请按 F2 切图后再试。");
+      return;
+    }
+    this.dayNightDebugPinned = !this.dayNightDebugPinned;
+    if (this.dayNightDebugPinned) {
+      // 直接跳到目标档（不经缓动），立即呈现暮赭红。
+      this.dayNightCurrent = this.getDayNightPinnedTarget(cycle.tints);
+      this.applyDayNightOverlay();
+    }
+    console.debug(`[DayNight] F5 预览：${this.dayNightDebugPinned ? `锁定 ${DAY_NIGHT_DEBUG_PIN_SECONDS}s 暮赭红档` : "解除锁定，回到时间轴"}`);
   }
 
   // ── 竹雨听风②：色温叙事（精英预警/Boss 出场压暗 + 泛朱砂） ────────────

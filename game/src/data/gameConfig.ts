@@ -144,6 +144,13 @@ export const vignetteDynamicsConfig: VignetteDynamicsConfig = {
 /** 局内地图条目 ID。 */
 export type StageMapId = "qingshi_mountain_road" | "maple_official_road";
 
+/** 昼昏渐变档位：at = 局内秒数；tint = 全屏 MULTIPLY 叠加色；strength = 该层目标 alpha（0 = 无染色）。 */
+export type DayNightTintTier = {
+  at: number;
+  tint: number;
+  strength: number;
+};
+
 /** 单张地图的纯表现层配置（不含玩法数值；散布权重合计应为 1）。 */
 export type StageMapEntry = {
   id: StageMapId;
@@ -165,6 +172,11 @@ export type StageMapEntry = {
   leafTints: number[];
   /** 雾带染色（TileSprite tint；0xffffff 表示不染，沿用雾纹理原色） */
   fogTint: number;
+  /**
+   * 昼昏渐变（可选；缺省 = 不启用，青石山道保持现状）。
+   * tints 按 at 升序：局内时间在相邻档间逐帧插值颜色/强度，末档之后恒定保持（Boss 期停末档）。
+   */
+  dayNightCycle?: { tints: DayNightTintTier[] };
 };
 
 export type StageMapConfig = {
@@ -217,7 +229,17 @@ export const stageMapConfig: StageMapConfig = {
         { key: "decor_winejar", weight: 0.08 }
       ],
       leafTints: [0xb23a24, 0xd4692a, 0xe09a3e],
-      fogTint: 0xd4a05a
+      fogTint: 0xd4a05a,
+      // 昼昏渐变：白天 → 150s 浅暖橙 → 260s 赭橙 → 330s 暮赭红 → 360s+（Boss 期）夜墨红恒定。
+      dayNightCycle: {
+        tints: [
+          { at: 0, tint: 0xffffff, strength: 0 },
+          { at: 150, tint: 0xd4a05a, strength: 0.1 },
+          { at: 260, tint: 0xc06a30, strength: 0.2 },
+          { at: 330, tint: 0x8a3a28, strength: 0.3 },
+          { at: 360, tint: 0x3a1a14, strength: 0.38 }
+        ]
+      }
     }
   ]
 };
