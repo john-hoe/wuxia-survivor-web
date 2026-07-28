@@ -48,6 +48,8 @@ import vfxInkStroke2Url from "../assets/vfx/vfx_ink_stroke_2.png";
 import vfxInkStroke3Url from "../assets/vfx/vfx_ink_stroke_3.png";
 import vfxInkStroke4Url from "../assets/vfx/vfx_ink_stroke_4.png";
 import vfxInnerMagnetTrailUrl from "../assets/vfx/vfx_inner_magnet_trail.png";
+import vfxPoisonBubbleUrl from "../assets/vfx/vfx_poison_bubble.png";
+import vfxPoisonBubbleGoldUrl from "../assets/vfx/vfx_poison_bubble_gold.png";
 import vfxInsightBurstUrl from "../assets/vfx/vfx_insight_burst.png";
 import vfxScriptureRevealUrl from "../assets/vfx/vfx_scripture_reveal.png";
 import vfxSkillAdvanceUrl from "../assets/vfx/vfx_skill_advance.png";
@@ -87,6 +89,7 @@ import uiIconSkillZhenshanUrl from "../assets/ui/sw-art-015/ui_icon_skill_zhensh
 import uiIconSkillZhenshanAdvancedUrl from "../assets/ui/sw-art-015/ui_icon_skill_zhenshan_advanced.png";
 import uiIconSkillMoranUrl from "../assets/ui/ui_icon_skill_moran.png";
 import uiIconSkillMoranAdvancedUrl from "../assets/ui/ui_icon_skill_moran_advanced.png";
+import uiMarkPoisonUrl from "../assets/ui/ui_mark_poison.png";
 import uiBadgeDuplicateUrl from "../assets/ui/sw-art-016/ui_badge_duplicate.png";
 import uiBadgePityUrl from "../assets/ui/sw-art-016/ui_badge_pity.png";
 import uiButtonDisabledUrl from "../assets/ui/sw-art-016/ui_button_disabled.png";
@@ -191,6 +194,8 @@ export const artAssetUrls = {
   vfx_ink_stroke_3: vfxInkStroke3Url,
   vfx_ink_stroke_4: vfxInkStroke4Url,
   vfx_inner_magnet_trail: vfxInnerMagnetTrailUrl,
+  vfx_poison_bubble: vfxPoisonBubbleUrl,
+  vfx_poison_bubble_gold: vfxPoisonBubbleGoldUrl,
   vfx_insight_burst: vfxInsightBurstUrl,
   vfx_scripture_reveal: vfxScriptureRevealUrl,
   vfx_skill_advance: vfxSkillAdvanceUrl,
@@ -230,6 +235,7 @@ export const artAssetUrls = {
   ui_icon_skill_zhenshan_advanced: uiIconSkillZhenshanAdvancedUrl,
   ui_icon_skill_moran: uiIconSkillMoranUrl,
   ui_icon_skill_moran_advanced: uiIconSkillMoranAdvancedUrl,
+  ui_mark_poison: uiMarkPoisonUrl,
   ui_badge_duplicate: uiBadgeDuplicateUrl,
   ui_badge_pity: uiBadgePityUrl,
   ui_button_disabled: uiButtonDisabledUrl,

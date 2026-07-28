@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { combat001DirectorConfig, type EnemyDirectorConfig, type WaveDirectorState, type WaveSegment } from "../data/waves";
 import { enemyConfigs, type EnemyConfig, type EnemyId } from "../data/enemies";
+import type { GameEventName } from "../types";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
 import { JuiceSystem } from "./JuiceSystem";
@@ -119,6 +120,20 @@ type EnemyRuntime = {
    */
   slowFactor: number;
   slowMsRemaining: number;
+  /**
+   * 墨染江山·最小中毒通道「墨里淬毒」（Lv3+，与减速通道同模式）：
+   * poisonTicksLeft 余毒剩余跳数（>0 即中毒中），poisonTickMs 距下一跳倒计时，
+   * poisonTickIntervalMs 跳间隔（跳后复位），poisonTickDamage 每跳伤害（=命中当次 tick 伤害），
+   * poisonAmp 蚀甲受伤倍率（进阶「金蛊江山」1.1，缺省 1；中毒期间 damageEnemy 入口乘算）。
+   * 写入入口：eventBus "enemy_poison_requested"（SkillSystem zone tick 桥接，GameScene 零改动）。
+   */
+  poisonTicksLeft: number;
+  poisonTickMs: number;
+  poisonTickIntervalMs: number;
+  poisonTickDamage: number;
+  poisonAmp: number;
+  /** 中毒印记：头顶 ui_mark_poison 小图标（1.5s 呼吸淡出，重复中毒刷新；缺失纹理用小绿点兜底） */
+  poisonMark?: Phaser.GameObjects.Image;
 };
 
 type EliteWarningRuntime = {
@@ -194,6 +209,29 @@ const LUNGE_TOTAL_MS = LUNGE_OUT_MS + LUNGE_BACK_MS;
 const WOOD_SHARD_RISE_MS = 150;
 const WOOD_SHARD_TOTAL_MS = 400;
 const WOOD_SHARD_TINTS = [0x7a4f2a, 0x8d6132, 0x6c4322, 0x5e421c];
+/**
+ * 中毒最小通道「墨里淬毒」：
+ * types.ts 为并行代理共享文件不动，事件名本地断言接入总线（SkillSystem 端同名发出）；
+ * 余毒跳走 damageEnemy 标准伤害流（飘字 kind "poison" 孔雀绿），source 独立标记便于日志/结算归因。
+ */
+const ENEMY_POISON_REQUESTED_EVENT = "enemy_poison_requested" as GameEventName;
+const ENEMY_POISONED_EVENT = "enemy_poisoned" as GameEventName;
+const POISON_TICK_SOURCE = "moran_poison_dot";
+/** 余毒跳数防御上限（设计值 2/3，钳制异常负载） */
+const POISON_MAX_TICKS = 5;
+/** 蚀甲倍率防御上限（设计值 1.1） */
+const POISON_MAX_AMP = 1.5;
+/** 中毒印记：ui_mark_poison 美术键（跨代理约定，缺失走小绿点兜底纹理）与悬头参数 */
+const POISON_MARK_TEXTURE = "ui_mark_poison";
+const POISON_MARK_FALLBACK_TEXTURE = "poison_mark_fallback";
+const POISON_MARK_SIZE = 16;
+const POISON_MARK_DEPTH = 26;
+const POISON_MARK_HOVER_PX = 34;
+/** 印记 1.5s 呼吸淡出：前 750ms 呼吸（0.95↔0.4 一降一升），后 750ms 渐隐销毁；重复中毒重置重播 */
+const POISON_MARK_MAX_ALPHA = 0.95;
+const POISON_MARK_BREATH_ALPHA = 0.4;
+const POISON_MARK_BREATH_HALF_MS = 375;
+const POISON_MARK_FADE_MS = 750;
 
 export class EnemyDirectorSystem {
   private readonly config: EnemyDirectorConfig;
@@ -219,6 +257,8 @@ export class EnemyDirectorSystem {
   private readonly activeSplats = new Set<Phaser.GameObjects.Sprite>();
   /** 减速请求事件退订函数（enemy_slow_requested → applySlow 桥接） */
   private readonly unsubscribeSlowRequest: () => void;
+  /** 中毒请求事件退订函数（enemy_poison_requested → applyPoison 桥接） */
+  private readonly unsubscribePoisonRequest: () => void;
 
   constructor(private readonly scene: Phaser.Scene, private readonly options: EnemyDirectorOptions) {
     this.config = options.config ?? combat001DirectorConfig;
@@ -226,6 +266,9 @@ export class EnemyDirectorSystem {
     this.initialViewportClamp = window.innerWidth <= 768 ? "mobile" : "desktop";
     this.unsubscribeSlowRequest = eventBus.on("enemy_slow_requested", (payload) => {
       this.handleSlowRequest(payload);
+    });
+    this.unsubscribePoisonRequest = eventBus.on(ENEMY_POISON_REQUESTED_EVENT, (payload) => {
+      this.handlePoisonRequest(payload);
     });
     eventBus.emit("wave_state_changed", {
       state: this.currentState,
@@ -273,7 +316,9 @@ export class EnemyDirectorSystem {
 
   destroy(): void {
     this.unsubscribeSlowRequest();
+    this.unsubscribePoisonRequest();
     for (const enemy of this.enemies) {
+      this.destroyPoisonMark(enemy);
       enemy.view.destroy();
       enemy.shadow.destroy();
     }
@@ -356,7 +401,9 @@ export class EnemyDirectorSystem {
     }
 
     const enemy = this.enemies[index];
-    const damageAmount = Math.max(0, Math.floor(amount));
+    // 蚀甲「金蛊江山」：中毒期间受伤 +10%（poisonAmp，入口乘算对全部伤害源生效，含余毒跳本身）
+    const poisonAmp = enemy.poisonTicksLeft > 0 ? enemy.poisonAmp : 1;
+    const damageAmount = Math.max(0, Math.floor(amount * poisonAmp));
     if (damageAmount <= 0) {
       return undefined;
     }
@@ -451,6 +498,176 @@ export class EnemyDirectorSystem {
       ? request.durationMs
       : 0;
     this.applySlow(request.runtimeId, factor, durationMs);
+  }
+
+  /**
+   * 墨染江山上毒入口「墨里淬毒」（最小通道，与 applySlow 同模式）：对单个敌人写入余毒状态。
+   * 重复中毒刷新跳数与计时——敌人滞留领域时 zone tick 持续重置倒计时（余毒不落地），
+   * 离开领域后不再续期，余毒按 poisonTickIntervalMs 连跳到耗尽（设计语义"离开后余毒再跳 N 次"）。
+   */
+  applyPoison(runtimeId: number, ticks: number, tickMs: number, damage: number, amp = 1): boolean {
+    const enemy = this.enemies.find((candidate) => candidate.runtimeId === runtimeId);
+    const clampedTicks = Phaser.Math.Clamp(Math.floor(ticks), 0, POISON_MAX_TICKS);
+    if (!enemy || clampedTicks <= 0 || damage <= 0 || tickMs <= 0) {
+      return false;
+    }
+
+    enemy.poisonTicksLeft = clampedTicks;
+    enemy.poisonTickMs = tickMs;
+    enemy.poisonTickIntervalMs = tickMs;
+    enemy.poisonTickDamage = damage;
+    enemy.poisonAmp = Phaser.Math.Clamp(amp, 1, POISON_MAX_AMP);
+    this.refreshPoisonMark(enemy);
+    eventBus.emit(ENEMY_POISONED_EVENT, {
+      runtimeId: enemy.runtimeId,
+      enemyId: enemy.config.id,
+      ticks: clampedTicks,
+      tickMs,
+      damage,
+      amp: roundForDebug(enemy.poisonAmp)
+    });
+    return true;
+  }
+
+  /** eventBus "enemy_poison_requested" 桥接：防御性解析负载后转发 applyPoison。 */
+  private handlePoisonRequest(payload: unknown): void {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const request = payload as {
+      runtimeId?: unknown;
+      ticks?: unknown;
+      tickMs?: unknown;
+      damage?: unknown;
+      amp?: unknown;
+    };
+    if (typeof request.runtimeId !== "number" || !Number.isFinite(request.runtimeId)) {
+      return;
+    }
+    const ticks = typeof request.ticks === "number" && Number.isFinite(request.ticks) ? request.ticks : 0;
+    const tickMs = typeof request.tickMs === "number" && Number.isFinite(request.tickMs) && request.tickMs > 0
+      ? request.tickMs
+      : 500;
+    const damage = typeof request.damage === "number" && Number.isFinite(request.damage) ? request.damage : 0;
+    const amp = typeof request.amp === "number" && Number.isFinite(request.amp) ? request.amp : 1;
+    this.applyPoison(request.runtimeId, ticks, tickMs, damage, amp);
+  }
+
+  /**
+   * 余毒推进（updateEnemies 逐帧调用）：到期一跳走 damageEnemy 标准伤害流（飘字 kind "poison"），
+   * 跳数耗尽清状态；返回 false 表示本跳致死（killEnemy 已清理印记，调用方跳过后续更新）。
+   */
+  private tickEnemyPoison(enemy: EnemyRuntime, deltaMs: number): boolean {
+    if (enemy.poisonTicksLeft <= 0) {
+      return true;
+    }
+
+    enemy.poisonTickMs -= deltaMs;
+    if (enemy.poisonTickMs > 0) {
+      return true;
+    }
+    enemy.poisonTickMs += enemy.poisonTickIntervalMs;
+
+    const result = this.damageEnemy(enemy.runtimeId, enemy.poisonTickDamage, POISON_TICK_SOURCE);
+    if (result?.damaged) {
+      JuiceSystem.get(this.scene).damageNumber(result.screenX, result.screenY, result.amount, "poison");
+    }
+    enemy.poisonTicksLeft -= 1;
+    if (result?.killed) {
+      return false;
+    }
+    if (enemy.poisonTicksLeft <= 0) {
+      this.clearPoisonState(enemy);
+    }
+    return true;
+  }
+
+  /** 余毒跳尽清状态（印记为 1.5s 呼吸淡出一次性表现，由自身 tween 收尾，这里不摘除）。 */
+  private clearPoisonState(enemy: EnemyRuntime): void {
+    enemy.poisonTicksLeft = 0;
+    enemy.poisonTickMs = 0;
+    enemy.poisonTickDamage = 0;
+    enemy.poisonAmp = 1;
+  }
+
+  /** 中毒印记：首次创建 / 重复中毒重置重播 1.5s 呼吸淡出；ui_mark_poison 缺失时用小绿点兜底纹理。 */
+  private refreshPoisonMark(enemy: EnemyRuntime): void {
+    if (enemy.poisonMark?.active) {
+      this.scene.tweens.killTweensOf(enemy.poisonMark);
+      enemy.poisonMark.setAlpha(POISON_MARK_MAX_ALPHA);
+      this.startPoisonMarkFade(enemy, enemy.poisonMark);
+      return;
+    }
+    enemy.poisonMark = undefined;
+
+    const textureKey = this.scene.textures.exists(POISON_MARK_TEXTURE)
+      ? POISON_MARK_TEXTURE
+      : this.ensurePoisonMarkFallbackTexture();
+    if (!textureKey) {
+      return;
+    }
+    const mark = this.scene.add.image(enemy.view.x, enemy.view.y, textureKey)
+      .setDepth(POISON_MARK_DEPTH)
+      .setAlpha(POISON_MARK_MAX_ALPHA);
+    mark.setDisplaySize(POISON_MARK_SIZE, POISON_MARK_SIZE);
+    enemy.poisonMark = mark;
+    this.startPoisonMarkFade(enemy, mark);
+  }
+
+  /** 印记 1.5s 呼吸淡出：前 750ms 呼吸（一降一升），后 750ms 渐隐至 0 并销毁、摘除敌人引用。 */
+  private startPoisonMarkFade(enemy: EnemyRuntime, mark: Phaser.GameObjects.Image): void {
+    this.scene.tweens.add({
+      targets: mark,
+      alpha: POISON_MARK_BREATH_ALPHA,
+      duration: POISON_MARK_BREATH_HALF_MS,
+      yoyo: true,
+      ease: "Sine.easeInOut",
+      onComplete: () => {
+        this.scene.tweens.add({
+          targets: mark,
+          alpha: 0,
+          duration: POISON_MARK_FADE_MS,
+          ease: "Sine.easeIn",
+          onComplete: () => {
+            if (enemy.poisonMark === mark) {
+              enemy.poisonMark = undefined;
+            }
+            if (mark.active) {
+              mark.destroy();
+            }
+          }
+        });
+      }
+    });
+  }
+
+  /** 印记兜底纹理：孔雀绿小圆点 + 深墨描边（16×16），生成一次全局复用。 */
+  private ensurePoisonMarkFallbackTexture(): string | undefined {
+    if (this.scene.textures.exists(POISON_MARK_FALLBACK_TEXTURE)) {
+      return POISON_MARK_FALLBACK_TEXTURE;
+    }
+
+    const graphics = this.scene.add.graphics();
+    graphics.fillStyle(0x3fae8a, 1);
+    graphics.fillCircle(8, 8, 6);
+    graphics.lineStyle(2, 0x1a1f1a, 0.9);
+    graphics.strokeCircle(8, 8, 6);
+    graphics.generateTexture(POISON_MARK_FALLBACK_TEXTURE, 16, 16);
+    graphics.destroy();
+    return this.scene.textures.exists(POISON_MARK_FALLBACK_TEXTURE) ? POISON_MARK_FALLBACK_TEXTURE : undefined;
+  }
+
+  /** 销毁中毒印记（死亡/离场/系统销毁统一入口）：停 tween、摘引用、销毁显示对象。 */
+  private destroyPoisonMark(enemy: EnemyRuntime): void {
+    const mark = enemy.poisonMark;
+    enemy.poisonMark = undefined;
+    if (!mark) {
+      return;
+    }
+    this.scene.tweens.killTweensOf(mark);
+    if (mark.active) {
+      mark.destroy();
+    }
   }
 
   private spawnTowardTarget(segment: ResolvedWaveSegment): void {
@@ -553,6 +770,11 @@ export class EnemyDirectorSystem {
       hitOffsetAgeMs: HIT_OFFSET_SETTLE_MS,
       slowFactor: 1,
       slowMsRemaining: 0,
+      poisonTicksLeft: 0,
+      poisonTickMs: 0,
+      poisonTickIntervalMs: 500,
+      poisonTickDamage: 0,
+      poisonAmp: 1,
       shadow,
       footOffsetY: this.getFootOffsetY(view, config),
       leanRad: 0,
@@ -611,6 +833,10 @@ export class EnemyDirectorSystem {
       enemy.slowMsRemaining = Math.max(0, enemy.slowMsRemaining - deltaMs);
       if (enemy.slowMsRemaining <= 0) {
         enemy.slowFactor = 1;
+      }
+      // 余毒跳变（最小中毒通道）：本跳致死时 killEnemy 已走死亡流程，跳过后续移动/表现更新
+      if (!this.tickEnemyPoison(enemy, deltaMs)) {
+        continue;
       }
       const chaseScale = (enemy.knockbackMsRemaining > 0 ? KNOCKBACK_CHASE_DAMPING : 1) * enemy.slowFactor;
       enemy.worldX += enemy.directionX * enemy.config.moveSpeed * chaseScale * deltaSeconds;
@@ -696,6 +922,7 @@ export class EnemyDirectorSystem {
 
   private despawnEnemy(index: number, reason: string, distanceFromHero: number): void {
     const [enemy] = this.enemies.splice(index, 1);
+    this.destroyPoisonMark(enemy);
     this.releaseShadow(enemy.shadow);
     enemy.view.destroy();
     this.despawnSamples.push({ ageMs: 0 });
@@ -709,6 +936,7 @@ export class EnemyDirectorSystem {
 
   private killEnemy(index: number, source: string, result: EnemyDamageResult): void {
     const [enemy] = this.enemies.splice(index, 1);
+    this.destroyPoisonMark(enemy);
     this.playEnemyDeathTween(enemy);
     this.fadeEnemyShadow(enemy.shadow);
     const juice = JuiceSystem.get(this.scene);
@@ -1176,6 +1404,10 @@ export class EnemyDirectorSystem {
     );
     // 接触阴影贴地跟随：不继承受击/前扑/颠簸偏移（地面参照，反衬身体位移）
     enemy.shadow.setPosition(baseX, baseY + enemy.footOffsetY);
+    // 中毒印记悬于头顶（脚底锚点上抬，与阴影同理不继承受击/前扑偏移）
+    if (enemy.poisonMark?.active) {
+      enemy.poisonMark.setPosition(baseX, baseY - enemy.footOffsetY - POISON_MARK_HOVER_PX);
+    }
   }
 
   /** 径向渐变墨黑椭圆纹理：24 层同心椭圆由外向内递增不透明度，一次生成全局缓存复用。 */

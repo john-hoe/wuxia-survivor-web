@@ -12,7 +12,7 @@ import { PALETTE, FONT_MONO } from "../ui/visualConstants";
  * 低 VFX 模式下粒子数量自动减半、飘字合并抑制。
  */
 
-export type DamageKind = "normal" | "crit" | "elite" | "boss" | "heal" | "gold";
+export type DamageKind = "normal" | "crit" | "elite" | "boss" | "heal" | "gold" | "poison";
 
 const TEX = {
   dot: "juice_dot",
@@ -21,7 +21,7 @@ const TEX = {
 } as const;
 
 /**
- * 伤害数字分层：普通白字 / 暴击芥金 / 精英击杀朱砂 / Boss 橙 / 掉落金色。
+ * 伤害数字分层：普通白字 / 暴击芥金 / 精英击杀朱砂 / Boss 橙 / 掉落金色 / 中毒孔雀绿。
  * bounce=true 的档位出场放大 1.4 倍，Back.easeOut 先大后小弹跳回稳。
  */
 const DAMAGE_STYLE: Record<
@@ -33,7 +33,9 @@ const DAMAGE_STYLE: Record<
   elite: { color: PALETTE.cinnabarCss, fontSize: 18, stroke: "#101010", scale: 1.15, bounce: true },
   boss: { color: "#ff9a3d", fontSize: 17, stroke: "#101010", scale: 1.1 },
   heal: { color: PALETTE.hpCss, fontSize: 15, stroke: "#101010", scale: 1 },
-  gold: { color: "#f6d472", fontSize: 15, stroke: "#101010", scale: 1 }
+  gold: { color: "#f6d472", fontSize: 15, stroke: "#101010", scale: 1 },
+  // 墨染江山·余毒跳字：孔雀绿 #3fae8a（墨里淬毒专属档位，低 VFX 下保留）
+  poison: { color: "#3fae8a", fontSize: 15, stroke: "#101010", scale: 1 }
 };
 
 /** 弹跳档位的出场放大倍数（scale 1.4 → 回稳） */

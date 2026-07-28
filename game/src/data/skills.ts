@@ -23,6 +23,15 @@ export type SkillLevelConfig = {
   slowPercent?: number;
   /** zone 专用：施放时 stamp 的墨笔触数（Lv3+ 双道交叉） */
   strokeCount?: number;
+  /**
+   * zone 专用·毒化「墨里淬毒」（Lv3+，可选调参位，当前为表现层常量未启用本字段）：
+   * 余毒跳数——被 tick 命中的敌人离开领域后再跳 N 次毒（伤害=当次 tick 伤害）。
+   */
+  poisonTicks?: number;
+  /** zone 专用·毒化：余毒跳间隔 ms（缺省 500，与 tickIntervalMs 同步节奏） */
+  poisonTickMs?: number;
+  /** zone 专用·毒化进阶「金蛊江山」：蚀甲——中毒期间敌人受伤倍率（1.1 = +10%，缺省 1） */
+  poisonAmp?: number;
 };
 
 export type SkillAdvancementConfig = {
@@ -227,6 +236,12 @@ export const skillConfigs: Record<SkillId, SkillConfig> = {
    * 形态分级：Lv1-2 单道墨痕；Lv3-4 双道交叉 + 半径 +30% + 墨缘泛青；Lv5/进阶「金墨江山」
    * 墨芯芥金 + 半径 +50% + 减速 50%（进阶形态数值见 SkillSystem.getZoneProfile）。
    *
+   * 毒化升级「墨里淬毒」（Lv3+，表现层参数为 SkillSystem 常量，本表数值不动）：
+   * - Lv3+：tick 命中使敌人中毒——离开领域后余毒再跳 2 次（间隔 500ms，伤害=当次 tick 伤害），
+   *   墨缘泛孔雀绿韵、领域表面冒毒泡、中毒飘绿字、敌人头顶中毒印记。
+   * - 进阶「金蛊江山」：余毒 3 次 + 蚀甲（中毒敌人受伤 +10%），毒泡转金绿 #a9c04a。
+   * 调参预留：poisonTicks / poisonTickMs / poisonAmp 可选字段（见 SkillLevelConfig）。
+   *
    * 【跨代理对接 · GameScene 由表现层代理维护】
    * 1. F4 调试键：GameScene F 系 debug 键中新增 F4 → skillSystem.unlockSkill("moran_ink_zone", 1)。
    * 2. GameScene 局部函数 isAdvanceKeyId 需将 "pine_soot_inkstick" 加入白名单，
@@ -268,6 +283,7 @@ export const skillConfigs: Record<SkillId, SkillConfig> = {
         strokeCount: 1
       },
       {
+        // Lv3 起「墨里淬毒」生效：余毒 2 跳 @500ms（毒参数为 SkillSystem 表现层常量，不增减本表数值）
         level: 3,
         damage: 10,
         cooldownMs: 4100,

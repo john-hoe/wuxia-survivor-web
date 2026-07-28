@@ -435,13 +435,13 @@ export class GameScene extends Phaser.Scene {
       this.applyInsightSelection(payload.optionId ?? payload.cardId ?? "");
     });
     // ── 墨染江山①：施放表现 —— 订阅 skill_zone_spawned（含落点坐标），在墨痕领域中心画"挥毫成阵"墨圈，
-    //    局部笔墨反馈，不再全屏明暗闪烁。
-    const unsubscribeMoranCast = eventBus.on<{ skillId?: string; worldX?: number; worldY?: number; radius?: number }>(
+    //    局部笔墨反馈，不再全屏明暗闪烁。Lv3+「墨里淬毒」载荷带 level/advanced，墨环叠碧色弧（防御性读取）。
+    const unsubscribeMoranCast = eventBus.on<{ skillId?: string; worldX?: number; worldY?: number; radius?: number; level?: number; advanced?: boolean }>(
       "skill_zone_spawned",
       (payload) => {
         if (typeof payload?.skillId === "string" && payload.skillId.includes(MORAN_SKILL_ID_KEY)) {
           this.moranCastEventSeen = true;
-          this.playMoranZoneRing(payload.worldX, payload.worldY, payload.radius);
+          this.playMoranZoneRing(payload.worldX, payload.worldY, payload.radius, payload.level, payload.advanced);
         }
       }
     );
@@ -1432,8 +1432,10 @@ export class GameScene extends Phaser.Scene {
   /**
    * 「挥毫成阵」局部墨圈：墨痕领域落点处，一笔墨环从起笔到合拢勾勒 350ms，再驻留淡出 300ms。
    * 局部笔墨反馈，不改变全屏亮度（替代原全屏墨晕涟漪，避免久看明暗闪烁疲劳）。
+   * 毒化「墨里淬毒」Lv3+：主墨环下垫一缕 0x3fae8a 碧色弧（起笔错开 30°，比主环宽 1px 透出绿韵）；
+   * 进阶「金蛊江山」碧弧转金绿 0xa9c04a。level/advanced 防御性读取，缺省按 Lv1 纯墨。
    */
-  private playMoranZoneRing(worldX?: number, worldY?: number, radius?: number): void {
+  private playMoranZoneRing(worldX?: number, worldY?: number, radius?: number, level?: number, advanced?: boolean): void {
     if (!this.scene.isActive() || getScreenState(this) !== "game") {
       return;
     }
@@ -1450,6 +1452,8 @@ export class GameScene extends Phaser.Scene {
       const centerX = worldX !== undefined ? heroScreen.x + (worldX - heroWorld.x) : heroScreen.x;
       const centerY = worldY !== undefined ? heroScreen.y + (worldY - heroWorld.y) : heroScreen.y;
       const ringRadius = Math.max(48, radius ?? 90);
+      const poisonEdge = (typeof level === "number" && Number.isFinite(level) ? level : 1) >= 3;
+      const poisonEdgeColor = advanced === true ? 0xa9c04a : 0x3fae8a;
       const ink = this.add.graphics().setDepth(64);
       const state = { t: 0 };
       this.tweens.add({
@@ -1459,6 +1463,13 @@ export class GameScene extends Phaser.Scene {
         ease: Phaser.Math.Easing.Quadratic.Out,
         onUpdate: () => {
           ink.clear();
+          if (poisonEdge) {
+            // 碧色弧垫底：5px 比主墨环宽 1px、起笔错开 30°（-60° 起笔），透出墨缘绿韵
+            ink.lineStyle(5, poisonEdgeColor, 0.6);
+            ink.beginPath();
+            ink.arc(centerX, centerY, ringRadius, Phaser.Math.DegToRad(-60), Phaser.Math.DegToRad(-60 + state.t * 360));
+            ink.strokePath();
+          }
           // 主墨环：从 -90° 起笔扫到当前进度
           ink.lineStyle(4, 0x1a1f1a, 0.85);
           ink.beginPath();

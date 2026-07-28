@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { skillConfigs, skillOrder, type AdvanceKeyId, type SkillId, type SkillLevelConfig } from "../data/skills";
 import { enemyConfigs } from "../data/enemies";
 import type { InsightSkillState } from "../data/progression";
+import type { GameEventName } from "../types";
 import type { EnemyDamageResult, EnemyTargetSnapshot } from "./EnemyDirectorSystem";
 import type { BossDamageResult, BossTargetSnapshot } from "./BossSystem";
 import { eventBus } from "../utils/EventBus";
@@ -94,7 +95,11 @@ type ZoneRuntime = {
   tickTimerMs: number;
   ageMs: number;
   durationMs: number;
+  /** 施放时技能等级（毒化「墨里淬毒」Lv3+ 门槛判定） */
+  level: number;
   advanced: boolean;
+  /** 毒泡粒子 emitter（Lv3+ 挂领域存续期，随领域销毁） */
+  poisonEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
 };
 
 type VfxRuntime = {
@@ -166,9 +171,27 @@ const INK_SPLAT_TEXTURE = "vfx_ink_splat";
 const INK_FALLBACK_TEXTURE = "moran_ink_fallback";
 /** 墨点 hitSpark 复用 JuiceSystem 程序化点纹理，深色 NORMAL 混合（不要 ADD 亮色） */
 const INK_HIT_DOT_TEXTURE = "juice_dot";
-/** 配色：墨 / 进阶芥金墨 / Lv3+ 墨缘泛青（tint 乘算微调） */
+/** 配色：墨 / 进阶芥金墨 / Lv3+ 墨缘淬毒绿韵（原泛青 0x9fc4b4 与孔雀绿 0x3fae8a 按 65:35 合并，乘算微调保持低饱和） */
 const INK_TINT_ADVANCED = 0xa99a20;
-const INK_TINT_CYAN_EDGE = 0x9fc4b4;
+const INK_TINT_POISON_EDGE = 0x7dbca5;
+/** 墨里淬毒（Lv3+）：zone tick 命中桥接中毒（EnemyDirector 最小通道）；余毒跳数 / 跳间隔 / 进阶蚀甲倍率 */
+const ZONE_POISON_TICKS_BASE = 2;
+const ZONE_POISON_TICKS_ADVANCED = 3;
+const ZONE_POISON_TICK_INTERVAL_MS = 500;
+const ZONE_POISON_AMP_ADVANCED = 1.1;
+/** types.ts 为并行代理共享文件不动：中毒请求事件名本地断言接入事件总线（EnemyDirector 端同名桥接） */
+const ENEMY_POISON_REQUESTED_EVENT = "enemy_poison_requested" as GameEventName;
+/** 毒泡粒子：纹理键（跨代理约定，缺失走程序化兜底白泡 + tint 上色；进阶金绿版 gold 键缺失回落基础键） */
+const POISON_BUBBLE_TEXTURE = "vfx_poison_bubble";
+const POISON_BUBBLE_GOLD_TEXTURE = "vfx_poison_bubble_gold";
+const POISON_BUBBLE_FALLBACK_TEXTURE = "moran_poison_bubble_fallback";
+const POISON_BUBBLE_FREQUENCY_MS = 120;
+const POISON_BUBBLE_LIFESPAN_MS = 700;
+/** 毒泡配色：孔雀绿 / 金蛊金绿（仅程序化兜底白泡需要 tint，美术泡自带颜色） */
+const POISON_BUBBLE_TINT = 0x3fae8a;
+const POISON_BUBBLE_GOLD_TINT = 0xa9c04a;
+/** 毒泡深度：墨层（2）之上、敌人（8-9）之下——泡从墨面冒出，不盖角色 */
+const POISON_BUBBLE_DEPTH = 6;
 /** 震山掌地面残痕纹理（跨代理约定键，未注册时走程序化裂纹兜底） */
 const GROUND_CRACK_TEXTURE = "vfx_ground_crack";
 /** 程序化兜底裂纹纹理（192×192，生成一次全局复用） */
@@ -309,6 +332,10 @@ export class SkillSystem {
     }
     for (const wave of this.waves) {
       wave.view.destroy();
+    }
+    for (const zone of this.zones) {
+      zone.poisonEmitter?.destroy();
+      zone.poisonEmitter = undefined;
     }
     for (const vfx of this.vfx) {
       vfx.view.destroy();
@@ -615,12 +642,14 @@ export class SkillSystem {
       tickTimerMs: 0,
       ageMs: 0,
       durationMs: profile.durationMs,
+      level: runtime.level,
       advanced: runtime.advanced
     };
     this.nextZoneId += 1;
     this.zones.push(zone);
     this.stampInkStrokes(zone, profile.strokeCount, runtime.level);
     this.createInkSplatVfx(zone);
+    zone.poisonEmitter = this.createPoisonBubbleEmitter(zone);
     runtime.cooldownMs = profile.cooldownMs;
     this.options.playSfx(runtime.advanced ? "skill_cast_advanced" : "skill_cast");
     eventBus.emit("skill_cast", {
@@ -691,8 +720,15 @@ export class SkillSystem {
         zone.tickTimerMs += zone.tickIntervalMs;
         this.tickZone(zone, targets);
       }
+      // 毒泡 emitter 世界锚定：逐帧随镜头对齐领域中心（领域无视图对象，emitter 自承载位置）
+      if (zone.poisonEmitter) {
+        const { x, y } = this.worldToScreen(zone.worldX, zone.worldY);
+        zone.poisonEmitter.setPosition(x, y);
+      }
 
       if (zone.ageMs >= zone.durationMs) {
+        zone.poisonEmitter?.destroy();
+        zone.poisonEmitter = undefined;
         this.zones.splice(index, 1);
         eventBus.emit("skill_zone_expired", { zoneRuntimeId: zone.runtimeId });
       }
@@ -744,14 +780,18 @@ export class SkillSystem {
     this.inkLayer.erase(scratch);
   }
 
-  /** 单次跳变：域内敌人走标准技能伤害流；存活敌人经 eventBus 桥接续减速（EnemyDirector 最小通道）。 */
+  /**
+   * 单次跳变：域内敌人走标准技能伤害流；存活敌人经 eventBus 桥接续减速（EnemyDirector 最小通道）。
+   * 毒化「墨里淬毒」Lv3+：tick 命中同步桥接中毒（余毒 2 跳；进阶「金蛊江山」3 跳 + 蚀甲 ×1.1），
+   * 与减速同走 enemy_*_requested 事件通道，GameScene 零改动。
+   */
   private tickZone(zone: ZoneRuntime, targets: CombatTargetSnapshot[]): void {
     for (const target of targets) {
       if (Math.hypot(target.worldX - zone.worldX, target.worldY - zone.worldY) > zone.radius + target.collisionRadius) {
         continue;
       }
 
-      this.applySkillDamage(zone.skillId, target, zone.damage, {
+      const result = this.applySkillDamage(zone.skillId, target, zone.damage, {
         zoneRuntimeId: zone.runtimeId,
         source: zone.advanced ? "ink_zone_advanced" : "ink_zone"
       });
@@ -762,6 +802,17 @@ export class SkillSystem {
           durationMs: zone.tickIntervalMs + ZONE_SLOW_GRACE_MS,
           source: zone.skillId
         });
+        // 毒化：仅确认命中的敌人中毒（伤害落地才算"被 tick 命中"）
+        if (zone.level >= 3 && result?.damaged) {
+          eventBus.emit(ENEMY_POISON_REQUESTED_EVENT, {
+            runtimeId: target.runtimeId,
+            ticks: zone.advanced ? ZONE_POISON_TICKS_ADVANCED : ZONE_POISON_TICKS_BASE,
+            tickMs: ZONE_POISON_TICK_INTERVAL_MS,
+            damage: zone.damage,
+            amp: zone.advanced ? ZONE_POISON_AMP_ADVANCED : 1,
+            source: zone.skillId
+          });
+        }
       }
     }
   }
@@ -799,7 +850,8 @@ export class SkillSystem {
 
   /**
    * 挥毫落墨：随机 1-2 张笔触以随机旋转/缩放 stamp 到共享墨层（世界坐标 → 墨层本地坐标）。
-   * 纹理缺失时降级到程序化墨渍纹理；Lv3+ 墨缘泛青 tint、进阶芥金 tint（乘算在深色墨上保持低饱和）。
+   * 纹理缺失时降级到程序化墨渍纹理；Lv3+ 墨缘淬毒绿韵 tint（泛青并入微量孔雀绿）、进阶芥金 tint
+   * （乘算在深色墨上保持低饱和）。
    */
   private stampInkStrokes(zone: ZoneRuntime, strokeCount: number, level: number): void {
     const layer = this.ensureInkLayer();
@@ -816,7 +868,7 @@ export class SkillSystem {
     const scratch = this.obtainInkScratch();
     const localX = zone.worldX - this.inkLayerWorldX;
     const localY = zone.worldY - this.inkLayerWorldY;
-    const tint = zone.advanced ? INK_TINT_ADVANCED : level >= 3 ? INK_TINT_CYAN_EDGE : 0xffffff;
+    const tint = zone.advanced ? INK_TINT_ADVANCED : level >= 3 ? INK_TINT_POISON_EDGE : 0xffffff;
     const count = Phaser.Math.Clamp(Math.floor(strokeCount), 1, 2);
     for (let index = 0; index < count; index += 1) {
       const textureKey = artKeys.length > 0 ? Phaser.Math.RND.pick(artKeys) : fallbackKey;
@@ -990,6 +1042,84 @@ export class SkillSystem {
     this.scene.time.delayedCall(600, () => {
       emitter.destroy();
     });
+  }
+
+  /**
+   * 毒泡 emitter（Lv3+ 墨里淬毒）：领域存续期挂在 zone 上，约 120ms 一粒从墨面随机点冒泡，
+   * 上升 ~12px 后淡出（lifespan 700ms、scale 0.6-1.0），随领域到期/系统销毁统一销毁。
+   * 纹理：进阶优先 gold 版、其次基础版，均缺失走程序化兜底白泡 + tint（孔雀绿/金绿）；美术泡不上 tint。
+   */
+  private createPoisonBubbleEmitter(zone: ZoneRuntime): Phaser.GameObjects.Particles.ParticleEmitter | undefined {
+    if (zone.level < 3) {
+      return undefined;
+    }
+
+    const fallbackTint = zone.advanced ? POISON_BUBBLE_GOLD_TINT : POISON_BUBBLE_TINT;
+    let textureKey: string | undefined;
+    if (zone.advanced && this.scene.textures.exists(POISON_BUBBLE_GOLD_TEXTURE)) {
+      textureKey = POISON_BUBBLE_GOLD_TEXTURE;
+    } else if (this.scene.textures.exists(POISON_BUBBLE_TEXTURE)) {
+      textureKey = POISON_BUBBLE_TEXTURE;
+    } else {
+      textureKey = this.ensurePoisonBubbleFallbackTexture();
+    }
+    if (!textureKey) {
+      return undefined;
+    }
+
+    const { x, y } = this.worldToScreen(zone.worldX, zone.worldY);
+    const isFallback = textureKey === POISON_BUBBLE_FALLBACK_TEXTURE;
+    // 美术泡为 4 帧序列（形成→鼓起→高光→破裂 @8fps，500ms 一轮贴合 700ms 寿命），挂粒子 anim 播放；
+    // 兜底白泡单帧无动画，用 tint 上色。
+    const bubbleAnimKey = getArtAnimationKey(textureKey);
+    const useAnim = !isFallback && this.scene.anims.exists(bubbleAnimKey);
+    // 领域表面随机点冒泡：emitZone 相对 emitter 位置，圆域取半径 78% 防贴边溢出墨面。
+    // Phaser 类型里 Geom.Circle.getRandomPoint 泛型约束与 RandomZoneSourceCallback 不兼容，
+    // 手写等价的圆域均匀采样（sqrt 保面积均匀，mutation 语义与 RandomZone 内部一致）。
+    const bubbleRadius = Math.max(14, zone.radius * 0.78);
+    const emitter = this.scene.add.particles(x, y, textureKey, {
+      frequency: POISON_BUBBLE_FREQUENCY_MS,
+      lifespan: POISON_BUBBLE_LIFESPAN_MS,
+      // 上升 12px 后淡出：匀速上浮 ~15-22px/s，700ms 行程约 11-15px，alpha 同步渐隐
+      speedY: { min: -22, max: -15 },
+      speedX: { min: -5, max: 5 },
+      scale: { min: 0.6, max: 1.0 },
+      alpha: { start: 0.75, end: 0 },
+      ...(useAnim ? { anim: bubbleAnimKey } : {}),
+      emitZone: {
+        type: "random",
+        source: {
+          getRandomPoint: (point: Phaser.Types.Math.Vector2Like) => {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.sqrt(Math.random()) * bubbleRadius;
+            point.x = Math.cos(angle) * distance;
+            point.y = Math.sin(angle) * distance;
+          }
+        }
+      },
+      ...(isFallback ? { tint: [fallbackTint, 0xffffff] } : {}),
+      blendMode: Phaser.BlendModes.NORMAL
+    });
+    emitter.setDepth(POISON_BUBBLE_DEPTH);
+    return emitter;
+  }
+
+  /** 程序化兜底毒泡：白芯 + 淡边圆泡（16×16），生成一次全局复用；由 emitter tint 上孔雀绿/金绿。 */
+  private ensurePoisonBubbleFallbackTexture(): string | undefined {
+    if (this.scene.textures.exists(POISON_BUBBLE_FALLBACK_TEXTURE)) {
+      return POISON_BUBBLE_FALLBACK_TEXTURE;
+    }
+
+    const graphics = this.scene.add.graphics();
+    graphics.lineStyle(1.5, 0xffffff, 0.85);
+    graphics.strokeCircle(8, 8, 6);
+    graphics.fillStyle(0xffffff, 0.55);
+    graphics.fillCircle(8, 8, 4.2);
+    graphics.fillStyle(0xffffff, 0.9);
+    graphics.fillCircle(6, 5.6, 1.3);
+    graphics.generateTexture(POISON_BUBBLE_FALLBACK_TEXTURE, 16, 16);
+    graphics.destroy();
+    return this.scene.textures.exists(POISON_BUBBLE_FALLBACK_TEXTURE) ? POISON_BUBBLE_FALLBACK_TEXTURE : undefined;
   }
 
   private updateProjectiles(deltaMs: number, targets: CombatTargetSnapshot[]): void {
