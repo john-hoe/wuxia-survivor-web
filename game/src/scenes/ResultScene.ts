@@ -3,6 +3,7 @@ import { bossConfigsById } from "../data/bosses";
 import type { BossId } from "../data/bosses";
 import type { RunSummary } from "../types";
 import { applyRunSettlement, type RunSettlement } from "../systems/RunSettlementSystem";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle } from "../ui/minimalTheme";
 import { FONT_BODY, FONT_MONO, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
@@ -58,6 +59,7 @@ export class ResultScene extends Phaser.Scene {
   }
 
   create(): void {
+    applyResolutionCamera(this);
     enterScreen(this, "result");
     eventBus.emit("result_screen_opened", {});
     getAudioSystem(this).playPlaceholder("result_open");
@@ -72,8 +74,8 @@ export class ResultScene extends Phaser.Scene {
     const titleStroke = isWin ? PALETTE.accentGoldCss : isDead ? PALETTE.cinnabarCss : "#101010";
     const { saveStatusText, detailText } = createSettlementLines(settlement);
 
-    const centerX = this.scale.width / 2;
-    const centerY = this.scale.height / 2;
+    const centerX = DESIGN_WIDTH / 2;
+    const centerY = DESIGN_HEIGHT / 2;
 
     // 方向C：无面板氛围底（替代旧 worldBg 纯色底 + ui_panel_modal 面板）
     addMinimalBackdrop(this);
@@ -81,7 +83,7 @@ export class ResultScene extends Phaser.Scene {
     // 失败：墨色压边（暗角 alpha 渐强；压在氛围底之上、内容之下）
     if (isDead && this.textures.exists("vfx_death_vignette")) {
       const vignette = this.add.image(centerX, centerY, "vfx_death_vignette")
-        .setDisplaySize(this.scale.width, this.scale.height)
+        .setDisplaySize(DESIGN_WIDTH, DESIGN_HEIGHT)
         .setAlpha(0);
       this.tweens.add({
         targets: vignette,

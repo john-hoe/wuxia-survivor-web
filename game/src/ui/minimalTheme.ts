@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { DESIGN_HEIGHT, DESIGN_WIDTH } from "./designSize";
 import { FONT_BODY, FONT_TITLE, PALETTE } from "./visualConstants";
 
 /**
@@ -64,10 +65,10 @@ function ensureBrushTexture(scene: Phaser.Scene): void {
   g.destroy();
 }
 
-/** 生成天空径向渐变 / 雾气 / 暗角三张缓存纹理（按当前屏幕尺寸）。 */
+/** 生成天空径向渐变 / 雾气 / 暗角三张缓存纹理（按设计尺寸 960×540，相机 zoom K 负责高清化）。 */
 function ensureGradientTextures(scene: Phaser.Scene): void {
-  const width = Math.max(2, Math.floor(scene.scale.width));
-  const height = Math.max(2, Math.floor(scene.scale.height));
+  const width = DESIGN_WIDTH;
+  const height = DESIGN_HEIGHT;
 
   if (!scene.textures.exists(SKY_TEXTURE_KEY)) {
     const tex = scene.textures.createCanvas(SKY_TEXTURE_KEY, width, height);
@@ -121,9 +122,9 @@ function ensureGradientTextures(scene: Phaser.Scene): void {
 /** 竹影两侧 + 底部雾气 + 暗角压暗的氛围底。depth 默认 -10 以下，不挡内容。 */
 export function addMinimalBackdrop(scene: Phaser.Scene): void {
   ensureGradientTextures(scene);
-  const width = scene.scale.width;
-  const height = scene.scale.height;
-  const scaleFactor = height / 540; // 原型按 540 高设计，随分辨率缩放
+  const width = DESIGN_WIDTH;
+  const height = DESIGN_HEIGHT;
+  const scaleFactor = height / 540; // 原型按 540 高设计，随分辨率缩放（设计尺寸恒 540，恒为 1）
 
   if (scene.textures.exists(SKY_TEXTURE_KEY)) {
     scene.add.image(0, 0, SKY_TEXTURE_KEY).setOrigin(0, 0).setDepth(-100);
@@ -190,7 +191,7 @@ export function addMinimalTitle(
   size = 44,
   sealChar?: string
 ): Phaser.GameObjects.Text {
-  const centerX = scene.scale.width / 2;
+  const centerX = DESIGN_WIDTH / 2;
   const title = scene.add.text(centerX, y, text, {
     color: TITLE_COLOR,
     fontFamily: FONT_TITLE,
@@ -327,7 +328,7 @@ export function addMinimalMenuRow(
 /** 左下角"← 返回"小字行。 */
 export function addMinimalBackRow(scene: Phaser.Scene, onClick: () => void): MinimalRowHandle {
   const x = 28;
-  const y = scene.scale.height - 28;
+  const y = DESIGN_HEIGHT - 28;
   const text = scene.add.text(0, 0, "← 返回", {
     color: PALETTE.textSecondary,
     fontFamily: FONT_BODY,

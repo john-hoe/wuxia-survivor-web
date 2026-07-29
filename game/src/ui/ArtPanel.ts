@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { DESIGN_WIDTH } from "./designSize";
 
 export type ArtPanel = Phaser.GameObjects.Image | Phaser.GameObjects.NineSlice | Phaser.GameObjects.Rectangle;
 
@@ -25,5 +26,6 @@ export function createArtPanel(
 }
 
 export function getSafePanelWidth(scene: Phaser.Scene, maxWidth: number, margin = 48): number {
-  return Math.min(maxWidth, Math.max(280, scene.scale.width - margin * 2));
+  void scene; // 签名保留 scene 以便调用方一致；安全宽度按设计尺寸计算
+  return Math.min(maxWidth, Math.max(280, DESIGN_WIDTH - margin * 2));
 }

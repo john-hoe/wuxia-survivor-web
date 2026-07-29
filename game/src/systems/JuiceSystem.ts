@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { DESIGN_WIDTH } from "../ui/designSize";
 import { PALETTE, FONT_MONO } from "../ui/visualConstants";
 
 /**
@@ -204,7 +205,7 @@ export class JuiceSystem {
     if (this.ambientEmitter || this.isLowVfx()) {
       return;
     }
-    const { width } = this.scene.scale;
+    const width = DESIGN_WIDTH;
     this.ambientEmitter = this.scene.add.particles(0, -12, TEX.leaf, {
       x: { min: -20, max: width + 20 },
       lifespan: 7000,

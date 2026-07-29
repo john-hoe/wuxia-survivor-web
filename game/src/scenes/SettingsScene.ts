@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { feedbackSettingsDefaults, shakeScaleLevels } from "../data/gameConfig";
 import type { GameSettings } from "../types";
 import { saveSystem } from "../systems/SaveSystem";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { addMinimalBackdrop, addMinimalBackRow, addMinimalTitle, spacedText } from "../ui/minimalTheme";
 import { FONT_MONO, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
@@ -93,14 +94,15 @@ export class SettingsScene extends Phaser.Scene {
   }
 
   create(): void {
+    applyResolutionCamera(this);
     enterScreen(this, "settings");
     const saveData = getSaveData(this);
     this.settings = { ...saveData.settings };
-    const centerX = this.scale.width / 2;
-    const centerY = this.scale.height / 2;
+    const centerX = DESIGN_WIDTH / 2;
+    const centerY = DESIGN_HEIGHT / 2;
 
     // 墨底压暗 + 共享氛围底（竹丛/远亭/雾气/暗角），无面板
-    this.add.rectangle(centerX, centerY, this.scale.width, this.scale.height, 0x050705, 0.66);
+    this.add.rectangle(centerX, centerY, DESIGN_WIDTH, DESIGN_HEIGHT, 0x050705, 0.66);
     addMinimalBackdrop(this);
     addMinimalTitle(this, "设置", TITLE_Y, 46, "设");
 
@@ -159,7 +161,7 @@ export class SettingsScene extends Phaser.Scene {
     if (!iconKey || !this.textures.exists(iconKey)) {
       return;
     }
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     const iconX = centerX + ROW_LABEL_OFFSET_X - ROW_ICON_GAP - ROW_ICON_SIZE / 2;
     this.addToControls(this.add.image(iconX, y, iconKey).setDisplaySize(ROW_ICON_SIZE, ROW_ICON_SIZE));
   }
@@ -167,7 +169,7 @@ export class SettingsScene extends Phaser.Scene {
   /** C 规格行标签：衬线 600 + \u2009 大字距（spacedText），米白 92%。 */
   private addRowLabel(label: string, y: number, iconKey?: string): Phaser.GameObjects.Text {
     this.addRowIcon(iconKey, y);
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     return this.addToControls(
       this.add
         .text(centerX + ROW_LABEL_OFFSET_X, y, spacedText(label), {
@@ -188,7 +190,7 @@ export class SettingsScene extends Phaser.Scene {
     if (!this.settings) {
       return;
     }
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     const toggleX = centerX + TOGGLE_CENTER_OFFSET_X;
     this.addRowLabel(label, y, iconKey);
 
@@ -279,7 +281,7 @@ export class SettingsScene extends Phaser.Scene {
     if (!this.settings) {
       return;
     }
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     this.addRowLabel("震屏强度", y, iconKey);
 
     const groupLeft = centerX + SEGMENT_GROUP_RIGHT_OFFSET_X - SEGMENT_OPTION_WIDTH * shakeScaleLevels.length;
@@ -365,7 +367,7 @@ export class SettingsScene extends Phaser.Scene {
    * fullscreen.available === false（如 iframe 无 allowfullscreen）时整行禁用。
    */
   private addFullscreenRow(y: number): void {
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     const toggleX = centerX + TOGGLE_CENTER_OFFSET_X;
     const labelText = this.addRowLabel("全屏", y, "icon_fullscreen");
 
@@ -409,7 +411,7 @@ export class SettingsScene extends Phaser.Scene {
     if (!this.settings) {
       return;
     }
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     const trackX = centerX + SLIDER_CENTER_OFFSET_X;
     const trackWidth = SLIDER_WIDTH;
     const value = this.settings[key];
@@ -433,7 +435,8 @@ export class SettingsScene extends Phaser.Scene {
     const hitArea = this.add.zone(trackX, y, trackWidth + 36, 44).setInteractive({ useHandCursor: true });
     hitArea.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
       this.activeSliderKey = key;
-      this.applyPointerVolume(key, pointer.x);
+      // 高 DPR：滑杆几何为设计单位，pointer.x 是 K 倍渲染像素，须取相机变换后的 worldX
+      this.applyPointerVolume(key, pointer.worldX);
     });
     this.addToControls(hitArea);
   }
@@ -465,7 +468,8 @@ export class SettingsScene extends Phaser.Scene {
     if (!this.activeSliderKey || !pointer.isDown) {
       return;
     }
-    this.applyPointerVolume(this.activeSliderKey, pointer.x);
+    // 高 DPR：同 POINTER_DOWN，worldX 才是设计单位坐标
+    this.applyPointerVolume(this.activeSliderKey, pointer.worldX);
   }
 
   private endSliderDrag(): void {

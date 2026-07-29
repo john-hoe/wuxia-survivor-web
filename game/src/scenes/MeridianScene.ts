@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { JuiceSystem } from "../systems/JuiceSystem";
 import { saveSystem } from "../systems/SaveSystem";
 import type { SaveData } from "../types";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import {
   addMinimalBackdrop,
   addMinimalBackRow,
@@ -215,6 +216,7 @@ export class MeridianScene extends Phaser.Scene {
   }
 
   create(data?: MeridianSceneData): void {
+    applyResolutionCamera(this);
     this.returnTo = data?.returnTo === "menu" ? "menu" : "scripture";
     for (const meridian of MERIDIANS) {
       for (const node of meridian.nodes) {
@@ -312,13 +314,13 @@ export class MeridianScene extends Phaser.Scene {
 
   /** 底部图例：已通 / 可冲 / 未达 */
   private drawLegend(): void {
-    const y = this.scale.height - 26;
+    const y = DESIGN_HEIGHT - 26;
     const items: Array<{ label: string; state: NodeState }> = [
       { label: "已通", state: "lit" },
       { label: "可冲", state: "avail" },
       { label: "未达", state: "locked" }
     ];
-    const container = this.add.container(this.scale.width / 2, y).setDepth(1);
+    const container = this.add.container(DESIGN_WIDTH / 2, y).setDepth(1);
     let cursor = 0;
     const parts: Phaser.GameObjects.GameObject[] = [];
     for (const item of items) {
@@ -333,7 +335,7 @@ export class MeridianScene extends Phaser.Scene {
       cursor += 11 + text.displayWidth + 22;
     }
     container.add(parts);
-    container.setX(this.scale.width / 2 - (cursor - 22) / 2);
+    container.setX(DESIGN_WIDTH / 2 - (cursor - 22) / 2);
   }
 
   private styleDot(dot: Phaser.GameObjects.Arc, state: NodeState): void {
@@ -403,7 +405,7 @@ export class MeridianScene extends Phaser.Scene {
       part.setX(cursor);
       cursor += part.displayWidth;
     }
-    const container = this.add.container(this.scale.width / 2 - cursor / 2, y, parts);
+    const container = this.add.container(DESIGN_WIDTH / 2 - cursor / 2, y, parts);
     this.dynamicRoot?.add(container);
   }
 

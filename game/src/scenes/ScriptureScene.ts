@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import type { RunSummary, SaveData } from "../types";
 import { getSafePanelWidth } from "../ui/ArtPanel";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import {
   addMinimalBackdrop,
   addMinimalBackRow,
@@ -268,6 +269,7 @@ export class ScriptureScene extends Phaser.Scene {
   }
 
   create(): void {
+    applyResolutionCamera(this);
     enterScreen(this, "scripture");
     eventBus.emit("scripture_screen_opened", {});
     // 极简碑林：氛围底与书法标题常驻场景层（视图切换/揭示重建时保持，不随 content 销毁）
@@ -293,7 +295,7 @@ export class ScriptureScene extends Phaser.Scene {
     this.destroyLayoutTunerOverlay();
     this.content = this.add.container(0, 0);
 
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     this.addViewTab(centerX - 90, "局外成长", "meta");
     this.addViewTab(centerX + 90, "翻阅秘籍", "scripture");
     this.addToContent(addMinimalBackRow(this, () => this.returnFromScene()).container);
@@ -381,7 +383,7 @@ export class ScriptureScene extends Phaser.Scene {
     META_UPGRADES.forEach((upgrade, index) => {
       this.addMetaUpgradeCard(upgrade, cardYs[index] ?? 226, saveData);
     });
-    this.statusText = this.addToContent(this.add.text(this.scale.width / 2, 474, "", {
+    this.statusText = this.addToContent(this.add.text(DESIGN_WIDTH / 2, 474, "", {
       color: PALETTE.legacyGoldCss,
       fontFamily: FONT_BODY,
       fontSize: "14px"
@@ -390,7 +392,7 @@ export class ScriptureScene extends Phaser.Scene {
 
   private drawScriptureView(): void {
     const saveData = getSaveData(this);
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     const pullsUntilPity = Math.max(1, RARE_OR_BETTER_PITY - saveData.scriptureGacha.starter_scripture_pool.pityCounter);
     // 顶部一行小字：左"铜钱 N" / 右"距保底 N 次"（数值芥金 FONT_MONO，≤3 保底脉冲保留）
     this.addCopperInfo(200, 170, saveData.copper);
@@ -420,7 +422,7 @@ export class ScriptureScene extends Phaser.Scene {
 
   /** 成长卡：无底色，图标 + 名称/效果/等级左排，价格与购买行右排，底部 1px 低透 hairline 分隔。 */
   private addMetaUpgradeCard(upgrade: MetaUpgradeDefinition, y: number, saveData: SaveData): void {
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     const level = saveData.metaUpgrades[upgrade.key];
     const maxLevel = upgrade.costs.length;
     const nextCost = upgrade.costs[level];
@@ -612,8 +614,8 @@ export class ScriptureScene extends Phaser.Scene {
       this.showResultPanel(results);
       camera.fadeIn(220, 10, 10, 10);
       if (this.textures.exists("vfx_scripture_reveal")) {
-        const overlay = this.add.image(this.scale.width / 2, this.scale.height / 2, "vfx_scripture_reveal")
-          .setDisplaySize(this.scale.width, this.scale.height)
+        const overlay = this.add.image(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2, "vfx_scripture_reveal")
+          .setDisplaySize(DESIGN_WIDTH, DESIGN_HEIGHT)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setAlpha(0)
           .setDepth(90);
@@ -713,7 +715,7 @@ export class ScriptureScene extends Phaser.Scene {
     contentChildren.push(this.createResultContinueText(paperWidth));
     this.resultContent = this.add.container(0, 0, contentChildren);
 
-    this.resultPanel = this.add.container(this.scale.width / 2, SCROLL_RESULT_LAYOUT.y, [rig.container, this.resultContent]);
+    this.resultPanel = this.add.container(DESIGN_WIDTH / 2, SCROLL_RESULT_LAYOUT.y, [rig.container, this.resultContent]);
     this.content?.add(this.resultPanel);
     this.refreshLayoutTunerOverlay();
 
@@ -1036,7 +1038,7 @@ export class ScriptureScene extends Phaser.Scene {
       }).setOrigin(0.5).setResolution(2));
     });
 
-    this.debugOverlay = this.add.container(this.scale.width / 2, 454, children).setDepth(30);
+    this.debugOverlay = this.add.container(DESIGN_WIDTH / 2, 454, children).setDepth(30);
     this.content?.add(this.debugOverlay);
   }
 

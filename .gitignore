@@ -24,3 +24,4 @@ game/.omc/
 game/src/assets/_incoming/
 .asset-gen/
 .wrangler/
+.dpr-test/

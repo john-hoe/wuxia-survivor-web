@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle } from "../ui/minimalTheme";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { fadeIn } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getAudioSystem } from "../utils/registry";
@@ -22,12 +23,13 @@ export class PauseScene extends Phaser.Scene {
   }
 
   create(): void {
+    applyResolutionCamera(this);
     enterScreen(this, "pause");
-    const centerX = this.scale.width / 2;
-    const centerY = this.scale.height / 2;
+    const centerX = DESIGN_WIDTH / 2;
+    const centerY = DESIGN_HEIGHT / 2;
 
     // 半透明墨底压暗游戏画面（暂停语义，保留在氛围底之下）
-    this.add.rectangle(centerX, centerY, this.scale.width, this.scale.height, 0x050705, 0.66);
+    this.add.rectangle(centerX, centerY, DESIGN_WIDTH, DESIGN_HEIGHT, 0x050705, 0.66);
     addMinimalBackdrop(this);
     addMinimalTitle(this, "暂停", TITLE_Y, 46, "歇");
 

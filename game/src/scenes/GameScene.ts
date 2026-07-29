@@ -13,6 +13,7 @@ import { ProgressionSystem, type ProgressionSnapshot } from "../systems/Progress
 import { saveSystem } from "../systems/SaveSystem";
 import { SkillSystem, type SkillSystemSnapshot } from "../systems/SkillSystem";
 import { DebugPanel } from "../ui/DebugPanel";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { PALETTE, FONT_BODY, FONT_MONO, FONT_TITLE, fadeIn } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
@@ -266,6 +267,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    applyResolutionCamera(this);
     enterScreen(this, "game");
     this.elapsedMs = 0;
     this.lastHudEventKey = "";
@@ -273,7 +275,7 @@ export class GameScene extends Phaser.Scene {
     this.stageScrollX = 0;
     this.stageScrollY = 0;
     // QA-003① 出生安全区圆心：英雄出生点的散布世界（scroll 空间）坐标 = scroll 起点(0,0) + 英雄屏幕位置（屏幕中心）。
-    this.heroSpawnScrollX = this.stageScrollX + this.scale.width / 2;
+    this.heroSpawnScrollX = this.stageScrollX + DESIGN_WIDTH / 2;
     this.heroSpawnScrollY = this.stageScrollY + this.getHeroScreenY();
     // 开局地图：读存档选关（lastMapId），缺失/非法回默认（青石山道）；F2 局内切换仅预览、不回写存档
     const savedMapId = getSaveData(this).lastMapId;
@@ -517,7 +519,7 @@ export class GameScene extends Phaser.Scene {
       if (screenY === undefined) {
         return;
       }
-      const maxLandingY = this.scale.height - occlusionVisualConfig.bossIntroMinBottomMarginPx;
+      const maxLandingY = DESIGN_HEIGHT - occlusionVisualConfig.bossIntroMinBottomMarginPx;
       if (screenY > maxLandingY) {
         console.debug(`[QA-003] Boss 出场落点 y=${Math.round(screenY)} 越过底部安全线 y≤${Math.round(maxLandingY)}（BossSystem 出场偏移被改动，请复查）`);
       }
@@ -677,8 +679,8 @@ export class GameScene extends Phaser.Scene {
    * drawPlaceholderStage 与 F2 切换重建共用；散布物由 refreshPropScatter 另行负责。
    */
   private buildStageMapLayers(map: StageMapEntry): void {
-    const stageWidth = this.scale.width;
-    const stageHeight = this.scale.height;
+    const stageWidth = DESIGN_WIDTH;
+    const stageHeight = DESIGN_HEIGHT;
     this.cameras.main.setBackgroundColor(map.worldBg);
 
     const hasOfficialGround = this.textures.exists(map.groundTexture);
@@ -890,8 +892,8 @@ export class GameScene extends Phaser.Scene {
   private refreshPropScatter(): void {
     const slotSize = this.propSlotSizePx;
     const margin = slotSize * 0.75;
-    const stageWidth = this.scale.width;
-    const stageHeight = this.scale.height;
+    const stageWidth = DESIGN_WIDTH;
+    const stageHeight = DESIGN_HEIGHT;
     const minI = Math.floor((this.stageScrollX - margin) / slotSize);
     const maxI = Math.floor((this.stageScrollX + stageWidth + margin) / slotSize);
     const minJ = Math.floor((this.stageScrollY - margin) / slotSize);
@@ -1030,7 +1032,7 @@ export class GameScene extends Phaser.Scene {
     if (this.scatterProps.size === 0) {
       return;
     }
-    const heroScreenX = this.scale.width / 2;
+    const heroScreenX = DESIGN_WIDTH / 2;
     const heroDepth = this.heroView?.depth ?? HERO_VIEW_DEPTH;
     const radiusPx = occlusionVisualConfig.propFadeRadiusPx;
     for (const prop of this.scatterProps.values()) {
@@ -1166,7 +1168,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.leafEmitter) {
       const textureKey = this.textures.exists("juice_leaf") ? "juice_leaf" : "weather_leaf";
       this.leafEmitter = this.add.particles(0, -12, textureKey, {
-        x: { min: -20, max: this.scale.width + 60 },
+        x: { min: -20, max: DESIGN_WIDTH + 60 },
         lifespan: 8000,
         speedY: { min: 18, max: 42 },
         speedX: { min: -46, max: -12 },
@@ -1187,7 +1189,7 @@ export class GameScene extends Phaser.Scene {
 
   /** 微雨：斜向雨丝近/远两层（近层大稀、远层小密），地面涟漪由 updateWeatherRipples 驱动。 */
   private activateRain(density: number): void {
-    const stageWidth = this.scale.width;
+    const stageWidth = DESIGN_WIDTH;
     if (!this.rainFarEmitter) {
       this.rainFarEmitter = this.add.particles(0, -24, "weather_rain", {
         x: { min: -60, max: stageWidth + 140 },
@@ -1232,7 +1234,7 @@ export class GameScene extends Phaser.Scene {
   private activateSnow(density: number): void {
     if (!this.snowEmitter) {
       this.snowEmitter = this.add.particles(0, -16, "weather_snow", {
-        x: { min: -30, max: this.scale.width + 30 },
+        x: { min: -30, max: DESIGN_WIDTH + 30 },
         lifespan: 9500,
         speedY: { min: 26, max: 54 },
         speedX: { min: -16, max: 10 },
@@ -1259,8 +1261,8 @@ export class GameScene extends Phaser.Scene {
     if (this.getVfxDensityScale() <= 0) {
       return;
     }
-    const stageWidth = this.scale.width;
-    const stageHeight = this.scale.height;
+    const stageWidth = DESIGN_WIDTH;
+    const stageHeight = DESIGN_HEIGHT;
     const rippleCount = Math.random() < 0.35 ? 2 : 1;
     for (let index = 0; index < rippleCount; index += 1) {
       const x = 40 + Math.random() * (stageWidth - 80);
@@ -1553,8 +1555,8 @@ export class GameScene extends Phaser.Scene {
 
   /** 天气/叙事屏幕层：附加雾带、动态暗角、压暗、朱砂、重击聚焦（全部 scrollFactor 0、低于 HUD）。 */
   private setupAtmosphereOverlays(): void {
-    const stageWidth = this.scale.width;
-    const stageHeight = this.scale.height;
+    const stageWidth = DESIGN_WIDTH;
+    const stageHeight = DESIGN_HEIGHT;
 
     this.createFogBandLayer(this.getCurrentStageMap());
 
@@ -1579,8 +1581,8 @@ export class GameScene extends Phaser.Scene {
 
   /** 雾天气附加滚动雾带（alpha 0 起步，setWeather 补间加浓）；按地图配置染色。 */
   private createFogBandLayer(map: StageMapEntry): void {
-    const stageWidth = this.scale.width;
-    const stageHeight = this.scale.height;
+    const stageWidth = DESIGN_WIDTH;
+    const stageHeight = DESIGN_HEIGHT;
     this.fogBandTile = this.add.tileSprite(stageWidth / 2, stageHeight / 2, stageWidth, stageHeight, "atmo_fog")
       .setDepth(87)
       .setAlpha(0)
@@ -1598,10 +1600,10 @@ export class GameScene extends Phaser.Scene {
     this.bossDimActive = active;
     if (!this.bossDimOverlay) {
       this.bossDimOverlay = this.add.rectangle(
-        this.scale.width / 2,
-        this.scale.height / 2,
-        this.scale.width,
-        this.scale.height,
+        DESIGN_WIDTH / 2,
+        DESIGN_HEIGHT / 2,
+        DESIGN_WIDTH,
+        DESIGN_HEIGHT,
         0x000000,
         0
       ).setDepth(76).setScrollFactor(0);
@@ -1913,7 +1915,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawHero(): void {
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     const centerY = this.getHeroScreenY();
     this.heroTiltRad = 0;
     this.ensureHeroShadowTexture();
@@ -1967,7 +1969,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawHud(): void {
-    const stageWidth = this.scale.width;
+    const stageWidth = DESIGN_WIDTH;
     const stripCenterY = HUD_STRIP_HEIGHT / 2;
 
     // ── 顶部横带：ui_hud_top_strip，缺失时退化为半透明墨底矩形 + 底线 ──
@@ -2153,7 +2155,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawBossHud(): void {
-    const centerX = this.scale.width / 2;
+    const centerX = DESIGN_WIDTH / 2;
     const width = BOSS_BAR_WIDTH;
     this.bossHudBack = this.add.rectangle(centerX, BOSS_BAR_Y, width, 18, 0x1d0d0b, 0.9)
       .setStrokeStyle(1, PALETTE.legacyGold, 0.86)
@@ -2276,7 +2278,7 @@ export class GameScene extends Phaser.Scene {
 
     const centerY = this.getHeroScreenY();
     const bob = Math.sin(this.elapsedMs / 130) * 1.5 * movement.inputMagnitude;
-    this.heroView.setPosition(this.scale.width / 2, centerY + bob);
+    this.heroView.setPosition(DESIGN_WIDTH / 2, centerY + bob);
     this.heroShadow?.setScale(1 + movement.inputMagnitude * 0.08, 1);
 
     const heroAlpha = health.invincibleMs > 0
@@ -2285,7 +2287,7 @@ export class GameScene extends Phaser.Scene {
     this.heroView.setAlpha(heroAlpha);
     // 轮廓光与主角透明度同步：受伤闪烁同节奏、死亡随转场窗口持续淡出（与接触阴影同策略）。
     if (this.heroGlow) {
-      this.heroGlow.setPosition(this.scale.width / 2, centerY + bob - HERO_GLOW_CENTER_OFFSET_Y);
+      this.heroGlow.setPosition(DESIGN_WIDTH / 2, centerY + bob - HERO_GLOW_CENTER_OFFSET_Y);
       if (health.isDead) {
         const glowFadeStep = (HERO_GLOW_ALPHA * deltaMs) / HERO_SHADOW_DEATH_FADE_MS;
         this.heroGlow.setAlpha(Math.max(0, this.heroGlow.alpha - glowFadeStep));
@@ -2304,9 +2306,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     const footY = centerY + bob + 38;
-    this.heroShadow?.setPosition(this.scale.width / 2, centerY + bob + 24);
-    this.footHpBack?.setPosition(this.scale.width / 2 - 28, footY);
-    this.footHpFill?.setPosition(this.scale.width / 2 - 27, footY);
+    this.heroShadow?.setPosition(DESIGN_WIDTH / 2, centerY + bob + 24);
+    this.footHpBack?.setPosition(DESIGN_WIDTH / 2 - 28, footY);
+    this.footHpFill?.setPosition(DESIGN_WIDTH / 2 - 27, footY);
   }
 
   private playHeroAnimation(sprite: Phaser.GameObjects.Sprite, assetId: string): void {
@@ -2569,8 +2571,8 @@ export class GameScene extends Phaser.Scene {
     // 技能槽 5 位：四槽时代扩到五槽（第 5 位为烈火神掌等后续技能预留）
     const slotCount = 5;
     const totalWidth = slotSize * slotCount + gap * (slotCount - 1);
-    const startX = this.scale.width / 2 - totalWidth / 2 + slotSize / 2;
-    const y = this.scale.height - 40;
+    const startX = DESIGN_WIDTH / 2 - totalWidth / 2 + slotSize / 2;
+    const y = DESIGN_HEIGHT - 40;
 
     for (let index = 0; index < slotCount; index += 1) {
       const x = startX + index * (slotSize + gap);
@@ -2919,7 +2921,7 @@ export class GameScene extends Phaser.Scene {
 
   private getHeroScreenPosition(): { x: number; y: number } {
     return {
-      x: this.scale.width / 2,
+      x: DESIGN_WIDTH / 2,
       y: this.getHeroScreenY()
     };
   }
@@ -2948,7 +2950,7 @@ export class GameScene extends Phaser.Scene {
         yoyo: true
       });
     }
-    JuiceSystem.get(this).damageNumber(this.scale.width - 154, 72, milestone.label, "gold");
+    JuiceSystem.get(this).damageNumber(DESIGN_WIDTH - 154, 72, milestone.label, "gold");
   }
 
   private handleBossDefeated(_summary: BossDefeatSummary): void {
@@ -3025,7 +3027,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getHeroScreenY(): number {
-    return this.scale.height / 2 + 12;
+    return DESIGN_HEIGHT / 2 + 12;
   }
 
   private handleHeroDeath(eventCause: string): void {
@@ -3173,8 +3175,8 @@ function formatSeconds(totalSeconds: number): string {
 }
 
 function createDamageEdgeFlash(scene: Phaser.Scene): Phaser.GameObjects.Rectangle[] {
-  const width = scene.scale.width;
-  const height = scene.scale.height;
+  const width = DESIGN_WIDTH;
+  const height = DESIGN_HEIGHT;
   const thickness = 56;
   const edges = [
     scene.add.rectangle(width / 2, thickness / 2, width, thickness, PALETTE.cinnabar, 0),

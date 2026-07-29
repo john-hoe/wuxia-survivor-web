@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 
 export type JoystickSnapshot = {
   x: number;
@@ -73,14 +74,16 @@ export class VirtualJoystick {
   }
 
   private handlePointerDown(pointer: Phaser.Input.Pointer): void {
-    if (this.activePointerId !== undefined || !this.touchZone.contains(pointer.x, pointer.y)) {
+    // 高 DPR：画布物理像素是设计坐标的 K 倍，pointer.x/y 为渲染像素坐标；
+    // worldX/worldY 经相机 zoom(K) 逆变换回到 960×540 设计单位（本场景相机 scroll 恒 0），布局/命中必须用它。
+    if (this.activePointerId !== undefined || !this.touchZone.contains(pointer.worldX, pointer.worldY)) {
       return;
     }
 
     this.activePointerId = pointer.id;
     // 动态摇杆：落点即摇杆中心（钳制在屏幕内并避开顶部 HUD 区）。
-    this.baseX = Phaser.Math.Clamp(pointer.x, 56, this.scene.scale.width - 56);
-    this.baseY = Phaser.Math.Clamp(pointer.y, 152, this.scene.scale.height - 40);
+    this.baseX = Phaser.Math.Clamp(pointer.worldX, 56, DESIGN_WIDTH - 56);
+    this.baseY = Phaser.Math.Clamp(pointer.worldY, 152, DESIGN_HEIGHT - 40);
     this.base.setPosition(this.baseX, this.baseY);
     this.updateOutput(pointer);
     this.base.setAlpha(this.pressedBaseAlpha);
@@ -107,8 +110,8 @@ export class VirtualJoystick {
   }
 
   private updateOutput(pointer: Phaser.Input.Pointer): void {
-    const dx = pointer.x - this.baseX;
-    const dy = pointer.y - this.baseY;
+    const dx = pointer.worldX - this.baseX;
+    const dy = pointer.worldY - this.baseY;
     const distance = Math.hypot(dx, dy);
 
     if (distance <= this.deadZoneRadius) {
@@ -140,8 +143,8 @@ export class VirtualJoystick {
 
   private updateLayout(): void {
     this.baseX = 104;
-    this.baseY = this.scene.scale.height - 104;
-    this.touchZone.setTo(0, 96, this.scene.scale.width, this.scene.scale.height - 96);
+    this.baseY = DESIGN_HEIGHT - 104;
+    this.touchZone.setTo(0, 96, DESIGN_WIDTH, DESIGN_HEIGHT - 96);
   }
 
   private resetOutput(): void {

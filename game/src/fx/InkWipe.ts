@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 
 /**
  * 墨晕转场 —— 自定义 PostFXPipeline（值噪声纹理 + 阈值场）。
@@ -238,7 +239,9 @@ export class InkWipePipeline extends Phaser.Renderer.WebGL.Pipelines.PostFXPipel
     this.set1i("uNoiseSampler", 1);
     this.set1f("uProgress", this.progress);
     this.set1f("uMode", this.mode);
-    this.set2f("uResolution", this.renderer.width, this.renderer.height);
+    // 高 DPR：uResolution 仅用于飞沫 3px 小块量化，必须传设计尺寸（960×540），
+    // 否则 K 倍渲染缓冲下飞沫块相对屏幕缩小 K 倍，视觉与旧版不一致
+    this.set2f("uResolution", DESIGN_WIDTH, DESIGN_HEIGHT);
     this.bindTexture(this.noiseTexture, 1);
     // bindAndDraw 只占用纹理单元 0，单元 1 的噪声纹理保持绑定
     this.bindAndDraw(source);

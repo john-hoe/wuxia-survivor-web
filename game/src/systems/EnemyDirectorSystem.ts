@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { combat001DirectorConfig, type EnemyDirectorConfig, type WaveDirectorState, type WaveSegment } from "../data/waves";
 import { enemyConfigs, MAP_ENEMY_TEXTURE_KEYS, BEHAVIOR_RESKIN_MAP_IDS, type ChargeBehavior, type EnemyBehavior, type EnemyConfig, type EnemyId, type PounceBehavior, type ShieldWallBehavior } from "../data/enemies";
 import type { GameEventName } from "../types";
+import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
 import { JuiceSystem } from "./JuiceSystem";
@@ -447,7 +448,7 @@ export class EnemyDirectorSystem {
 
     const heroWorld = this.options.getHeroWorld();
     const margin = Phaser.Math.Between(this.config.spawnOutsideMinPx, this.config.spawnOutsideMaxPx);
-    const radius = Math.max(this.scene.scale.width, this.scene.scale.height) / 2 + margin;
+    const radius = Math.max(DESIGN_WIDTH, DESIGN_HEIGHT) / 2 + margin;
     let spawned = 0;
     for (let index = 0; index < budget; index += 1) {
       const enemyId = this.pickNormalEnemyId(segment);
@@ -1076,9 +1077,9 @@ export class EnemyDirectorSystem {
   private isEnemyOffscreen(enemy: EnemyRuntime, margin: number): boolean {
     return (
       enemy.view.x < -margin ||
-      enemy.view.x > this.scene.scale.width + margin ||
+      enemy.view.x > DESIGN_WIDTH + margin ||
       enemy.view.y < -margin ||
-      enemy.view.y > this.scene.scale.height + margin
+      enemy.view.y > DESIGN_HEIGHT + margin
     );
   }
 
@@ -1294,8 +1295,8 @@ export class EnemyDirectorSystem {
   }
 
   private createSpawnPointForSide(heroWorld: Point, heroScreen: Point, side: SpawnSide, margin: number): SpawnPoint {
-    const width = this.scene.scale.width;
-    const height = this.scene.scale.height;
+    const width = DESIGN_WIDTH;
+    const height = DESIGN_HEIGHT;
     const safeMinX = Math.min(96, width / 2);
     const safeMaxX = Math.max(safeMinX, width - safeMinX);
     let screenX = width + margin;
@@ -2252,8 +2253,8 @@ export class EnemyDirectorSystem {
     const heroScreen = this.options.getHeroScreen();
     const screenX = heroScreen.x + warning.worldX - heroWorld.x;
     const screenY = heroScreen.y + warning.worldY - heroWorld.y;
-    const clampedX = Phaser.Math.Clamp(screenX, 24, this.scene.scale.width - 24);
-    const clampedY = Phaser.Math.Clamp(screenY, 112, this.scene.scale.height - 24);
+    const clampedX = Phaser.Math.Clamp(screenX, 24, DESIGN_WIDTH - 24);
+    const clampedY = Phaser.Math.Clamp(screenY, 112, DESIGN_HEIGHT - 24);
     warning.view.setPosition(clampedX, clampedY);
     const baseScale = getNumericData(warning.view, "baseScale", 1);
     warning.view.setScale(baseScale * (1 + Math.sin(elapsedSeconds * 8) * 0.08));

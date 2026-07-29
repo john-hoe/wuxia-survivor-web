@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import type { RunSummary } from "../types";
 import { inkWipeIn, inkWipeOut } from "../fx/InkWipe";
 import { createArtPanel, getSafePanelWidth } from "../ui/ArtPanel";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { spacedText } from "../ui/minimalTheme";
 import { FONT_BODY, FONT_TITLE, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { getAudioSystem, setRunSummary } from "../utils/registry";
@@ -36,17 +37,18 @@ export class DeathTransitionScene extends Phaser.Scene {
   }
 
   create(): void {
+    applyResolutionCamera(this);
     enterScreen(this, "death_transition");
     getAudioSystem(this).playPlaceholder("hero_die");
 
-    const centerX = this.scale.width / 2;
-    const centerY = this.scale.height / 2;
+    const centerX = DESIGN_WIDTH / 2;
+    const centerY = DESIGN_HEIGHT / 2;
     const panelCenterY = centerY + 8;
 
-    this.add.rectangle(centerX, centerY, this.scale.width, this.scale.height, 0x090606, 0.72);
+    this.add.rectangle(centerX, centerY, DESIGN_WIDTH, DESIGN_HEIGHT, 0x090606, 0.72);
 
     // 降饱和感：灰墨帷幕 alpha 0→0.5 渐强
-    const grayVeil = this.add.rectangle(centerX, centerY, this.scale.width, this.scale.height, 0x111114, 0);
+    const grayVeil = this.add.rectangle(centerX, centerY, DESIGN_WIDTH, DESIGN_HEIGHT, 0x111114, 0);
     this.tweens.add({
       targets: grayVeil,
       alpha: 0.5,
@@ -57,7 +59,7 @@ export class DeathTransitionScene extends Phaser.Scene {
     // 墨色压边
     if (this.textures.exists("vfx_death_vignette")) {
       const vignette = this.add.image(centerX, centerY, "vfx_death_vignette")
-        .setDisplaySize(this.scale.width, this.scale.height)
+        .setDisplaySize(DESIGN_WIDTH, DESIGN_HEIGHT)
         .setAlpha(0);
       this.tweens.add({
         targets: vignette,

@@ -3,6 +3,7 @@ import { skillConfigs, skillOrder, type AdvanceKeyId, type SkillId, type SkillLe
 import { enemyConfigs } from "../data/enemies";
 import type { InsightSkillState } from "../data/progression";
 import type { GameEventName } from "../types";
+import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import type { EnemyDamageResult, EnemyTargetSnapshot } from "./EnemyDirectorSystem";
 import type { BossDamageResult, BossTargetSnapshot } from "./BossSystem";
 import { eventBus } from "../utils/EventBus";
@@ -639,12 +640,12 @@ export class SkillSystem {
   }
 
   private isReadableCombatTarget(target: CombatTargetSnapshot): boolean {
-    const verticalMargin = Math.min(96, Math.max(0, this.scene.scale.height * 0.18));
-    const safeVerticalMargin = Math.min(verticalMargin, Math.max(0, (this.scene.scale.height - 1) / 2));
+    const verticalMargin = Math.min(96, Math.max(0, DESIGN_HEIGHT * 0.18));
+    const safeVerticalMargin = Math.min(verticalMargin, Math.max(0, (DESIGN_HEIGHT - 1) / 2));
     return target.screenX >= 0
-      && target.screenX <= this.scene.scale.width
+      && target.screenX <= DESIGN_WIDTH
       && target.screenY >= safeVerticalMargin
-      && target.screenY <= this.scene.scale.height - safeVerticalMargin;
+      && target.screenY <= DESIGN_HEIGHT - safeVerticalMargin;
   }
 
   private spawnProjectile(
@@ -903,10 +904,10 @@ export class SkillSystem {
     }
   }
 
-  /** 共享墨层：懒创建/尺寸漂移重建；施放时 alpha 复位（渐褪中途新墨落地即恢复）。 */
+  /** 共享墨层：懒创建/尺寸漂移重建；施放时 alpha 复位（渐褪中途新墨落地即恢复）。尺寸为设计单位（落墨坐标系），相机 zoom K 负责高清化。 */
   private ensureInkLayer(): Phaser.GameObjects.RenderTexture | undefined {
-    const width = Math.max(1, this.scene.scale.width);
-    const height = Math.max(1, this.scene.scale.height);
+    const width = DESIGN_WIDTH;
+    const height = DESIGN_HEIGHT;
     if (this.inkLayer && (this.inkLayer.width !== width || this.inkLayer.height !== height)) {
       this.inkLayer.destroy();
       this.inkLayer = undefined;

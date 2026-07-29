@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import type { InsightOption, PendingInsight } from "../data/progression";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { createTextButton } from "../ui/UiButton";
 import { fadeIn, FONT_BODY, FONT_TITLE, PALETTE } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
@@ -27,11 +28,12 @@ export class InsightScene extends Phaser.Scene {
     this.selected = false;
     this.keyboardOffCallbacks = [];
     this.cards = [];
+    applyResolutionCamera(this);
     enterScreen(this, "insight");
     const pendingInsight = isPendingInsight(data) ? data : createFallbackInsight();
-    this.add.rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width, this.scale.height, 0x0f1512, 0.93);
+    this.add.rectangle(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2, DESIGN_WIDTH, DESIGN_HEIGHT, 0x0f1512, 0.93);
     if (this.textures.exists("vfx_insight_burst")) {
-      const burst = this.add.image(this.scale.width / 2, 158, "vfx_insight_burst")
+      const burst = this.add.image(DESIGN_WIDTH / 2, 158, "vfx_insight_burst")
         .setDisplaySize(210, 210)
         .setAlpha(0.34)
         .setBlendMode(Phaser.BlendModes.ADD);
@@ -53,13 +55,13 @@ export class InsightScene extends Phaser.Scene {
         ease: Phaser.Math.Easing.Sine.InOut
       });
     }
-    this.add.text(this.scale.width / 2, 78, "领悟", {
+    this.add.text(DESIGN_WIDTH / 2, 78, "领悟", {
       color: PALETTE.textPrimary,
       fontFamily: FONT_TITLE,
       fontSize: "44px",
       fontStyle: "bold"
     }).setOrigin(0.5).setResolution(2);
-    this.add.text(this.scale.width / 2, 126, `等级 ${pendingInsight.levelBefore} -> 等级 ${pendingInsight.levelAfter}`, {
+    this.add.text(DESIGN_WIDTH / 2, 126, `等级 ${pendingInsight.levelBefore} -> 等级 ${pendingInsight.levelAfter}`, {
       color: PALETTE.textSecondary,
       fontFamily: FONT_BODY,
       fontSize: "18px"

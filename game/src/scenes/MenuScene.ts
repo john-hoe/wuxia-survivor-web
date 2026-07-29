@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { stageMapConfig } from "../data/gameConfig";
 import type { StageMapId } from "../data/gameConfig";
 import { saveSystem } from "../systems/SaveSystem";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle, spacedText, type MinimalRowHandle } from "../ui/minimalTheme";
 import { FONT_BODY, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
@@ -42,6 +43,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    applyResolutionCamera(this);
     enterScreen(this, "menu");
 
     // QA-006：注入"当前选关地图 id"解析器（闭包读全局 registry 存档，场景关闭后仍有效）；
@@ -56,8 +58,8 @@ export class MenuScene extends Phaser.Scene {
     // QA-010：菜单 BGM 不随 create 立即播放，延迟到首次可信手势解锁后（见底部 POINTER_DOWN）
 
     const saveData = getSaveData(this);
-    const centerX = this.scale.width / 2;
-    const screenHeight = this.scale.height;
+    const centerX = DESIGN_WIDTH / 2;
+    const screenHeight = DESIGN_HEIGHT;
 
     // 极简碑林氛围底：墨底 + 两侧竹影 + 底部雾气 + 暗角（主题模块统一负责视差漂移）
     addMinimalBackdrop(this);
@@ -147,8 +149,8 @@ export class MenuScene extends Phaser.Scene {
       return;
     }
     const button = this.textures.exists("icon_fullscreen")
-      ? this.add.image(this.scale.width - 30, 30, "icon_fullscreen").setDisplaySize(30, 30)
-      : this.add.rectangle(this.scale.width - 30, 30, 30, 30, 0x101010, 0.6).setStrokeStyle(1, 0xa99a20, 0.8);
+      ? this.add.image(DESIGN_WIDTH - 30, 30, "icon_fullscreen").setDisplaySize(30, 30)
+      : this.add.rectangle(DESIGN_WIDTH - 30, 30, 30, 30, 0x101010, 0.6).setStrokeStyle(1, 0xa99a20, 0.8);
     const baseScale = button.scaleX;
     let restAlpha = 0.8;
     button.setAlpha(restAlpha).setInteractive({ useHandCursor: true });

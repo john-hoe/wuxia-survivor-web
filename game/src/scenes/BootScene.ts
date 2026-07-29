@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { configSystem } from "../systems/ConfigSystem";
 import { AudioSystem } from "../systems/AudioSystem";
 import { saveSystem } from "../systems/SaveSystem";
+import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { FONT_MONO, FONT_TITLE, PALETTE } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { preloadArtAssets, registerArtAnimations } from "../utils/artAssets";
@@ -18,6 +19,8 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload(): void {
+    // 加载屏建在 preload：高清相机必须最先接入（setZoom(K) + centerOn 设计中心）
+    applyResolutionCamera(this);
     this.createLoadingScreen();
     preloadArtAssets(this);
   }
@@ -52,9 +55,9 @@ export class BootScene extends Phaser.Scene {
   }
 
   private createLoadingScreen(): void {
-    const centerX = this.scale.width / 2;
-    const centerY = this.scale.height / 2;
-    const barWidth = Math.min(BOOT_BAR_WIDTH, this.scale.width - 120);
+    const centerX = DESIGN_WIDTH / 2;
+    const centerY = DESIGN_HEIGHT / 2;
+    const barWidth = Math.min(BOOT_BAR_WIDTH, DESIGN_WIDTH - 120);
     const barY = centerY + 36;
 
     this.cameras.main.setBackgroundColor(PALETTE.worldBgInt);
