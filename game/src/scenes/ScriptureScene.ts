@@ -92,8 +92,9 @@ const TEN_RESULT_SLOT_LAYOUTS = [
 
 /** 卷轴式结果演出：纸面尺寸 / 木轴参数 / 展开与合拢时长（方向D d-scripture 原型）。 */
 const SCROLL_RESULT_LAYOUT = {
-  y: 420,
-  paperHeight: 150,
+  /** 卷轴中心下移到 y=450：概率列表末行（绝学 y≈347）保持可见，面板占用揭示期空出的中下部 */
+  y: 450,
+  paperHeight: 136,
   singlePaperWidth: 560,
   tenPaperWidth: 780,
   rodWidth: 24,
@@ -687,15 +688,15 @@ export class ScriptureScene extends Phaser.Scene {
       ? getSafePanelWidth(this, SCROLL_RESULT_LAYOUT.tenPaperWidth)
       : getSafePanelWidth(this, SCROLL_RESULT_LAYOUT.singlePaperWidth, 80);
     const paperHeight = SCROLL_RESULT_LAYOUT.paperHeight;
-    const headerY = -(paperHeight / 2 + 26);
+    const headerY = -(paperHeight / 2 + 16);
 
     // 卷轴演出骨架：纸面（贴图或程序化兜底）+ 左右木轴 + 全卷点击收回热区
     const rig = this.createScrollRig(paperWidth, paperHeight);
     this.scrollRig = rig;
 
-    // "所得"小标题：卷面上方小字（不再压面板顶边）
+    // "所得"小标题：卷面上方小字（不再压面板顶边），FONT_TITLE 芥金
     const header = this.add.text(0, headerY, "所得", {
-      color: PALETTE.legacyGoldCss,
+      color: PALETTE.accentGoldCss,
       fontFamily: FONT_TITLE,
       fontSize: "15px",
       letterSpacing: 8
@@ -1037,48 +1038,64 @@ export class ScriptureScene extends Phaser.Scene {
     this.content?.add(this.debugOverlay);
   }
 
+  /**
+   * 单抽结果：匀称竖排 —— 图标居中偏上（无稀有度边框，稀有度以奖励名文字色表达）、
+   * 奖励名 FONT_TITLE 稀有度色居中、说明 FONT_BODY 居中；重复时转化补偿一行整体居中。
+   */
   private createSingleResultCard(result: ScripturePullResult): Phaser.GameObjects.GameObject[] {
     const objects: Phaser.GameObjects.GameObject[] = [];
-    const slot = this.createTunableRewardSlot("single.rewardSlot", result.reward.iconKey, result.reward.rarity, -261.8, 1.4, 58, 82);
+    const slot = this.createTunableRewardSlot("single.rewardSlot", result.reward.iconKey, 0, -26, 52, 56);
     objects.push(slot);
     this.setSlotIconVisible(slot, false);
     // 卷轴展开期间整槽隐藏，展开到位后落墨显现
     slot.setAlpha(0);
 
     const rarityText = `${RARITY_LABELS[result.reward.rarity]}  ${result.reward.title} x${result.reward.amount}`;
-    const title = this.registerLayoutTunerTarget("single.title", this.add.text(-185.7, 0, rarityText, {
+    const title = this.registerLayoutTunerTarget("single.title", this.add.text(0, 18, rarityText, {
       color: RARITY_COLORS[result.reward.rarity],
       fontFamily: FONT_TITLE,
-      fontSize: "21px",
+      fontSize: "20px",
       fontStyle: "bold"
-    }).setOrigin(0, 0.5).setResolution(2));
+    }).setOrigin(0.5).setResolution(2));
     objects.push(title);
     title.setVisible(false);
 
     const postRevealObjects: Array<Phaser.GameObjects.Text | Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle> = [];
     const detail = result.pityTriggered ? "保底触发" : result.duplicate ? "重复奖励" : "已收入收藏";
-    const detailText = this.registerLayoutTunerTarget("single.detail", this.add.text(54.9, -12.8, detail, {
-      color: "#d6c28d",
+    const detailText = this.registerLayoutTunerTarget("single.detail", this.add.text(0, 41, detail, {
+      color: PALETTE.legacyGoldCss,
       fontFamily: FONT_BODY,
-      fontSize: "18px"
-    }).setOrigin(0, 0.5).setResolution(2));
+      fontSize: "13px"
+    }).setOrigin(0.5).setResolution(2));
     objects.push(detailText);
     postRevealObjects.push(detailText);
 
     if (result.duplicate && result.compensation) {
-      const compLabel = this.registerLayoutTunerTarget("single.compLabel", this.add.text(58.3, 16.1, "转化补偿", {
+      // 补偿行：标签 + 小图标 + 明细作为一个整体水平居中于卷面
+      const compY = 58;
+      const compIconSize = 18;
+      const compGap = 6;
+      const compLabel = this.add.text(0, 0, "转化补偿", {
         color: "#d8ead9",
         fontFamily: FONT_BODY,
-        fontSize: "17px",
+        fontSize: "12px",
         fontStyle: "bold"
-      }).setOrigin(0, 0.5).setResolution(2));
-      const compIcon = this.registerLayoutTunerTarget("single.compIcon", this.createIconObject(result.compensation.iconKey, 173, 0, 38));
-      const compText = this.registerLayoutTunerTarget("single.compText", this.add.text(205, 0, `${result.compensation.title} x${result.compensation.amount}`, {
+      }).setOrigin(0, 0.5).setResolution(2);
+      const compText = this.add.text(0, 0, `${result.compensation.title} x${result.compensation.amount}`, {
         color: "#f7f0d0",
         fontFamily: FONT_BODY,
-        fontSize: "17px"
-      }).setOrigin(0, 0.5).setResolution(2));
-      objects.push(compLabel, compIcon, compText);
+        fontSize: "12px"
+      }).setOrigin(0, 0.5).setResolution(2);
+      const groupLeft = -(compLabel.displayWidth + compGap + compIconSize + compGap + compText.displayWidth) / 2;
+      compLabel.setPosition(groupLeft, compY);
+      const compIconX = groupLeft + compLabel.displayWidth + compGap + compIconSize / 2;
+      const compIcon = this.createIconObject(result.compensation.iconKey, compIconX, compY, compIconSize);
+      compText.setPosition(compIconX + compIconSize / 2 + compGap, compY);
+      objects.push(
+        this.registerLayoutTunerTarget("single.compLabel", compLabel),
+        this.registerLayoutTunerTarget("single.compIcon", compIcon),
+        this.registerLayoutTunerTarget("single.compText", compText)
+      );
       postRevealObjects.push(compLabel, compIcon, compText);
     }
 
@@ -1119,7 +1136,7 @@ export class ScriptureScene extends Phaser.Scene {
   private createSmallResultCard(slotX: number, slotY: number, labelX: number, labelY: number, result: ScripturePullResult): Phaser.GameObjects.GameObject[] {
     const objects: Phaser.GameObjects.GameObject[] = [];
     const prefix = `ten.${this.pendingLayoutTargets.filter((entry) => entry.id.startsWith("ten.") && entry.id.endsWith(".slot")).length + 1}`;
-    const slot = this.createTunableRewardSlot(`${prefix}.slot`, result.reward.iconKey, result.reward.rarity, slotX, slotY, 40, 52);
+    const slot = this.createTunableRewardSlot(`${prefix}.slot`, result.reward.iconKey, slotX, slotY, 40, 44);
     objects.push(slot);
     this.setSlotIconVisible(slot, false);
     // 卷轴展开期间整槽隐藏，翻面揭示时再亮起
@@ -1180,49 +1197,20 @@ export class ScriptureScene extends Phaser.Scene {
   }
 
   /**
-   * 稀有度框：优先使用 ui_frame_rarity_* 贴图；elite/epic 叠 ADD 呼吸流光副本。
-   * 无贴图时回退为原来的描边矩形。
+   * 奖励槽：仅图标本体（稀有度改由奖励名/槽位标签文字色表达，不再叠加稀有度方框）；
+   * slotSize 仅用于翻面基准与 F9 布局调试框。
    */
-  private createCompactRarityFrameObject(rarity: ScriptureRarity, x: number, y: number, size: number): Phaser.GameObjects.GameObject {
-    const textureKey = `ui_frame_rarity_${rarity}`;
-    if (!this.textures.exists(textureKey)) {
-      const color = Phaser.Display.Color.HexStringToColor(RARITY_COLORS[rarity]).color;
-      return this.add.rectangle(x, y, size, size, color, 0).setStrokeStyle(2, color, 0.82);
-    }
-    const frame = this.add.image(0, 0, textureKey).setDisplaySize(size, size);
-    if (rarity !== "elite" && rarity !== "epic") {
-      frame.setPosition(x, y);
-      return frame;
-    }
-    const glow = this.add.image(0, 0, textureKey)
-      .setDisplaySize(size, size)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setAlpha(0.3);
-    const breathing = this.tweens.add({
-      targets: glow,
-      alpha: 0.7,
-      duration: 720,
-      yoyo: true,
-      repeat: -1,
-      ease: Phaser.Math.Easing.Sine.InOut
-    });
-    glow.once(Phaser.GameObjects.Events.DESTROY, () => breathing.remove());
-    return this.add.container(x, y, [frame, glow]);
-  }
-
   private createTunableRewardSlot(
     id: string,
     iconKey: string,
-    rarity: ScriptureRarity,
     x: number,
     y: number,
     iconSize: number,
-    frameSize: number
+    slotSize: number
   ): Phaser.GameObjects.Container {
     const icon = this.createIconObject(iconKey, 0, 0, iconSize);
-    const frame = this.createCompactRarityFrameObject(rarity, 0, 0, frameSize);
-    const slot = this.add.container(x, y, [icon, frame]);
-    slot.setSize(frameSize, frameSize);
+    const slot = this.add.container(x, y, [icon]);
+    slot.setSize(slotSize, slotSize);
     slot.setData("icon", icon);
     return this.registerLayoutTunerTarget(id, slot);
   }
@@ -1310,7 +1298,7 @@ export class ScriptureScene extends Phaser.Scene {
 
   /** 跳过热区：卷面上方右侧小字；立即补全所有未揭示格。 */
   private createSkipRevealText(panelWidth: number): Phaser.GameObjects.Text {
-    const text = this.add.text(panelWidth / 2 - 30, -(SCROLL_RESULT_LAYOUT.paperHeight / 2 + 26), "跳过", {
+    const text = this.add.text(panelWidth / 2 - 30, -(SCROLL_RESULT_LAYOUT.paperHeight / 2 + 16), "跳过", {
       color: "#d6c28d",
       fontFamily: FONT_BODY,
       fontSize: "15px",
@@ -1361,7 +1349,7 @@ export class ScriptureScene extends Phaser.Scene {
   }
 
   private createResultContinueText(_panelWidth: number): Phaser.GameObjects.Text {
-    const text = this.add.text(0, SCROLL_RESULT_LAYOUT.paperHeight / 2 + 24, "继续", {
+    const text = this.add.text(0, SCROLL_RESULT_LAYOUT.paperHeight / 2 + 12, "继续", {
       color: "#f7f0d0",
       fontFamily: FONT_BODY,
       fontSize: "16px",

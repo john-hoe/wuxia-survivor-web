@@ -46,6 +46,8 @@ type BossRuntime = {
   shadow: Phaser.GameObjects.Ellipse;
   auraRing: Phaser.GameObjects.Image;
   inkShadow: Phaser.GameObjects.Image;
+  /** 常驻轮廓光：淡朱砂径向渐变外发光（夜图辨识度），depth 比 view 低 0.5、气环之上 */
+  bodyGlow: Phaser.GameObjects.Image;
   introSlamLanded: boolean;
   windupRecoilMs: number;
   warningView?: Phaser.GameObjects.Container;
@@ -136,6 +138,15 @@ const AURA_RING_BREATH_MS = 980;
 /** 气环之下的墨黑软椭圆投影：比气环略大 */
 const INK_SHADOW_RADIUS_FACTOR = 1.18;
 const INK_SHADOW_ALPHA = 0.32;
+/** 常驻轮廓光：半径=视觉半径×体型倍率×2.6，depth 12.5（view 13 之下、气环 11.5 之上），ADD 混合 */
+const BODY_GLOW_RADIUS_FACTOR = 2.6;
+const BODY_GLOW_ALPHA_MIN = 0.16;
+const BODY_GLOW_ALPHA_MAX = 0.26;
+/** 呼吸周期与气环（980ms）错相位，避免两层同步明暗 */
+const BODY_GLOW_BREATH_MS = 1240;
+const BODY_GLOW_DEPTH = 12.5;
+/** 轮廓光中心上抬系数（×视觉半径）：对齐躯干而非脚下 */
+const BODY_GLOW_CENTER_OFFSET_FACTOR = 0.38;
 /** 出场落地一击：400ms 加速下落 + 80ms 落地顿，落地帧墨环冲击波扩散 500ms */
 const INTRO_FALL_MS = 400;
 const INTRO_LAND_HOLD_MS = 80;
@@ -256,8 +267,8 @@ export class BossSystem {
     const view = this.createBossView();
     const usesSpriteArt = view.getData("bossSpriteArt") === true;
     const shadow = this.scene.add.ellipse(0, 0, usesSpriteArt ? 108 : 86, usesSpriteArt ? 28 : 26, 0x050705, 0.36).setDepth(11);
-    // 气场层：墨黑软椭圆投影（下）+ 朱砂气环（上），depth 均低于 Boss view(13)
-    const { auraRing, inkShadow } = this.createAuraViews();
+    // 气场层：墨黑软椭圆投影（下）+ 朱砂气环（上），depth 均低于 Boss view(13)；轮廓光在气环之上、view 之下
+    const { auraRing, inkShadow, bodyGlow } = this.createAuraViews();
     const runtime: BossRuntime = {
       runtimeId: BOSS_RUNTIME_ID,
       hp: this.config.maxHp,
@@ -288,7 +299,8 @@ export class BossSystem {
       view,
       shadow,
       auraRing,
-      inkShadow
+      inkShadow,
+      bodyGlow
     };
     this.runtime = runtime;
     this.startAuraBreathing(runtime);
@@ -424,10 +436,12 @@ export class BossSystem {
     this.scene.tweens.killTweensOf(this.runtime.shadow);
     this.scene.tweens.killTweensOf(this.runtime.auraRing);
     this.scene.tweens.killTweensOf(this.runtime.inkShadow);
+    this.scene.tweens.killTweensOf(this.runtime.bodyGlow);
     this.clearWarning(this.runtime);
     this.clearAttackView(this.runtime);
     this.runtime.auraRing.destroy();
     this.runtime.inkShadow.destroy();
+    this.runtime.bodyGlow.destroy();
     this.runtime.shadow.destroy();
     this.runtime.view.destroy();
     this.runtime = undefined;
@@ -592,6 +606,8 @@ export class BossSystem {
     const ringBaseScale = (runtime.auraRing.getData("baseDisplayScale") as number | undefined) ?? 1;
     runtime.auraRing.setScale(ringBaseScale * (1 + progress * 0.45));
     runtime.inkShadow.setAlpha(INK_SHADOW_ALPHA * (1 - progress));
+    // 轮廓光随死亡演出同步淡出消散
+    runtime.bodyGlow.setAlpha(BODY_GLOW_ALPHA_MAX * (1 - progress));
     if (runtime.stateMs < 900 || runtime.deathNotified) {
       return;
     }
@@ -680,6 +696,8 @@ export class BossSystem {
     runtime.windupRecoilMs = 0;
     // 停止气环呼吸 Tween，交由 updateDead 做消散演出
     this.scene.tweens.killTweensOf(runtime.auraRing);
+    // 轮廓光呼吸同步停止，随死亡演出一起消散
+    this.scene.tweens.killTweensOf(runtime.bodyGlow);
     runtime.stageCleared = true;
     runtime.currentAttack = "none";
     runtime.lastAttack = runtime.lastAttack === "none" ? runtime.currentAttack : runtime.lastAttack;
@@ -979,10 +997,11 @@ export class BossSystem {
 
   /** 气场层：墨黑软椭圆投影（下，比气环略大）+ 朱砂气环（上），均低于 Boss view(13)。
    *  2 倍素材适配确认：ringRadius/inkRadius 由 config.visualRadius（世界单位）推算，不含帧像素，自动适配无需改动。 */
-  private createAuraViews(): { auraRing: Phaser.GameObjects.Image; inkShadow: Phaser.GameObjects.Image } {
+  private createAuraViews(): { auraRing: Phaser.GameObjects.Image; inkShadow: Phaser.GameObjects.Image; bodyGlow: Phaser.GameObjects.Image } {
     this.ensureAuraTextures();
     const ringRadius = this.config.visualRadius * BOSS_SIZE_MULTIPLIER * AURA_RING_RADIUS_FACTOR;
     const inkRadius = ringRadius * INK_SHADOW_RADIUS_FACTOR;
+    const glowRadius = this.config.visualRadius * BOSS_SIZE_MULTIPLIER * BODY_GLOW_RADIUS_FACTOR;
 
     // 墨黑软椭圆投影：径向渐变圆形纹理压扁 0.42 成软椭圆
     const inkShadow = this.scene.add.image(0, 0, "boss_ink_shadow")
@@ -998,16 +1017,32 @@ export class BossSystem {
     const ringScale = ringRadius / AURA_TEXTURE_RING_BAND_RADIUS;
     auraRing.setScale(ringScale);
     auraRing.setData("baseDisplayScale", ringScale);
-    return { auraRing, inkShadow };
+
+    // 常驻淡朱砂轮廓光：气环之上、Boss view 之下，夜图中托出深色铠甲身形（白天地图同样存在但效果弱）
+    const bodyGlow = this.scene.add.image(0, 0, "boss_body_glow")
+      .setDepth(BODY_GLOW_DEPTH)
+      .setAlpha(BODY_GLOW_ALPHA_MIN)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    bodyGlow.setScale(glowRadius / AURA_TEXTURE_GRADIENT_RADIUS);
+    return { auraRing, inkShadow, bodyGlow };
   }
 
-  /** 气环呼吸：alpha 0.18↔0.32 往返（beginDeath 时停掉转消散演出）。 */
+  /** 气环呼吸：alpha 0.18↔0.32 往返（beginDeath 时停掉转消散演出）。轮廓光同起呼吸但周期错相位。 */
   private startAuraBreathing(runtime: BossRuntime): void {
     runtime.auraRing.setAlpha(AURA_RING_ALPHA_MIN);
     this.scene.tweens.add({
       targets: runtime.auraRing,
       alpha: AURA_RING_ALPHA_MAX,
       duration: AURA_RING_BREATH_MS,
+      ease: "Sine.easeInOut",
+      yoyo: true,
+      repeat: -1
+    });
+    runtime.bodyGlow.setAlpha(BODY_GLOW_ALPHA_MIN);
+    this.scene.tweens.add({
+      targets: runtime.bodyGlow,
+      alpha: BODY_GLOW_ALPHA_MAX,
+      duration: BODY_GLOW_BREATH_MS,
       ease: "Sine.easeInOut",
       yoyo: true,
       repeat: -1
@@ -1041,6 +1076,21 @@ export class BossSystem {
         gradient.addColorStop(0, "rgba(6, 5, 5, 0.92)");
         gradient.addColorStop(0.6, "rgba(6, 5, 5, 0.45)");
         gradient.addColorStop(1, "rgba(6, 5, 5, 0)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, AURA_TEXTURE_SIZE, AURA_TEXTURE_SIZE);
+        canvasTexture.refresh();
+      }
+    }
+    if (!this.scene.textures.exists("boss_body_glow")) {
+      // 轮廓光：中心暖朱砂实心向外软衰减的径向渐变，ADD 混合下呈淡色外发光
+      const canvasTexture = this.scene.textures.createCanvas("boss_body_glow", AURA_TEXTURE_SIZE, AURA_TEXTURE_SIZE);
+      if (canvasTexture) {
+        const context = canvasTexture.getContext();
+        const center = AURA_TEXTURE_SIZE / 2;
+        const gradient = context.createRadialGradient(center, center, 0, center, center, AURA_TEXTURE_GRADIENT_RADIUS);
+        gradient.addColorStop(0, "rgba(214, 84, 56, 0.9)");
+        gradient.addColorStop(0.45, "rgba(196, 58, 38, 0.42)");
+        gradient.addColorStop(1, "rgba(120, 20, 12, 0)");
         context.fillStyle = gradient;
         context.fillRect(0, 0, AURA_TEXTURE_SIZE, AURA_TEXTURE_SIZE);
         canvasTexture.refresh();
@@ -1122,6 +1172,8 @@ export class BossSystem {
     // 气场层跟随脚下：墨黑投影在下、朱砂气环在上
     runtime.inkShadow.setPosition(screen.x, screen.y + shadowOffsetY);
     runtime.auraRing.setPosition(screen.x, screen.y + shadowOffsetY);
+    // 轮廓光对齐躯干中心（自锚点上抬），不随脚下气环
+    runtime.bodyGlow.setPosition(screen.x, screen.y - this.config.visualRadius * BOSS_SIZE_MULTIPLIER * BODY_GLOW_CENTER_OFFSET_FACTOR);
     runtime.view.setData("facingLeft", this.shouldFaceLeft(runtime));
     this.applyBossViewScale(runtime);
   }

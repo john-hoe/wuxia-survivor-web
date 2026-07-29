@@ -65,8 +65,19 @@ const HERO_SHADOW_TEXTURE_KEY = "hero_contact_shadow";
 const HERO_SHADOW_WIDTH = 56;
 const HERO_SHADOW_HEIGHT = 20;
 const HERO_SHADOW_ALPHA = 0.3;
-/** 阴影 depth：比主角精灵（10）低 1，高于地面层（-30~-23）。 */
+/** 主角 view depth：14，高于 Boss view(13)，贴身重叠时英雄不被 Boss 遮挡；技能特效层关系不变（地面墨环 12 在脚下、御剑/飞刃 14-15 后创建仍压上、命中/死亡 vfx 17-18 更高）。 */
+const HERO_VIEW_DEPTH = 14;
+/** 阴影 depth：比主角精灵（14）低 5，高于地面层（-30~-23）。 */
 const HERO_SHADOW_DEPTH = 9;
+/** 英雄轮廓光：常驻极淡青白外发光（夜图辨识度），depth 比主角 view 低 0.5、压过 Boss view(13)。 */
+const HERO_GLOW_TEXTURE_KEY = "hero_outline_glow";
+const HERO_GLOW_TEXTURE_SIZE = 128;
+const HERO_GLOW_DEPTH = HERO_VIEW_DEPTH - 0.5;
+const HERO_GLOW_ALPHA = 0.1;
+/** 轮廓光尺寸 = 英雄显示高 ×1.5；占位兜底英雄按 56px 高计。 */
+const HERO_GLOW_FALLBACK_HEIGHT = 56;
+/** 轮廓光中心自锚点上抬（view origin 0.6 偏下，对齐躯干）。 */
+const HERO_GLOW_CENTER_OFFSET_Y = 8;
 /** 移动倾斜上限 ±3.5°，按水平速度占比取值，lerp 平滑、停止归零。 */
 const HERO_TILT_MAX_RAD = Phaser.Math.DegToRad(3.5);
 const HERO_TILT_SMOOTH_MS = 110;
@@ -135,6 +146,8 @@ export class GameScene extends Phaser.Scene {
   private latestProgression?: ProgressionSnapshot;
   private heroView?: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
   private heroShadow?: Phaser.GameObjects.Image;
+  /** 英雄轮廓光（常驻淡青白外发光）：无 Tween，随场景销毁；受伤/死亡 alpha 在 updateHeroView 同步。 */
+  private heroGlow?: Phaser.GameObjects.Image;
   /** 主角基础 scaleY：drawHero 时采样（2 倍素材后 sprite 约 0.33），呼吸/回落均乘法叠加，不写死。 */
   private heroBaseScaleY = 1;
   /** 当前移动倾斜角（弧度），指数平滑趋近目标。 */
@@ -1735,6 +1748,27 @@ export class GameScene extends Phaser.Scene {
     canvasTexture.refresh();
   }
 
+  /** 英雄轮廓光纹理：程序化径向渐变青白软光，按 key 缓存只生成一次。 */
+  private ensureHeroGlowTexture(): void {
+    if (this.textures.exists(HERO_GLOW_TEXTURE_KEY)) {
+      return;
+    }
+    const canvasTexture = this.textures.createCanvas(HERO_GLOW_TEXTURE_KEY, HERO_GLOW_TEXTURE_SIZE, HERO_GLOW_TEXTURE_SIZE);
+    const context = canvasTexture?.getContext();
+    if (!canvasTexture || !context) {
+      return;
+    }
+    context.clearRect(0, 0, HERO_GLOW_TEXTURE_SIZE, HERO_GLOW_TEXTURE_SIZE);
+    const half = HERO_GLOW_TEXTURE_SIZE / 2;
+    const gradient = context.createRadialGradient(half, half, 0, half, half, half);
+    gradient.addColorStop(0, "rgba(208, 244, 236, 0.85)");
+    gradient.addColorStop(0.5, "rgba(178, 226, 216, 0.38)");
+    gradient.addColorStop(1, "rgba(160, 214, 204, 0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, HERO_GLOW_TEXTURE_SIZE, HERO_GLOW_TEXTURE_SIZE);
+    canvasTexture.refresh();
+  }
+
   private drawHero(): void {
     const centerX = this.scale.width / 2;
     const centerY = this.getHeroScreenY();
@@ -1746,7 +1780,7 @@ export class GameScene extends Phaser.Scene {
 
     if (this.textures.exists("hero_shaoxia_idle")) {
       const heroSprite = this.add.sprite(centerX, centerY, "hero_shaoxia_idle")
-        .setDepth(10)
+        .setDepth(HERO_VIEW_DEPTH)
         .setOrigin(0.5, 0.6)
         // 素材 2 倍高清化：hero 帧尺寸 ×2（128→256），缩放系数 ÷2（0.66→0.33）保持屏幕显示尺寸不变。
         .setScale(0.33);
@@ -1762,10 +1796,22 @@ export class GameScene extends Phaser.Scene {
         -13, 12
       ], 0xf7f0d0, 1).setStrokeStyle(1, 0xd6c28d, 0.95);
       const waist = this.add.rectangle(0, 12, 28, 8, 0x2f5b4f, 1);
-      this.heroView = this.add.container(centerX, centerY, [body, facing, waist]).setDepth(10);
+      this.heroView = this.add.container(centerX, centerY, [body, facing, waist]).setDepth(HERO_VIEW_DEPTH);
     }
     // 采样基础 scaleY（2 倍素材后 sprite 约 0.33 / 占位容器 1），待机呼吸以此乘法叠加。
     this.heroBaseScaleY = this.heroView.scaleY;
+
+    // 常驻极淡青白轮廓光：尺寸 = 英雄显示高 ×1.5，ADD 混合，不呼吸；贴身 Boss 时托出英雄身形
+    this.ensureHeroGlowTexture();
+    const heroDisplayHeight = this.heroView instanceof Phaser.GameObjects.Sprite
+      ? this.heroView.displayHeight
+      : HERO_GLOW_FALLBACK_HEIGHT;
+    const glowSize = heroDisplayHeight * 1.5;
+    this.heroGlow = this.add.image(centerX, centerY - HERO_GLOW_CENTER_OFFSET_Y, HERO_GLOW_TEXTURE_KEY)
+      .setDisplaySize(glowSize, glowSize)
+      .setAlpha(HERO_GLOW_ALPHA)
+      .setDepth(HERO_GLOW_DEPTH)
+      .setBlendMode(Phaser.BlendModes.ADD);
 
     this.footHpBack = this.add.rectangle(centerX - 28, centerY + 38, 56, 6, 0x070807, 0.75)
       .setOrigin(0, 0.5)
@@ -2098,6 +2144,16 @@ export class GameScene extends Phaser.Scene {
       ? (Math.sin(this.elapsedMs / 18) > 0 ? 0.46 : 0.95)
       : 1;
     this.heroView.setAlpha(heroAlpha);
+    // 轮廓光与主角透明度同步：受伤闪烁同节奏、死亡随转场窗口持续淡出（与接触阴影同策略）。
+    if (this.heroGlow) {
+      this.heroGlow.setPosition(this.scale.width / 2, centerY + bob - HERO_GLOW_CENTER_OFFSET_Y);
+      if (health.isDead) {
+        const glowFadeStep = (HERO_GLOW_ALPHA * deltaMs) / HERO_SHADOW_DEATH_FADE_MS;
+        this.heroGlow.setAlpha(Math.max(0, this.heroGlow.alpha - glowFadeStep));
+      } else {
+        this.heroGlow.setAlpha(HERO_GLOW_ALPHA * heroAlpha);
+      }
+    }
     // 接触阴影与主角透明度同步：受伤闪烁同节奏淡出淡入，死亡时随转场窗口持续淡出。
     if (this.heroShadow) {
       if (health.isDead) {

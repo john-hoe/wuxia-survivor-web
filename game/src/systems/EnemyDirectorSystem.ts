@@ -134,6 +134,8 @@ type EnemyRuntime = {
   poisonAmp: number;
   /** 中毒印记：头顶 ui_mark_poison 小图标（1.5s 呼吸淡出，重复中毒刷新；缺失纹理用小绿点兜底） */
   poisonMark?: Phaser.GameObjects.Image;
+  /** 夜雨破庙邪派敌轮廓补偿：垫底淡光 sprite（仅教徒/毒蝎换色皮生成时创建，随实体销毁） */
+  nightGlow?: Phaser.GameObjects.Image;
 };
 
 type EliteWarningRuntime = {
@@ -197,6 +199,17 @@ const SHADOW_WIDTH_SCALE = 1.6;
 const SHADOW_ELITE_WIDTH_SCALE = 2;
 const SHADOW_ASPECT = 0.5;
 const SHADOW_DEATH_FADE_MS = 140;
+/**
+ * 夜雨破庙邪派敌（教徒/毒蝎换色皮）轮廓补偿：紫黑深色被夜色吃掉，生成时垫程序化径向淡光。
+ * tint 通道已被受击墨闪占用（闪后 clearTint 会冲掉常驻 tint），故用 glow sprite 垫底方案。
+ */
+const NIGHT_RESKIN_GLOW_TEXTURE_KEYS: ReadonlySet<string> = new Set(["enemy_cultist_walk", "enemy_scorpion_run"]);
+const NIGHT_GLOW_TEXTURE_KEY = "enemy_night_reskin_glow";
+const NIGHT_GLOW_TEXTURE_SIZE = 128;
+const NIGHT_GLOW_ALPHA = 0.08;
+/** 垫底光尺寸 = 碰撞直径 ×2.2；depth 比 view 低 0.5（阴影之上、本体之下）。 */
+const NIGHT_GLOW_SIZE_FACTOR = 2.2;
+const NIGHT_GLOW_CENTER_OFFSET_FACTOR = 0.4;
 /** 移动倾斜平滑时间常数（指数 lerp，约 90ms 跟上横向速度变化） */
 const LEAN_SMOOTH_MS = 90;
 /** 近战前扑（纯表现层，不动碰撞）：出手瞬间向少侠方向 12-15px，60ms 扑出 + 80ms 回位 */
@@ -319,6 +332,7 @@ export class EnemyDirectorSystem {
     this.unsubscribePoisonRequest();
     for (const enemy of this.enemies) {
       this.destroyPoisonMark(enemy);
+      this.destroyNightGlow(enemy);
       enemy.view.destroy();
       enemy.shadow.destroy();
     }
@@ -812,6 +826,7 @@ export class EnemyDirectorSystem {
       poisonTickDamage: 0,
       poisonAmp: 1,
       shadow,
+      nightGlow: this.createNightReskinGlow(view, config),
       footOffsetY: this.getFootOffsetY(view, config),
       leanRad: 0,
       bobOffsetY: 0,
@@ -959,6 +974,7 @@ export class EnemyDirectorSystem {
   private despawnEnemy(index: number, reason: string, distanceFromHero: number): void {
     const [enemy] = this.enemies.splice(index, 1);
     this.destroyPoisonMark(enemy);
+    this.destroyNightGlow(enemy);
     this.releaseShadow(enemy.shadow);
     enemy.view.destroy();
     this.despawnSamples.push({ ageMs: 0 });
@@ -973,6 +989,22 @@ export class EnemyDirectorSystem {
   private killEnemy(index: number, source: string, result: EnemyDamageResult): void {
     const [enemy] = this.enemies.splice(index, 1);
     this.destroyPoisonMark(enemy);
+    // 轮廓补偿光随死亡演出同节奏渐隐（尸体击飞/侧翻 200ms 窗口内同步消散）
+    if (enemy.nightGlow) {
+      const nightGlow = enemy.nightGlow;
+      enemy.nightGlow = undefined;
+      this.scene.tweens.add({
+        targets: nightGlow,
+        alpha: 0,
+        duration: DEATH_TWEEN_MS,
+        ease: "Quad.easeOut",
+        onComplete: () => {
+          if (nightGlow.active) {
+            nightGlow.destroy();
+          }
+        }
+      });
+    }
     this.playEnemyDeathTween(enemy);
     this.fadeEnemyShadow(enemy.shadow);
     const juice = JuiceSystem.get(this.scene);
@@ -1304,6 +1336,61 @@ export class EnemyDirectorSystem {
     return enemyView;
   }
 
+  /**
+   * 夜雨破庙邪派敌轮廓补偿：教徒/毒蝎换色皮紫黑发闷，在 view 之下垫一层程序化径向淡光
+   * （ADD alpha 0.08，不呼吸），让它不被夜色吃掉。非换色贴图/几何兜底一律不创建，零开销。
+   */
+  private createNightReskinGlow(
+    view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite,
+    config: EnemyConfig
+  ): Phaser.GameObjects.Image | undefined {
+    if (!(view instanceof Phaser.GameObjects.Sprite)) {
+      return undefined;
+    }
+    const textureKey = view.getData("textureKey") as string | undefined;
+    if (!textureKey || !NIGHT_RESKIN_GLOW_TEXTURE_KEYS.has(textureKey)) {
+      return undefined;
+    }
+    this.ensureNightGlowTexture();
+    const glowSize = config.collisionRadius * 2 * NIGHT_GLOW_SIZE_FACTOR;
+    return this.scene.add.image(0, 0, NIGHT_GLOW_TEXTURE_KEY)
+      .setDisplaySize(glowSize, glowSize)
+      .setDepth(view.depth - 0.5)
+      .setAlpha(NIGHT_GLOW_ALPHA)
+      .setBlendMode(Phaser.BlendModes.ADD);
+  }
+
+  /** 邪派敌垫底光纹理：冷月白青径向渐变软光，一次生成全局缓存复用。 */
+  private ensureNightGlowTexture(): void {
+    if (this.scene.textures.exists(NIGHT_GLOW_TEXTURE_KEY)) {
+      return;
+    }
+    const canvasTexture = this.scene.textures.createCanvas(NIGHT_GLOW_TEXTURE_KEY, NIGHT_GLOW_TEXTURE_SIZE, NIGHT_GLOW_TEXTURE_SIZE);
+    const context = canvasTexture?.getContext();
+    if (!canvasTexture || !context) {
+      return;
+    }
+    context.clearRect(0, 0, NIGHT_GLOW_TEXTURE_SIZE, NIGHT_GLOW_TEXTURE_SIZE);
+    const half = NIGHT_GLOW_TEXTURE_SIZE / 2;
+    const gradient = context.createRadialGradient(half, half, 0, half, half, half);
+    gradient.addColorStop(0, "rgba(172, 182, 216, 0.85)");
+    gradient.addColorStop(0.5, "rgba(150, 160, 198, 0.4)");
+    gradient.addColorStop(1, "rgba(140, 150, 188, 0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, NIGHT_GLOW_TEXTURE_SIZE, NIGHT_GLOW_TEXTURE_SIZE);
+    canvasTexture.refresh();
+  }
+
+  /** 轮廓补偿光即销（退场/系统销毁路径；击杀路径走渐隐，见 killEnemy）。 */
+  private destroyNightGlow(enemy: EnemyRuntime): void {
+    if (!enemy.nightGlow) {
+      return;
+    }
+    this.scene.tweens.killTweensOf(enemy.nightGlow);
+    enemy.nightGlow.destroy();
+    enemy.nightGlow = undefined;
+  }
+
   // 素材 2 倍高清化：enemy 帧尺寸 ×2，以下硬编码缩放系数全部 ÷2，保持屏幕显示尺寸不变。
   private getEnemySpriteScale(config: EnemyConfig): number {
     if (config.id === "hound") {
@@ -1477,6 +1564,8 @@ export class EnemyDirectorSystem {
     );
     // 接触阴影贴地跟随：不继承受击/前扑/颠簸偏移（地面参照，反衬身体位移）
     enemy.shadow.setPosition(baseX, baseY + enemy.footOffsetY);
+    // 邪派敌轮廓补偿光跟随躯干（略上抬），同样不继承受击/前扑偏移
+    enemy.nightGlow?.setPosition(baseX, baseY - enemy.footOffsetY * NIGHT_GLOW_CENTER_OFFSET_FACTOR);
     // 中毒印记悬于头顶（脚底锚点上抬，与阴影同理不继承受击/前扑偏移）
     if (enemy.poisonMark?.active) {
       enemy.poisonMark.setPosition(baseX, baseY - enemy.footOffsetY - POISON_MARK_HOVER_PX);
