@@ -7,7 +7,7 @@ import type { EnemyDamageResult, EnemyTargetSnapshot } from "./EnemyDirectorSyst
 import type { BossDamageResult, BossTargetSnapshot } from "./BossSystem";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
-import { JuiceSystem } from "./JuiceSystem";
+import { JuiceSystem, type DamageKind } from "./JuiceSystem";
 
 type Point = {
   x: number;
@@ -22,6 +22,8 @@ type SkillSystemOptions = {
   knockbackEnemy: (runtimeId: number, originWorld: Point, distance: number, source: string) => boolean;
   onEnemyKilled: (result: EnemyDamageResult) => void;
   playSfx: (eventId: string) => void;
+  /** 可选：英雄面向（归一化输入方向）。烈火神掌无有效目标时按面向横置火墙；缺省/静止时回退默认方向。 */
+  getHeroFacing?: () => Point | undefined;
 };
 
 export type CombatTargetSnapshot = EnemyTargetSnapshot | BossTargetSnapshot;
@@ -111,6 +113,46 @@ type VfxRuntime = {
   type: "hit" | "die" | "advance";
 };
 
+/**
+ * 烈火神掌·火墙：世界锚定的旋转矩形线状 DoT 场，长轴垂直于施放指向。
+ * 视图为段贴图拼接 Container（vfx_fire_wall 4 帧序列，缺失走程序化兜底），随墙销毁。
+ */
+type WallRuntime = {
+  runtimeId: number;
+  skillId: SkillId;
+  worldX: number;
+  worldY: number;
+  /** 墙长轴方向（弧度）；施放指向 + 90° */
+  angleRad: number;
+  length: number;
+  width: number;
+  /** 每跳伤害 */
+  damage: number;
+  tickIntervalMs: number;
+  tickTimerMs: number;
+  ageMs: number;
+  durationMs: number;
+  level: number;
+  advanced: boolean;
+  /** 灼烧跳数（基础 1 / 进阶 2） */
+  burnTicks: number;
+  view: Phaser.GameObjects.Container;
+};
+
+/**
+ * 灼烧状态（SkillSystem 自承载，不走 EnemyDirector 桥接）：
+ * 墙 tick 命中即刷新——最后一次命中 FIRE_WALL_BURN_DELAY_MS 后跳 1 跳（进阶 2 跳），
+ * 伤害 = 点燃当次墙 tick 伤害。目标死亡/离场时 damageTarget 返回未命中即清除。
+ */
+type BurnRuntime = {
+  skillId: SkillId;
+  ticksRemaining: number;
+  /** 距下一跳剩余毫秒 */
+  nextTickInMs: number;
+  damage: number;
+  advanced: boolean;
+};
+
 type HitSample = {
   ageMs: number;
   damage: number;
@@ -129,6 +171,8 @@ export type SkillSystemSnapshot = {
   orbitalsAlive: number;
   /** 墨痕领域存活数（可选：GameScene 兜底快照字面量无需补齐，消费方按 0 处理） */
   zonesAlive?: number;
+  /** 火墙存活数（可选：同 zonesAlive 的可选约定） */
+  wallsAlive?: number;
   activeVfx: number;
   skillHitsLast10s: number;
   skillDpsLast10s: number;
@@ -208,6 +252,33 @@ const ORBIT_RING_ALPHA_BASE = 0.14;
 const ORBIT_RING_ALPHA_ADVANCED = 0.22;
 /** 轨道环深度：地面墨层（2）之上、敌人（8-9）之下，仅作轨道指引 */
 const ORBIT_RING_DEPTH = 4;
+// ── 烈火神掌 · 火墙（kind "wall"）──
+/** 火墙并发上限（冷却 4-5s > 持续 3-3.4s，常态单墙，进阶/低压时可短暂双墙） */
+const MAX_WALLS = 2;
+/** 火墙段贴图（4 帧序列，跨代理约定键，未注册时走程序化兜底火焰矩形） */
+const FIRE_WALL_SEGMENT_TEXTURE = "vfx_fire_wall";
+/** 施放点一次性迸发序列帧（跨代理约定键，缺失退化为金红扩散环） */
+const FIRE_WALL_BURST_TEXTURE = "vfx_fire_burst";
+/** 段贴图 0 号帧缺省尺寸（读取失败时按 48×48 方形帧计） */
+const FIRE_WALL_SEGMENT_FALLBACK_SIZE = 48;
+/** 火墙深度：地面墨层（2）之上、敌人（8-9）之下——火墙贴地燃烧，不盖角色 */
+const FIRE_WALL_DEPTH = 6;
+/** 施放点迸发深度：火墙之上、敌人之下 */
+const FIRE_WALL_BURST_DEPTH = 7;
+/** 火墙淡入/淡出时长：出手即燃（快淡入），熄灭前渐隐（慢淡出） */
+const FIRE_WALL_FADE_IN_MS = 160;
+const FIRE_WALL_FADE_OUT_MS = 420;
+/** 火墙整体透明度上限（ADD 混合下保留地面可读性） */
+const FIRE_WALL_MAX_ALPHA = 0.96;
+/** 无有效目标时的兜底施放：英雄面向前方该距离处横置火墙 */
+const FIRE_WALL_FALLBACK_CAST_DISTANCE = 180;
+/** 灼烧：最后一次命中后再跳的延迟与进阶多跳间隔（表现层常量，不进 data/skills 数值表） */
+const FIRE_WALL_BURN_DELAY_MS = 2000;
+const FIRE_WALL_BURN_TICK_INTERVAL_MS = 500;
+const FIRE_WALL_BURN_TICKS_BASE = 1;
+const FIRE_WALL_BURN_TICKS_ADVANCED = 2;
+/** types.ts 为并行代理共享文件不动：火墙施放事件名本地断言接入事件总线（与 moran 毒事件同约定） */
+const SKILL_WALL_SPAWNED_EVENT = "skill_wall_spawned" as GameEventName;
 
 export class SkillSystem {
   private readonly skills = new Map<SkillId, SkillRuntime>();
@@ -216,6 +287,9 @@ export class SkillSystem {
   private readonly orbitals: OrbitalRuntime[] = [];
   private readonly waves: WaveRuntime[] = [];
   private readonly zones: ZoneRuntime[] = [];
+  private readonly walls: WallRuntime[] = [];
+  /** 灼烧状态表：key = 目标 runtimeId（仅敌人；死亡/离场即清除），SkillSystem 自承载不跨系统 */
+  private readonly burnStates = new Map<number, BurnRuntime>();
   private readonly vfx: VfxRuntime[] = [];
   private readonly hitSamples: HitSample[] = [];
   private readonly dartGhosts: Phaser.GameObjects.Sprite[] = [];
@@ -224,6 +298,7 @@ export class SkillSystem {
   private nextOrbitalId = 1;
   private nextWaveId = 1;
   private nextZoneId = 1;
+  private nextWallId = 1;
   private hitSfxCooldownMs = 0;
   /** 共享地面墨层：屏幕尺寸 RenderTexture，记录其像素 (0,0) 对应的世界坐标，逐帧随镜头对齐 */
   private inkLayer?: Phaser.GameObjects.RenderTexture;
@@ -268,6 +343,8 @@ export class SkillSystem {
         this.castWaveSkillIfReady(runtime);
       } else if (skillConfigs[skillId].kind === "zone") {
         this.castZoneSkillIfReady(runtime, targets);
+      } else if (skillConfigs[skillId].kind === "wall") {
+        this.castWallSkillIfReady(runtime, targets);
       }
     }
 
@@ -275,6 +352,8 @@ export class SkillSystem {
     this.updateOrbitals(clampedDeltaMs, targets);
     this.updateWaves(clampedDeltaMs, targets);
     this.updateZones(clampedDeltaMs, targets);
+    this.updateWalls(clampedDeltaMs, targets);
+    this.updateBurns(clampedDeltaMs);
     this.updateVfx(clampedDeltaMs);
     this.ageHitSamples(clampedDeltaMs);
     return this.getSnapshot();
@@ -291,7 +370,8 @@ export class SkillSystem {
       projectilesAlive: this.projectiles.length,
       orbitalsAlive: this.orbitals.length,
       zonesAlive: this.zones.length,
-      activeVfx: this.vfx.length + this.waves.length + this.zones.length,
+      wallsAlive: this.walls.length,
+      activeVfx: this.vfx.length + this.waves.length + this.zones.length + this.walls.length,
       skillHitsLast10s: this.hitSamples.length,
       skillDpsLast10s: Math.round((totalDamage / dpsWindowSeconds) * 10) / 10,
       advancedSkills: this.formatAdvancedSkills(),
@@ -337,6 +417,9 @@ export class SkillSystem {
       zone.poisonEmitter?.destroy();
       zone.poisonEmitter = undefined;
     }
+    for (const wall of this.walls) {
+      wall.view.destroy();
+    }
     for (const vfx of this.vfx) {
       vfx.view.destroy();
     }
@@ -356,6 +439,8 @@ export class SkillSystem {
     this.orbitals.length = 0;
     this.waves.length = 0;
     this.zones.length = 0;
+    this.walls.length = 0;
+    this.burnStates.clear();
     this.vfx.length = 0;
     this.dartGhosts.length = 0;
     this.hitSamples.length = 0;
@@ -464,7 +549,8 @@ export class SkillSystem {
       yulong_sword_qi: "sword_manual_page",
       huifeng_dart: "hidden_weapon_pouch",
       zhenshan_palm: "inner_force_manual",
-      moran_ink_zone: "pine_soot_inkstick"
+      moran_ink_zone: "pine_soot_inkstick",
+      liehuo_firewall: "fire_jujube_pit"
     };
     for (const skillId of skillOrder) {
       this.unlockSkill(skillId, 5);
@@ -1127,6 +1213,331 @@ export class SkillSystem {
     return this.scene.textures.exists(POISON_BUBBLE_FALLBACK_TEXTURE) ? POISON_BUBBLE_FALLBACK_TEXTURE : undefined;
   }
 
+  // ---------- 烈火神掌 · 火墙（kind "wall"） ----------
+
+  /**
+   * 施放：敌人最密集方向（密度质心，复用 pickZoneCenter 的单趟 O(n²) 邻域计数，≥4s 一次开销可忽略）
+   * 横置火墙——长轴垂直于英雄→质心指向，切断来敌路径；无有效目标时按英雄面向
+   * （getHeroFacing 可选注入）在前方 FIRE_WALL_FALLBACK_CAST_DISTANCE 处横置，面向缺失回退正右方向。
+   */
+  private castWallSkillIfReady(runtime: SkillRuntime, targets: CombatTargetSnapshot[]): void {
+    if (runtime.cooldownMs > 0 || this.walls.length >= MAX_WALLS) {
+      return;
+    }
+
+    const profile = this.getWallProfile(runtime);
+    const heroWorld = this.options.getHeroWorld();
+    const placement = this.pickWallPlacement(targets, profile, heroWorld);
+    const wall: WallRuntime = {
+      runtimeId: this.nextWallId,
+      skillId: runtime.skillId,
+      worldX: placement.x,
+      worldY: placement.y,
+      angleRad: placement.angleRad,
+      length: profile.length,
+      width: profile.width,
+      damage: profile.damage,
+      tickIntervalMs: profile.tickIntervalMs,
+      tickTimerMs: 0,
+      ageMs: 0,
+      durationMs: profile.durationMs,
+      level: runtime.level,
+      advanced: runtime.advanced,
+      burnTicks: profile.burnTicks,
+      view: this.createFireWallView(placement, profile, runtime.advanced)
+    };
+    this.nextWallId += 1;
+    this.walls.push(wall);
+    this.updateWorldAnchoredView(wall.view, wall.worldX, wall.worldY);
+    this.createFireBurstVfx(wall);
+    runtime.cooldownMs = profile.cooldownMs;
+    this.options.playSfx(runtime.advanced ? "skill_cast_advanced" : "skill_cast");
+    eventBus.emit("skill_cast", {
+      skillId: runtime.skillId,
+      displayName: this.getRuntimeDisplayName(runtime),
+      level: runtime.level,
+      length: profile.length,
+      width: profile.width,
+      durationMs: profile.durationMs,
+      advanced: runtime.advanced
+    });
+    eventBus.emit(SKILL_WALL_SPAWNED_EVENT, {
+      wallRuntimeId: wall.runtimeId,
+      skillId: runtime.skillId,
+      level: runtime.level,
+      worldX: wall.worldX,
+      worldY: wall.worldY,
+      angleRad: wall.angleRad,
+      length: wall.length,
+      width: wall.width,
+      durationMs: wall.durationMs,
+      advanced: wall.advanced
+    });
+  }
+
+  /** 选点：最密方向质心（限 range 内）+ 垂直朝向；无目标走英雄面向兜底。仅施放瞬间调用。 */
+  private pickWallPlacement(
+    targets: CombatTargetSnapshot[],
+    profile: ReturnType<SkillSystem["getWallProfile"]>,
+    heroWorld: Point
+  ): { x: number; y: number; angleRad: number } {
+    // 邻域半径取半墙长：聚类口径与火墙覆盖面一致，墙尽量压住密度最高的一簇
+    const center = this.pickZoneCenter(targets, Math.max(48, profile.length / 2), profile.range);
+    if (center) {
+      const dirX = center.x - heroWorld.x;
+      const dirY = center.y - heroWorld.y;
+      const distance = Math.hypot(dirX, dirY);
+      let wallX = center.x;
+      let wallY = center.y;
+      if (distance > profile.range && distance > 1) {
+        wallX = heroWorld.x + (dirX / distance) * profile.range;
+        wallY = heroWorld.y + (dirY / distance) * profile.range;
+      }
+      // 长轴垂直于指向：火墙横拦来敌而不是顺向贴地
+      const angleRad = distance > 1 ? Math.atan2(dirY, dirX) + Math.PI / 2 : 0;
+      return { x: wallX, y: wallY, angleRad };
+    }
+
+    const facing = this.options.getHeroFacing?.();
+    const facingLength = facing ? Math.hypot(facing.x, facing.y) : 0;
+    const dir = facing && facingLength > 0.05
+      ? { x: facing.x / facingLength, y: facing.y / facingLength }
+      : { x: 1, y: 0 };
+    return {
+      x: heroWorld.x + dir.x * FIRE_WALL_FALLBACK_CAST_DISTANCE,
+      y: heroWorld.y + dir.y * FIRE_WALL_FALLBACK_CAST_DISTANCE,
+      angleRad: Math.atan2(dir.y, dir.x) + Math.PI / 2
+    };
+  }
+
+  /**
+   * 火墙主循环：老化/跳伤害（每 tick 只遍历一次敌人列表，施放瞬间立即跳第一次）/
+   * 世界锚定对齐镜头/淡入淡出/到期销毁。灼烧由 updateBurns 独立推进。
+   */
+  private updateWalls(deltaMs: number, targets: CombatTargetSnapshot[]): void {
+    for (let index = this.walls.length - 1; index >= 0; index -= 1) {
+      const wall = this.walls[index];
+      wall.ageMs += deltaMs;
+      wall.tickTimerMs -= deltaMs;
+      while (wall.tickTimerMs <= 0 && wall.ageMs <= wall.durationMs) {
+        wall.tickTimerMs += wall.tickIntervalMs;
+        this.tickWall(wall, targets);
+      }
+      this.updateWorldAnchoredView(wall.view, wall.worldX, wall.worldY);
+      // 淡入 160ms 即燃、熄灭前 420ms 渐隐
+      const fadeIn = Phaser.Math.Clamp(wall.ageMs / FIRE_WALL_FADE_IN_MS, 0, 1);
+      const fadeOut = Phaser.Math.Clamp((wall.durationMs - wall.ageMs) / FIRE_WALL_FADE_OUT_MS, 0, 1);
+      wall.view.setAlpha(Math.min(fadeIn, fadeOut) * FIRE_WALL_MAX_ALPHA);
+
+      if (wall.ageMs >= wall.durationMs) {
+        wall.view.destroy();
+        this.walls.splice(index, 1);
+      }
+    }
+  }
+
+  /**
+   * 单次跳变：旋转矩形命中（目标世界坐标变换到墙本地系，半长/半宽 + 碰撞半径容差），
+   * 命中走标准技能伤害流；确认命中的敌人点燃灼烧（仅敌人，与毒/减速同约定不伤 Boss）。
+   */
+  private tickWall(wall: WallRuntime, targets: CombatTargetSnapshot[]): void {
+    const cos = Math.cos(-wall.angleRad);
+    const sin = Math.sin(-wall.angleRad);
+    const halfLength = wall.length / 2;
+    const halfWidth = wall.width / 2;
+    for (const target of targets) {
+      const dx = target.worldX - wall.worldX;
+      const dy = target.worldY - wall.worldY;
+      const localX = dx * cos - dy * sin;
+      const localY = dx * sin + dy * cos;
+      if (Math.abs(localX) > halfLength + target.collisionRadius || Math.abs(localY) > halfWidth + target.collisionRadius) {
+        continue;
+      }
+
+      const result = this.applySkillDamage(wall.skillId, target, wall.damage, {
+        wallRuntimeId: wall.runtimeId,
+        source: wall.advanced ? "fire_wall_advanced" : "fire_wall"
+      });
+      // 灼烧：仅确认命中的敌人才被点燃；重复命中刷新延迟（最后一次命中 2s 后再跳）
+      if (result?.damaged && isEnemyTarget(target)) {
+        this.igniteBurn(target.runtimeId, wall);
+      }
+    }
+  }
+
+  private igniteBurn(runtimeId: number, wall: WallRuntime): void {
+    this.burnStates.set(runtimeId, {
+      skillId: wall.skillId,
+      ticksRemaining: wall.burnTicks,
+      nextTickInMs: FIRE_WALL_BURN_DELAY_MS,
+      damage: wall.damage,
+      advanced: wall.advanced
+    });
+  }
+
+  /**
+   * 灼烧推进：计时到点跳一跳金红火伤（crit 芥金档飘字，与毒绿档区分）；
+   * 目标死亡/离场（damageTarget 未确认命中）即清除，跳数耗尽即熄灭。
+   */
+  private updateBurns(deltaMs: number): void {
+    for (const [runtimeId, burn] of this.burnStates) {
+      burn.nextTickInMs -= deltaMs;
+      if (burn.nextTickInMs > 0) {
+        continue;
+      }
+
+      const result = this.applySkillDamageById(burn.skillId, runtimeId, burn.damage, {
+        source: burn.advanced ? "fire_wall_burn_advanced" : "fire_wall_burn",
+        damageKind: "crit"
+      });
+      if (!result?.damaged) {
+        this.burnStates.delete(runtimeId);
+        continue;
+      }
+
+      burn.ticksRemaining -= 1;
+      if (burn.ticksRemaining <= 0) {
+        this.burnStates.delete(runtimeId);
+      } else {
+        burn.nextTickInMs = FIRE_WALL_BURN_TICK_INTERVAL_MS;
+      }
+    }
+  }
+
+  /**
+   * 火墙视图：vfx_fire_wall 段贴图沿长轴拼接（显示高 = 墙宽，段宽按帧纵横比等比缩放、
+   * 12% 重叠防缝隙），各段随机相位播 4 帧序列；ADD 混合火焰透亮。纹理缺失走程序化兜底。
+   */
+  private createFireWallView(
+    placement: { x: number; y: number; angleRad: number },
+    profile: ReturnType<SkillSystem["getWallProfile"]>,
+    advanced: boolean
+  ): Phaser.GameObjects.Container {
+    const { x: screenX, y: screenY } = this.worldToScreen(placement.x, placement.y);
+    if (!this.scene.textures.exists(FIRE_WALL_SEGMENT_TEXTURE)) {
+      return this.createFireWallFallbackView(screenX, screenY, placement.angleRad, profile, advanced);
+    }
+
+    const texture = this.scene.textures.get(FIRE_WALL_SEGMENT_TEXTURE);
+    const frame = texture?.get(0) ?? texture?.get("__BASE");
+    const frameWidth = frame && frame.width > 0 ? frame.width : FIRE_WALL_SEGMENT_FALLBACK_SIZE;
+    const frameHeight = frame && frame.height > 0 ? frame.height : FIRE_WALL_SEGMENT_FALLBACK_SIZE;
+    // 段显示高 = 墙宽；段宽 = 帧宽 × 同比例
+    const scale = profile.width / frameHeight;
+    const segmentDisplayWidth = Math.max(10, frameWidth * scale);
+    const count = Math.max(2, Math.ceil(profile.length / segmentDisplayWidth));
+    const spacing = profile.length / count;
+    const animationKey = getArtAnimationKey(FIRE_WALL_SEGMENT_TEXTURE);
+    const hasAnimation = this.scene.anims.exists(animationKey);
+    const children: Phaser.GameObjects.Sprite[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const segment = this.scene.add.sprite(
+        -profile.length / 2 + spacing * (index + 0.5),
+        0,
+        FIRE_WALL_SEGMENT_TEXTURE
+      )
+        .setDisplaySize(spacing * 1.12, profile.width)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setAlpha(0.98);
+      if (advanced) {
+        // 金焰：暖金 tint 乘算在橙红火焰上，不过曝
+        segment.setTint(0xffe6a3);
+      }
+      if (hasAnimation) {
+        segment.play(animationKey);
+        // 随机相位：拼接段不同步闪烁，火墙整体呈流动感
+        segment.anims.setProgress(Phaser.Math.FloatBetween(0, 1));
+      }
+      segment.setData("spriteArt", true);
+      children.push(segment);
+    }
+
+    return this.scene.add.container(screenX, screenY, children)
+      .setDepth(FIRE_WALL_DEPTH)
+      .setRotation(placement.angleRad);
+  }
+
+  /** 程序化兜底火墙：双层金红矩形（外焰橙红 + 内芯亮金），ADD 混合，随墙销毁。 */
+  private createFireWallFallbackView(
+    screenX: number,
+    screenY: number,
+    angleRad: number,
+    profile: ReturnType<SkillSystem["getWallProfile"]>,
+    advanced: boolean
+  ): Phaser.GameObjects.Container {
+    const outer = this.scene.add.rectangle(0, 0, profile.length, profile.width, advanced ? 0xff8a3d : 0xff6b3d, 0.5)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    const core = this.scene.add.rectangle(0, 0, profile.length * 0.94, profile.width * 0.45, advanced ? 0xfff1c4 : 0xffd27a, 0.55)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    return this.scene.add.container(screenX, screenY, [outer, core])
+      .setDepth(FIRE_WALL_DEPTH)
+      .setRotation(angleRad);
+  }
+
+  /**
+   * 施放点迸发：vfx_fire_burst 一次性序列帧（播完销毁，沿用 bindOneShotDestroy 模式）；
+   * 局部效果，不做全屏反馈。纹理缺失退化为金红扩散环。
+   */
+  private createFireBurstVfx(wall: WallRuntime): void {
+    const { x: screenX, y: screenY } = this.worldToScreen(wall.worldX, wall.worldY);
+    if (this.scene.textures.exists(FIRE_WALL_BURST_TEXTURE)) {
+      const baseScale = (wall.width * 2.4) / this.getTextureFrameWidth(FIRE_WALL_BURST_TEXTURE, 96);
+      const view = this.scene.add.sprite(screenX, screenY, FIRE_WALL_BURST_TEXTURE)
+        .setDepth(FIRE_WALL_BURST_DEPTH)
+        .setScale(baseScale)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      if (wall.advanced) {
+        view.setTint(0xffe6a3);
+      }
+      view.setData("spriteArt", true);
+      view.setData("baseScale", baseScale);
+      const animationKey = getArtAnimationKey(FIRE_WALL_BURST_TEXTURE);
+      if (this.scene.anims.exists(animationKey)) {
+        view.play(animationKey);
+        this.bindOneShotDestroy(view);
+      }
+      this.vfx.push({ view, worldX: wall.worldX, worldY: wall.worldY, ageMs: 0, durationMs: 360, type: "hit" });
+      return;
+    }
+
+    const fill = this.scene.add.circle(0, 0, wall.width * 0.9, wall.advanced ? 0xff8a3d : 0xff6b3d, 0.4);
+    const rim = this.scene.add.circle(0, 0, wall.width * 0.9, 0x000000, 0)
+      .setStrokeStyle(3, wall.advanced ? 0xffe6a3 : 0xffd27a, 0.85);
+    const view = this.scene.add.container(screenX, screenY, [fill, rim])
+      .setDepth(FIRE_WALL_BURST_DEPTH)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.vfx.push({ view, worldX: wall.worldX, worldY: wall.worldY, ageMs: 0, durationMs: 280, type: "hit" });
+  }
+
+  /**
+   * 火墙命中小火花（仅烈火神掌）：JuiceSystem 程序化星点 tint 金红，ADD 混合小规模迸发。
+   * emitter 一次性，自动延时销毁；低 VFX 档与墨点同比例降级（4→2）。
+   */
+  private createFireHitSpark(screenX: number, screenY: number, advanced: boolean): void {
+    if (!this.scene.textures.exists(TRAIL_TEXTURE)) {
+      return;
+    }
+    const vfxScale = this.getVfxDensityScale();
+    if (vfxScale <= 0) {
+      return;
+    }
+
+    const emitter = this.scene.add.particles(screenX, screenY, TRAIL_TEXTURE, {
+      speed: { min: 26, max: 110 },
+      lifespan: 260,
+      scale: { start: 0.66, end: 0 },
+      alpha: { start: 0.85, end: 0 },
+      tint: advanced ? [0xffe6a3, 0xffc36b, 0xff8a4a] : [0xffd27a, 0xff9a4a, 0xff5f2e],
+      blendMode: Phaser.BlendModes.ADD,
+      emitting: false
+    });
+    emitter.setDepth(18);
+    emitter.explode(vfxScale < 1 ? 2 : 4);
+    this.scene.time.delayedCall(600, () => {
+      emitter.destroy();
+    });
+  }
+
   private updateProjectiles(deltaMs: number, targets: CombatTargetSnapshot[]): void {
     const deltaSeconds = deltaMs / 1000;
     for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
@@ -1300,7 +1711,20 @@ export class SkillSystem {
     damage: number,
     metadata: Record<string, unknown>
   ): CombatDamageResult | undefined {
-    const result = this.options.damageTarget(target.runtimeId, damage, skillId);
+    return this.applySkillDamageById(skillId, target.runtimeId, damage, metadata);
+  }
+
+  /**
+   * 标准技能伤害流（按 runtimeId）：烈火神掌灼烧等无目标快照的延迟伤害同走本入口。
+   * metadata.damageKind 可强制飘字档位（灼烧固定 crit 金红档，与毒绿档区分）。
+   */
+  private applySkillDamageById(
+    skillId: SkillId,
+    runtimeId: number,
+    damage: number,
+    metadata: Record<string, unknown>
+  ): CombatDamageResult | undefined {
+    const result = this.options.damageTarget(runtimeId, damage, skillId);
     if (!result?.damaged) {
       return undefined;
     }
@@ -1314,17 +1738,23 @@ export class SkillSystem {
     const expectedDamage = runtime ? this.getExpectedSkillDamage(runtime) : 0;
     const isCrit = expectedDamage > 0 && result.amount >= expectedDamage * CRIT_DAMAGE_RATIO;
     const isEliteKill = !isBossTarget && result.killed && enemyConfigs[result.enemyId]?.tier === "elite";
-    const damageKind = isBossTarget
+    const forcedDamageKind = typeof metadata.damageKind === "string" ? (metadata.damageKind as DamageKind) : undefined;
+    const damageKind: DamageKind = isBossTarget
       ? "boss"
-      : isEliteKill
+      : forcedDamageKind ?? (isEliteKill
         ? "elite"
         : runtime?.advanced || isCrit
           ? "crit"
-          : "normal";
+          : "normal");
     const isInkZoneHit = metadata.source === "ink_zone" || metadata.source === "ink_zone_advanced";
+    const isFireWallHit = metadata.source === "fire_wall" || metadata.source === "fire_wall_advanced"
+      || metadata.source === "fire_wall_burn" || metadata.source === "fire_wall_burn_advanced";
     if (isInkZoneHit) {
       // 墨染江山：小规模深色墨点替代亮色 hitSpark
       this.createInkHitSpark(result.screenX, result.screenY, runtime?.advanced === true);
+    } else if (isFireWallHit) {
+      // 烈火神掌：金红小火花替代亮色 hitSpark
+      this.createFireHitSpark(result.screenX, result.screenY, runtime?.advanced === true);
     } else {
       juice.hitSpark(result.screenX, result.screenY, isBossTarget);
     }
@@ -1334,8 +1764,8 @@ export class SkillSystem {
       result.amount,
       damageKind
     );
-    if (!isInkZoneHit) {
-      // 亮色 ADD 命中闪光与墨韵威胁语义冲突，墨染江山不触发
+    if (!isInkZoneHit && !isFireWallHit) {
+      // 亮色 ADD 命中闪光与墨韵/烈焰威胁语义冲突，墨染江山与烈火神掌不触发
       this.createHitVfx(result.worldX, result.worldY);
     }
     this.playThrottledHitSfx();
@@ -1642,6 +2072,33 @@ export class SkillSystem {
     };
   }
 
+  /**
+   * 烈火神掌数值形态：基础形态全部读 data/skills.ts 配置；
+   * 进阶「金焰神掌」——每跳伤害 ×1.5、墙长 ×1.5、墙宽 ×1.4、灼烧 2 跳（冷却不变）。
+   */
+  private getWallProfile(runtime: SkillRuntime): {
+    damage: number;
+    cooldownMs: number;
+    range: number;
+    length: number;
+    width: number;
+    durationMs: number;
+    tickIntervalMs: number;
+    burnTicks: number;
+  } {
+    const level = this.getLevelConfig(runtime);
+    return {
+      damage: runtime.advanced ? Math.round(level.damage * 1.5) : level.damage,
+      cooldownMs: level.cooldownMs ?? 5000,
+      range: level.range ?? 560,
+      length: runtime.advanced ? Math.round((level.wallLength ?? 200) * 1.5) : (level.wallLength ?? 200),
+      width: runtime.advanced ? Math.round((level.wallWidth ?? 36) * 1.4) : (level.wallWidth ?? 36),
+      durationMs: level.durationMs ?? 3000,
+      tickIntervalMs: level.tickIntervalMs ?? 400,
+      burnTicks: runtime.advanced ? FIRE_WALL_BURN_TICKS_ADVANCED : FIRE_WALL_BURN_TICKS_BASE
+    };
+  }
+
   private getCooldownMs(runtime: SkillRuntime): number {
     if (skillConfigs[runtime.skillId].kind === "projectile") {
       return this.getProjectileProfile(runtime).cooldownMs;
@@ -1651,6 +2108,9 @@ export class SkillSystem {
     }
     if (skillConfigs[runtime.skillId].kind === "zone") {
       return this.getZoneProfile(runtime).cooldownMs;
+    }
+    if (skillConfigs[runtime.skillId].kind === "wall") {
+      return this.getWallProfile(runtime).cooldownMs;
     }
     return 0;
   }
@@ -1669,6 +2129,9 @@ export class SkillSystem {
     }
     if (kind === "zone") {
       return this.getZoneProfile(runtime).damage;
+    }
+    if (kind === "wall") {
+      return this.getWallProfile(runtime).damage;
     }
     return 0;
   }

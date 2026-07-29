@@ -1,7 +1,7 @@
 export type SkillTag = "aimed" | "orbit" | "aoe" | "pierce" | "defense" | "knockback" | "control";
-export type SkillKind = "projectile" | "orbit" | "aoe" | "zone";
-export type SkillId = "yulong_sword_qi" | "huifeng_dart" | "zhenshan_palm" | "moran_ink_zone";
-export type AdvanceKeyId = "sword_manual_page" | "hidden_weapon_pouch" | "inner_force_manual" | "pine_soot_inkstick";
+export type SkillKind = "projectile" | "orbit" | "aoe" | "zone" | "wall";
+export type SkillId = "yulong_sword_qi" | "huifeng_dart" | "zhenshan_palm" | "moran_ink_zone" | "liehuo_firewall";
+export type AdvanceKeyId = "sword_manual_page" | "hidden_weapon_pouch" | "inner_force_manual" | "pine_soot_inkstick" | "fire_jujube_pit";
 
 export type SkillLevelConfig = {
   level: number;
@@ -32,6 +32,10 @@ export type SkillLevelConfig = {
   poisonTickMs?: number;
   /** zone 专用·毒化进阶「金蛊江山」：蚀甲——中毒期间敌人受伤倍率（1.1 = +10%，缺省 1） */
   poisonAmp?: number;
+  /** wall 专用：火墙长轴长度 px（烈火神掌，沿最密方向/英雄面向横置） */
+  wallLength?: number;
+  /** wall 专用：火墙短轴宽度 px */
+  wallWidth?: number;
 };
 
 export type SkillAdvancementConfig = {
@@ -55,7 +59,8 @@ export const skillOrder: SkillId[] = [
   "yulong_sword_qi",
   "huifeng_dart",
   "zhenshan_palm",
-  "moran_ink_zone"
+  "moran_ink_zone",
+  "liehuo_firewall"
 ];
 
 export const skillConfigs: Record<SkillId, SkillConfig> = {
@@ -315,6 +320,86 @@ export const skillConfigs: Record<SkillId, SkillConfig> = {
         tickIntervalMs: 500,
         slowPercent: 0.4,
         strokeCount: 2
+      }
+    ]
+  },
+  /**
+   * 烈火神掌（liehuo_firewall，kind "wall"）——烈焰火墙·线状地面 DoT 阻隔场。
+   * 每隔 cooldownMs 在敌人最密集方向（无有效目标时取英雄面向）横置一道火墙
+   * （长 wallLength × 宽 wallWidth，长轴垂直于指向），持续 durationMs；
+   * 墙内敌人每 tickIntervalMs 跳一次 damage 火伤并被点燃——灼烧在最后一次命中 2s 后
+   * 再跳 1 跳（进阶「金焰神掌」2 跳，跳间隔 500ms，灼烧参数为 SkillSystem 表现层常量，不增减本表数值）。
+   * 进阶「金焰神掌」：墙长 ×1.5、墙宽 ×1.4、每跳伤害 ×1.5（见 SkillSystem.getWallProfile）。
+   * 灼烧飘字走金红档（crit 芥金），与墨里淬毒的孔雀绿 poison 档区分。
+   *
+   * 【跨代理对接 · GameScene 由本技能代理同步维护】
+   * 1. 调试键：F1 顿悟预览保留，Shift+F1 → skillSystem.unlockSkill("liehuo_firewall", 1)。
+   * 2. GameScene isAdvanceKeyId 白名单已加入 "fire_jujube_pit"（顿悟池「火枣核」信物）。
+   * 3. 美术键约定：vfx_fire_wall（4 帧序列，沿墙拼接）/ vfx_fire_burst（施放一次性）/
+   *    ui_icon_skill_liehuo(_advanced)，缺失时 SkillSystem/InsightScene 走程序化兜底。
+   */
+  liehuo_firewall: {
+    id: "liehuo_firewall",
+    displayName: "烈火神掌",
+    kind: "wall",
+    maxLevel: 5,
+    tags: ["aoe", "control"],
+    advancement: {
+      requiredLevel: 5,
+      requiredKeyId: "fire_jujube_pit",
+      displayName: "金焰神掌",
+      description: "火墙进阶为金焰长墙，伤害与灼烧大幅提升"
+    },
+    levels: [
+      {
+        level: 1,
+        damage: 10,
+        cooldownMs: 5000,
+        range: 560,
+        wallLength: 200,
+        wallWidth: 36,
+        durationMs: 3000,
+        tickIntervalMs: 400
+      },
+      {
+        level: 2,
+        damage: 13,
+        cooldownMs: 4800,
+        range: 580,
+        wallLength: 220,
+        wallWidth: 38,
+        durationMs: 3000,
+        tickIntervalMs: 400
+      },
+      {
+        level: 3,
+        damage: 16,
+        cooldownMs: 4550,
+        range: 600,
+        wallLength: 244,
+        wallWidth: 40,
+        durationMs: 3100,
+        tickIntervalMs: 400
+      },
+      {
+        level: 4,
+        damage: 20,
+        cooldownMs: 4300,
+        range: 620,
+        wallLength: 268,
+        wallWidth: 44,
+        durationMs: 3200,
+        tickIntervalMs: 380
+      },
+      {
+        level: 5,
+        damage: 25,
+        cooldownMs: 4000,
+        range: 640,
+        wallLength: 300,
+        wallWidth: 48,
+        durationMs: 3400,
+        tickIntervalMs: 360
       }
     ]
   }

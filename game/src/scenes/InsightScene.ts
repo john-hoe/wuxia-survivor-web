@@ -309,6 +309,14 @@ function getInsightIconAssetId(option: InsightOption): string | undefined {
       || option.category === "skill_advance";
     return isAdvanced ? "ui_icon_skill_moran_advanced" : "ui_icon_skill_moran";
   }
+  // 烈火神掌（liehuo_firewall）：iconKey 含 "liehuo" 或 applyEffectId 含 "liehuo_firewall"。
+  // 与 moran 同一防御约定：纹理缺失时由 createInsightCard 退化为圆点占位。
+  if (option.iconKey.includes("liehuo") || option.applyEffectId.includes("liehuo_firewall")) {
+    const isAdvanced = option.iconKey.includes("advanced")
+      || option.applyEffectId.includes("advance_liehuo_firewall")
+      || option.category === "skill_advance";
+    return isAdvanced ? "ui_icon_skill_liehuo_advanced" : "ui_icon_skill_liehuo";
+  }
   if (option.iconKey === "advance_key_sword_manual_page") {
     return "ui_icon_advance_sword_manual_page";
   }

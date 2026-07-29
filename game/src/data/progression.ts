@@ -172,6 +172,7 @@ export function createInsightOptions(
     options.push(createUnlockOption("huifeng_dart", skillState));
     options.push(createUnlockOption("zhenshan_palm", skillState));
     options.push(createUnlockOption("moran_ink_zone", skillState));
+    options.push(createUnlockOption("liehuo_firewall", skillState));
   }
 
   const nextYulongLevel = getNextSkillLevel(skillState, "yulong_sword_qi");
@@ -415,6 +416,10 @@ function getSkillIconKey(skillId: SkillId): string {
     // 跨代理约定图标：ui_icon_skill_moran；进阶选项自动派生 ui_icon_skill_moran_advanced
     return "ui_icon_skill_moran";
   }
+  if (skillId === "liehuo_firewall") {
+    // 跨代理约定图标：ui_icon_skill_liehuo；进阶选项自动派生 ui_icon_skill_liehuo_advanced
+    return "ui_icon_skill_liehuo";
+  }
   return "skill_zhenshan_wave";
 }
 
@@ -427,6 +432,9 @@ function getUnlockDescription(skillId: SkillId): string {
   }
   if (skillId === "moran_ink_zone") {
     return "墨痕覆地，伤敌减速";
+  }
+  if (skillId === "liehuo_firewall") {
+    return "烈火成墙，灼敌断路";
   }
   return "剑气自动索敌";
 }
@@ -441,6 +449,9 @@ function getUpgradeDescription(skillId: SkillId): string {
   if (skillId === "moran_ink_zone") {
     return "墨域更广更浓";
   }
+  if (skillId === "liehuo_firewall") {
+    return "火墙更长更烈";
+  }
   return "剑气更锋利";
 }
 
@@ -453,6 +464,9 @@ function getAdvanceKeyTitle(keyId: AdvanceKeyId): string {
   }
   if (keyId === "pine_soot_inkstick") {
     return "松烟墨锭";
+  }
+  if (keyId === "fire_jujube_pit") {
+    return "火枣核";
   }
   return "剑谱残页";
 }

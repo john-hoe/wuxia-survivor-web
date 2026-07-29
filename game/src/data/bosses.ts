@@ -57,13 +57,15 @@ export const heifengChiefConfig: BossConfig = {
   id: "heifeng_chief",
   displayName: "黑风寨主",
   textureKeys: { idle: "boss_heifeng_idle", attack: "boss_heifeng_attack" },
-  maxHp: 4200,
+  // 调校:maxHp 4200→5460(+30%，单步调整上限；模型有效Boss DPS≈110-123时击杀窗由约35s升至约45-50s，向60-90s目标窗靠拢，强/中/弱构筑分别约45/60/73s，详见docs/39-balance-tuning.md)
+  maxHp: 5460,
   moveSpeed: 70,
   collisionRadius: 34,
   visualRadius: 52,
   contactDamage: 18,
   spawnSeconds: 360,
-  copperReward: 150,
+  // 调校:copperReward 150→170(+13%；Boss战时长+30%后按风险/耗时对等补偿，并保持150/180/210→170/210/250的平滑递增)
+  copperReward: 170,
   introMs: 1200,
   charge: {
     id: "charge_slash",
@@ -98,13 +100,13 @@ export const duanjianEscortConfig: BossConfig = {
   displayName: "断剑镖头",
   textureKeys: { idle: "boss_duanjian_idle", attack: "boss_duanjian_attack" },
   tint: 0xc7d6e2, // 可调：冷青灰（镖头金铁气质）；想不染色调为 undefined
-  maxHp: 4600, // 可调：略肉于黑风寨主（4200）
+  maxHp: 5980, // 可调：略肉于黑风寨主（5460）。调校:4600→5980(+30%，单步上限；对齐60-90s击杀窗，中位构筑约65s，详见docs/39-balance-tuning.md)
   moveSpeed: 76, // 可调：镖头步伐更疾（黑风 70）
   collisionRadius: 34,
   visualRadius: 52,
   contactDamage: 18, // 可调
   spawnSeconds: 360,
-  copperReward: 180, // 可调：略高赏金（黑风 150）
+  copperReward: 210, // 可调：略高赏金（黑风 170）。调校:180→210(+16.7%；战斗时长+30%后的风险对等补偿，保持递增阶梯)
   introMs: 1200,
   charge: {
     id: "charge_slash",
@@ -140,13 +142,13 @@ export const tanzhuConfig: BossConfig = {
   displayName: "邪教坛主",
   textureKeys: { idle: "boss_tanzhu_idle", attack: "boss_tanzhu_attack" },
   tint: 0x8a5fbf, // 可调：淡紫（紫黑系邪教气质）；想不染色调为 undefined
-  maxHp: 5000, // 可调：第三图 Boss，肉于断剑镖头（4600）
+  maxHp: 6500, // 可调：第三图 Boss，肉于断剑镖头（5980）。调校:5000→6500(+30%，单步上限；对齐60-90s击杀窗，中位构筑约70s，详见docs/39-balance-tuning.md)
   moveSpeed: 64, // 可调：法系，步伐缓于黑风寨主（70）/断剑镖头（76）
   collisionRadius: 34,
   visualRadius: 52,
   contactDamage: 18, // 可调
   spawnSeconds: 360,
-  copperReward: 210, // 可调：第三图赏金，略高于镖头（180）
+  copperReward: 250, // 可调：第三图赏金，略高于镖头（210）。调校:210→250(+19%；战斗时长+30%后的风险对等补偿，保持递增阶梯)
   introMs: 1200,
   charge: {
     id: "charge_slash",

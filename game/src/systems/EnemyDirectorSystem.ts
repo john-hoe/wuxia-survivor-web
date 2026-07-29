@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { combat001DirectorConfig, type EnemyDirectorConfig, type WaveDirectorState, type WaveSegment } from "../data/waves";
-import { enemyConfigs, MAP_ENEMY_TEXTURE_KEYS, type EnemyConfig, type EnemyId } from "../data/enemies";
+import { enemyConfigs, MAP_ENEMY_TEXTURE_KEYS, BEHAVIOR_RESKIN_MAP_IDS, type ChargeBehavior, type EnemyBehavior, type EnemyConfig, type EnemyId, type PounceBehavior, type ShieldWallBehavior } from "../data/enemies";
 import type { GameEventName } from "../types";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
@@ -136,6 +136,26 @@ type EnemyRuntime = {
   poisonMark?: Phaser.GameObjects.Image;
   /** 夜雨破庙邪派敌轮廓补偿：垫底淡光 sprite（仅教徒/毒蝎换色皮生成时创建，随实体销毁） */
   nightGlow?: Phaser.GameObjects.Image;
+  /**
+   * 小怪行为差异化（换皮怪=真新怪）：生成时按 BEHAVIOR_RESKIN_MAP_IDS + 换肤生效判定解析，
+   * 青石原版怪/夜雨换色皮/换色纹理缺席回退原版皮时恒为 undefined（零行为零开销）。
+   */
+  behavior?: EnemyBehavior;
+  /** 冲锋 FSM：idle→windup(蓄力)→charge(冲锋)→冷却回 idle；击退打断蓄力/冲锋并进冷却 */
+  behaviorPhase: "idle" | "windup" | "charge";
+  behaviorPhaseMs: number;
+  /** 行为冷却剩余（冲锋/扑咬共用，单敌单行为不冲突） */
+  behaviorCooldownMs: number;
+  /** 冲锋锁定方向（蓄力开始锁定朝向少侠，蓄力期可走位规避；冲锋期同步写入 directionX/Y 供倾斜/翻转跟随） */
+  chargeDirX: number;
+  chargeDirY: number;
+  /** 蓄力小幅后坐表现层偏移（px，不进世界坐标，冲锋开始即归零） */
+  recoilOffsetX: number;
+  recoilOffsetY: number;
+  /** 扑咬表现层状态：方向/计时（不动世界坐标与碰撞；≥behavior.pounceMs 即静置零开销） */
+  pounceDirX: number;
+  pounceDirY: number;
+  pounceAgeMs: number;
 };
 
 type EliteWarningRuntime = {
@@ -245,6 +265,21 @@ const POISON_MARK_MAX_ALPHA = 0.95;
 const POISON_MARK_BREATH_ALPHA = 0.4;
 const POISON_MARK_BREATH_HALF_MS = 375;
 const POISON_MARK_FADE_MS = 750;
+/**
+ * 小怪行为差异化表现层常量：
+ * 蓄力预警闪（暗红橙 tint 90ms，与受击墨闪同通道短暂竞争、均自清理回 clearTint，视觉可兼容）；
+ * 盾墙格挡金光（程序化 ±60° 扇面金色纹理，朝敌朝向，ADD 混合，100ms 淡出销毁）；
+ * 扑咬静置计时初值（≥任意 pounceMs 即静置，零三角函数开销）。
+ */
+const CHARGE_WINDUP_TINT = 0xc75b39;
+const CHARGE_WINDUP_FLASH_MS = 90;
+const CHARGE_WINDUP_FALLBACK_ALPHA = 0.72;
+const SHIELD_FLASH_TEXTURE_KEY = "vfx_shield_block_flash";
+const SHIELD_FLASH_TEXTURE_SIZE = 64;
+const SHIELD_FLASH_ALPHA = 0.9;
+const SHIELD_FLASH_FRONT_FACTOR = 1.2;
+const SHIELD_FLASH_SIZE_FACTOR = 3.4;
+const POUNCE_REST_AGE_MS = 100000;
 
 export class EnemyDirectorSystem {
   private readonly config: EnemyDirectorConfig;
@@ -268,6 +303,8 @@ export class EnemyDirectorSystem {
   private readonly fadingShadows = new Set<Phaser.GameObjects.Image>();
   /** 受击溅墨在飞实例（220ms 淡出后自销毁；destroy 时兜底清理，Tween/显示对象零泄漏） */
   private readonly activeSplats = new Set<Phaser.GameObjects.Sprite>();
+  /** 盾墙格挡金光在飞实例（blockFlashMs 淡出后自销毁；destroy 时兜底清理，与溅墨同模式） */
+  private readonly activeShieldFlashes = new Set<Phaser.GameObjects.Image>();
   /** 减速请求事件退订函数（enemy_slow_requested → applySlow 桥接） */
   private readonly unsubscribeSlowRequest: () => void;
   /** 中毒请求事件退订函数（enemy_poison_requested → applyPoison 桥接） */
@@ -346,6 +383,11 @@ export class EnemyDirectorSystem {
       splat.destroy();
     }
     this.activeSplats.clear();
+    for (const flash of this.activeShieldFlashes) {
+      this.scene.tweens.killTweensOf(flash);
+      flash.destroy();
+    }
+    this.activeShieldFlashes.clear();
     for (const shadow of this.shadowPool) {
       shadow.destroy();
     }
@@ -444,7 +486,12 @@ export class EnemyDirectorSystem {
     });
   }
 
-  damageEnemy(runtimeId: number, amount: number, source: string): EnemyDamageResult | undefined {
+  /**
+   * 标准伤害入口。attackOriginWorld 为可选攻击来源世界坐标（跨代理调用方仍按 3 参调用，向后兼容）：
+   * 仅盾墙「镖局叛卒」用以按 来源方向 × 敌朝向 判定正面格挡；缺省按少侠方位计，
+   * 来源与敌重合（无向，如余毒跳传自身坐标）时不格挡。
+   */
+  damageEnemy(runtimeId: number, amount: number, source: string, attackOriginWorld?: Point): EnemyDamageResult | undefined {
     const index = this.enemies.findIndex((enemy) => enemy.runtimeId === runtimeId);
     if (index < 0) {
       return undefined;
@@ -453,7 +500,11 @@ export class EnemyDirectorSystem {
     const enemy = this.enemies[index];
     // 蚀甲「金蛊江山」：中毒期间受伤 +10%（poisonAmp，入口乘算对全部伤害源生效，含余毒跳本身）
     const poisonAmp = enemy.poisonTicksLeft > 0 ? enemy.poisonAmp : 1;
-    const damageAmount = Math.max(0, Math.floor(amount * poisonAmp));
+    // 盾墙「镖局叛卒」：正面 ±frontHalfAngleDeg 扇形来源的伤害减免（格挡金光反馈，仅未致死时播）
+    const shieldWall = enemy.behavior?.kind === "shieldwall" ? enemy.behavior : undefined;
+    const blocked = shieldWall ? this.isFrontalBlock(enemy, shieldWall, attackOriginWorld) : false;
+    const shieldFactor = blocked && shieldWall ? 1 - shieldWall.damageReduction : 1;
+    const damageAmount = Math.max(0, Math.floor(amount * poisonAmp * shieldFactor));
     if (damageAmount <= 0) {
       return undefined;
     }
@@ -474,9 +525,33 @@ export class EnemyDirectorSystem {
       return { ...result, killed: true, hp: 0 };
     }
 
+    if (blocked) {
+      this.spawnShieldBlockFlash(enemy);
+    }
     this.flashEnemyHit(enemy);
     this.applyHitKnockback(enemy);
     return result;
+  }
+
+  /**
+   * 盾墙格挡判定：来源位于敌正面 ±frontHalfAngleDeg 扇形内即格挡。
+   * 朝向取追击方向 directionX/Y（每 100ms 朝少侠刷新）；来源缺省按少侠方位；
+   * 朝向未定或来源无向（零长度，如余毒跳）一律不格挡，保底全额伤害。
+   */
+  private isFrontalBlock(enemy: EnemyRuntime, behavior: ShieldWallBehavior, attackOriginWorld?: Point): boolean {
+    const facingLength = Math.hypot(enemy.directionX, enemy.directionY);
+    if (facingLength <= 0.001) {
+      return false;
+    }
+    const origin = attackOriginWorld ?? this.options.getHeroWorld();
+    const toSourceX = origin.x - enemy.worldX;
+    const toSourceY = origin.y - enemy.worldY;
+    const sourceLength = Math.hypot(toSourceX, toSourceY);
+    if (sourceLength <= 0.001) {
+      return false;
+    }
+    const dot = (toSourceX * enemy.directionX + toSourceY * enemy.directionY) / (sourceLength * facingLength);
+    return dot >= Math.cos(Phaser.Math.DegToRad(behavior.frontHalfAngleDeg));
   }
 
   knockbackEnemy(runtimeId: number, originWorld: Point, distance: number, source: string): boolean {
@@ -618,7 +693,11 @@ export class EnemyDirectorSystem {
     }
     enemy.poisonTickMs += enemy.poisonTickIntervalMs;
 
-    const result = this.damageEnemy(enemy.runtimeId, enemy.poisonTickDamage, POISON_TICK_SOURCE);
+    // 余毒跳为无向伤害：来源传敌自身坐标（零长度方向），盾墙格挡判定恒不成立、不吃减免
+    const result = this.damageEnemy(enemy.runtimeId, enemy.poisonTickDamage, POISON_TICK_SOURCE, {
+      x: enemy.worldX,
+      y: enemy.worldY
+    });
     if (result?.damaged) {
       JuiceSystem.get(this.scene).damageNumber(result.screenX, result.screenY, result.amount, "poison");
     }
@@ -834,6 +913,17 @@ export class EnemyDirectorSystem {
       lungeDirY: 0,
       lungeDistance: 0,
       lungeAgeMs: LUNGE_TOTAL_MS,
+      behavior: this.resolveEnemyBehavior(config),
+      behaviorPhase: "idle",
+      behaviorPhaseMs: 0,
+      behaviorCooldownMs: 0,
+      chargeDirX: 1,
+      chargeDirY: 0,
+      recoilOffsetX: 0,
+      recoilOffsetY: 0,
+      pounceDirX: 1,
+      pounceDirY: 0,
+      pounceAgeMs: POUNCE_REST_AGE_MS,
       view
     };
     this.nextRuntimeId += 1;
@@ -889,9 +979,30 @@ export class EnemyDirectorSystem {
       if (!this.tickEnemyPoison(enemy, deltaMs)) {
         continue;
       }
-      const chaseScale = (enemy.knockbackMsRemaining > 0 ? KNOCKBACK_CHASE_DAMPING : 1) * enemy.slowFactor;
-      enemy.worldX += enemy.directionX * enemy.config.moveSpeed * chaseScale * deltaSeconds;
-      enemy.worldY += enemy.directionY * enemy.config.moveSpeed * chaseScale * deltaSeconds;
+      // 小怪行为差异化（官道换皮怪）：冲锋 FSM/扑咬触发推进；盾墙为纯被动（damageEnemy 入口），此处零开销
+      this.updateEnemyBehavior(enemy, deltaMs, distanceFromHero, heroWorld);
+      // 行为移动力（零分配内联）：蓄力 ×windupSlowFactor 减速；冲锋 ×chargeSpeedFactor 并锁定方向
+      // （冲锋期同步 directionX/Y=冲锋方向，倾斜/翻转/恶犬侧翻滑停等既有表现自动跟随冲锋朝向）
+      let behaviorSpeedFactor = 1;
+      let behaviorDirX: number | undefined;
+      let behaviorDirY: number | undefined;
+      const behavior = enemy.behavior;
+      if (behavior?.kind === "charge") {
+        if (enemy.behaviorPhase === "windup") {
+          behaviorSpeedFactor = behavior.windupSlowFactor;
+        } else if (enemy.behaviorPhase === "charge") {
+          behaviorSpeedFactor = behavior.chargeSpeedFactor;
+          behaviorDirX = enemy.chargeDirX;
+          behaviorDirY = enemy.chargeDirY;
+          enemy.directionX = enemy.chargeDirX;
+          enemy.directionY = enemy.chargeDirY;
+        }
+      }
+      const chaseScale = (enemy.knockbackMsRemaining > 0 ? KNOCKBACK_CHASE_DAMPING : 1) * enemy.slowFactor * behaviorSpeedFactor;
+      const moveDirX = behaviorDirX ?? enemy.directionX;
+      const moveDirY = behaviorDirY ?? enemy.directionY;
+      enemy.worldX += moveDirX * enemy.config.moveSpeed * chaseScale * deltaSeconds;
+      enemy.worldY += moveDirY * enemy.config.moveSpeed * chaseScale * deltaSeconds;
       enemy.hitSquashMs = Math.max(0, enemy.hitSquashMs - deltaMs);
       enemy.hitOffsetAgeMs = Math.min(HIT_OFFSET_SETTLE_MS, enemy.hitOffsetAgeMs + deltaMs);
       this.applyKnockbackMotion(enemy, deltaMs);
@@ -1556,13 +1667,25 @@ export class EnemyDirectorSystem {
     const offsetScale = getHitOffsetScale(enemy.hitOffsetAgeMs);
     // 前扑表现层系数（未出手/已回位为 0，零开销）
     const lungeScale = getLungeScale(enemy.lungeAgeMs);
+    // 扑咬表现层偏移（零分配内联）：前 40% 快速扑出后 60% 缓回（getPounceForwardScale），
+    // 竖向正弦单弧上跳 hopPx（负值向上）；静置（pounceAgeMs≥pounceMs）时为 0，零三角函数开销
+    let pounceOffsetX = 0;
+    let pounceOffsetY = 0;
+    const behavior = enemy.behavior;
+    if (behavior?.kind === "pounce" && enemy.pounceAgeMs < behavior.pounceMs) {
+      const pounceT = enemy.pounceAgeMs / behavior.pounceMs;
+      const pounceForwardScale = getPounceForwardScale(pounceT);
+      pounceOffsetX = enemy.pounceDirX * behavior.lungePx * pounceForwardScale;
+      pounceOffsetY = enemy.pounceDirY * behavior.lungePx * pounceForwardScale - behavior.hopPx * Math.sin(Math.PI * pounceT);
+    }
     const baseX = heroScreen.x + enemy.worldX - heroWorld.x;
     const baseY = heroScreen.y + enemy.worldY - heroWorld.y;
+    // 蓄力后坐（recoilOffset）与扑咬（pounceOffset）同为临时表现层偏移，不进世界坐标
     enemy.view.setPosition(
-      baseX + enemy.hitOffsetX * offsetScale + enemy.lungeDirX * enemy.lungeDistance * lungeScale,
-      baseY + enemy.hitOffsetY * offsetScale + enemy.lungeDirY * enemy.lungeDistance * lungeScale + enemy.bobOffsetY
+      baseX + enemy.hitOffsetX * offsetScale + enemy.lungeDirX * enemy.lungeDistance * lungeScale + enemy.recoilOffsetX + pounceOffsetX,
+      baseY + enemy.hitOffsetY * offsetScale + enemy.lungeDirY * enemy.lungeDistance * lungeScale + enemy.bobOffsetY + enemy.recoilOffsetY + pounceOffsetY
     );
-    // 接触阴影贴地跟随：不继承受击/前扑/颠簸偏移（地面参照，反衬身体位移）
+    // 接触阴影贴地跟随：不继承受击/前扑/颠簸/后坐/扑咬偏移（地面参照，反衬身体位移与跳起）
     enemy.shadow.setPosition(baseX, baseY + enemy.footOffsetY);
     // 邪派敌轮廓补偿光跟随躯干（略上抬），同样不继承受击/前扑偏移
     enemy.nightGlow?.setPosition(baseX, baseY - enemy.footOffsetY * NIGHT_GLOW_CENTER_OFFSET_FACTOR);
@@ -1675,6 +1798,232 @@ export class EnemyDirectorSystem {
     enemy.lungeDirY = length > 0 ? toHeroY / length : enemy.directionY;
     enemy.lungeDistance = Phaser.Math.Between(LUNGE_MIN_PX, LUNGE_MAX_PX);
     enemy.lungeAgeMs = 0;
+  }
+
+  /**
+   * 行为差异化激活判定（生成时解析一次，在场期间不随 F2 换图翻转，与"在场敌人不换皮"同语义）：
+   * 敌种带 behavior + 当前地图在 BEHAVIOR_RESKIN_MAP_IDS 白名单 + 该图换色纹理已注册
+   * （textures.exists 防御，美术缺席回退原版皮时行为同步不激活——没换上皮就是原版怪）。
+   */
+  private resolveEnemyBehavior(config: EnemyConfig): EnemyBehavior | undefined {
+    if (!config.behavior) {
+      return undefined;
+    }
+    const mapId = this.getCurrentStageMapId();
+    if (!mapId || !BEHAVIOR_RESKIN_MAP_IDS.has(mapId)) {
+      return undefined;
+    }
+    const overrideKey = MAP_ENEMY_TEXTURE_KEYS[mapId]?.[config.assetId];
+    if (!overrideKey || !this.scene.textures.exists(overrideKey)) {
+      return undefined;
+    }
+    return config.behavior;
+  }
+
+  /** 行为逐帧推进（updateEnemies 在移动积分前调用）：冷却衰减 + 按 kind 分发；盾墙纯被动无逐帧状态。 */
+  private updateEnemyBehavior(enemy: EnemyRuntime, deltaMs: number, distanceFromHero: number, heroWorld: Point): void {
+    const behavior = enemy.behavior;
+    if (!behavior) {
+      return;
+    }
+    enemy.behaviorCooldownMs = Math.max(0, enemy.behaviorCooldownMs - deltaMs);
+    if (behavior.kind === "charge") {
+      this.updateChargeBehavior(enemy, behavior, deltaMs, distanceFromHero, heroWorld);
+      return;
+    }
+    if (behavior.kind === "pounce") {
+      this.updatePounceBehavior(enemy, behavior, deltaMs, distanceFromHero, heroWorld);
+    }
+  }
+
+  /**
+   * 冲锋「官道响马」FSM：
+   * idle（距离 200-320px 且冷却就绪且非击退中）→ windup 蓄力 600ms（移速 ×0.5，后坐偏移渐强，
+   * 方向于蓄力开始锁定、可走位规避）→ charge 冲锋 700ms（锁定方向 ×1.2 倍速直线，撞上即现有接触伤害）
+   * → idle + 6s 冷却。蓄力/冲锋中被击退即打断并进冷却（chaseScale 本就将击退期位移归零，不叠冲程）。
+   */
+  private updateChargeBehavior(
+    enemy: EnemyRuntime,
+    behavior: ChargeBehavior,
+    deltaMs: number,
+    distanceFromHero: number,
+    heroWorld: Point
+  ): void {
+    if (enemy.knockbackMsRemaining > 0 && enemy.behaviorPhase !== "idle") {
+      enemy.behaviorPhase = "idle";
+      enemy.behaviorPhaseMs = 0;
+      enemy.behaviorCooldownMs = behavior.cooldownMs;
+      enemy.recoilOffsetX = 0;
+      enemy.recoilOffsetY = 0;
+    }
+
+    if (enemy.behaviorPhase === "idle") {
+      if (
+        enemy.behaviorCooldownMs <= 0 &&
+        enemy.knockbackMsRemaining <= 0 &&
+        distanceFromHero >= behavior.triggerMinPx &&
+        distanceFromHero <= behavior.triggerMaxPx
+      ) {
+        const toHeroX = heroWorld.x - enemy.worldX;
+        const toHeroY = heroWorld.y - enemy.worldY;
+        const length = Math.hypot(toHeroX, toHeroY);
+        enemy.chargeDirX = length > 0 ? toHeroX / length : (enemy.directionX !== 0 ? enemy.directionX : 1);
+        enemy.chargeDirY = length > 0 ? toHeroY / length : enemy.directionY;
+        enemy.behaviorPhase = "windup";
+        enemy.behaviorPhaseMs = 0;
+        this.flashChargeWindup(enemy);
+      }
+      return;
+    }
+
+    enemy.behaviorPhaseMs += deltaMs;
+    if (enemy.behaviorPhase === "windup") {
+      const windupT = Math.min(1, enemy.behaviorPhaseMs / behavior.windupMs);
+      enemy.recoilOffsetX = -enemy.chargeDirX * behavior.windupRecoilPx * windupT;
+      enemy.recoilOffsetY = -enemy.chargeDirY * behavior.windupRecoilPx * windupT;
+      if (enemy.behaviorPhaseMs >= behavior.windupMs) {
+        enemy.behaviorPhase = "charge";
+        enemy.behaviorPhaseMs = 0;
+        enemy.recoilOffsetX = 0;
+        enemy.recoilOffsetY = 0;
+      }
+      return;
+    }
+
+    if (enemy.behaviorPhaseMs >= behavior.chargeMs) {
+      enemy.behaviorPhase = "idle";
+      enemy.behaviorPhaseMs = 0;
+      enemy.behaviorCooldownMs = behavior.cooldownMs;
+    }
+  }
+
+  /**
+   * 扑咬「灰褐野狼」：距离 130-170px 且冷却就绪且非击退中 → 250ms 起跳
+   * （向上小跳 + 前扑 40px 快速 lunge，纯表现层偏移，不动世界坐标/碰撞、不附加伤害），冷却 4s。
+   * 偏移曲线在 updateEnemyScreenPosition 内联采样（getPounceForwardScale + 正弦跳弧）。
+   */
+  private updatePounceBehavior(
+    enemy: EnemyRuntime,
+    behavior: PounceBehavior,
+    deltaMs: number,
+    distanceFromHero: number,
+    heroWorld: Point
+  ): void {
+    enemy.pounceAgeMs = Math.min(behavior.pounceMs, enemy.pounceAgeMs + deltaMs);
+    if (enemy.pounceAgeMs < behavior.pounceMs) {
+      return;
+    }
+    if (enemy.behaviorCooldownMs > 0 || enemy.knockbackMsRemaining > 0) {
+      return;
+    }
+    if (distanceFromHero < behavior.triggerMinPx || distanceFromHero > behavior.triggerMaxPx) {
+      return;
+    }
+    const toHeroX = heroWorld.x - enemy.worldX;
+    const toHeroY = heroWorld.y - enemy.worldY;
+    const length = Math.hypot(toHeroX, toHeroY);
+    enemy.pounceDirX = length > 0 ? toHeroX / length : (enemy.directionX !== 0 ? enemy.directionX : 1);
+    enemy.pounceDirY = length > 0 ? toHeroY / length : enemy.directionY;
+    enemy.pounceAgeMs = 0;
+    enemy.behaviorCooldownMs = behavior.cooldownMs;
+  }
+
+  /**
+   * 蓄力预警闪（冲锋 telegraph）：sprite 走 90ms 暗红橙 tint（与受击墨闪同通道短暂竞争，
+   * 双方 delayedCall 均 clearTint 自清理，错序最坏表现为一闪提前结束，可接受）；
+   * 几何兜底图形无 Tint 组件，走 160ms alpha 微闪（与受击闪同模式）。
+   */
+  private flashChargeWindup(enemy: EnemyRuntime): void {
+    if (enemy.view instanceof Phaser.GameObjects.Sprite && enemy.view.getData("spriteArt") === true) {
+      const view = enemy.view;
+      view.setTintFill(CHARGE_WINDUP_TINT);
+      this.scene.time.delayedCall(CHARGE_WINDUP_FLASH_MS, () => {
+        if (view.active) {
+          view.clearTint();
+        }
+      });
+      return;
+    }
+
+    enemy.view.setAlpha(CHARGE_WINDUP_FALLBACK_ALPHA);
+    this.scene.tweens.add({
+      targets: enemy.view,
+      alpha: 0.97,
+      duration: 160,
+      ease: "Quad.easeOut"
+    });
+  }
+
+  /**
+   * 盾墙格挡金光反馈（纯表现层）：敌正前方程序化 ±60° 扇面金色闪光，ADD 混合，
+   * blockFlashMs（100ms）淡出后销毁；在飞实例入 activeShieldFlashes 跟踪，destroy 兜底清理。
+   * 与受击墨闪/溅墨叠加不冲突（独立显示对象，不占 tint 通道）。
+   */
+  private spawnShieldBlockFlash(enemy: EnemyRuntime): void {
+    const behavior = enemy.behavior?.kind === "shieldwall" ? enemy.behavior : undefined;
+    if (!behavior) {
+      return;
+    }
+    this.ensureShieldFlashTexture();
+    if (!this.scene.textures.exists(SHIELD_FLASH_TEXTURE_KEY)) {
+      return;
+    }
+    const frontDistance = enemy.config.collisionRadius * SHIELD_FLASH_FRONT_FACTOR;
+    const flash = this.scene.add.image(
+      enemy.view.x + enemy.directionX * frontDistance,
+      enemy.view.y - enemy.config.collisionRadius * 0.8 + enemy.directionY * frontDistance,
+      SHIELD_FLASH_TEXTURE_KEY
+    )
+      .setDepth(enemy.view.depth + 1)
+      .setAlpha(SHIELD_FLASH_ALPHA)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setRotation(Math.atan2(enemy.directionY, enemy.directionX));
+    const size = enemy.config.collisionRadius * 2 * SHIELD_FLASH_SIZE_FACTOR;
+    flash.setDisplaySize(size, size);
+    this.activeShieldFlashes.add(flash);
+    this.scene.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: behavior.blockFlashMs,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.activeShieldFlashes.delete(flash);
+        if (flash.active) {
+          flash.destroy();
+        }
+      }
+    });
+  }
+
+  /** 格挡金光纹理：朝 +x 的 ±60° 扇面径向渐变金光 + 扇缘亮边（一次生成全局缓存，按敌朝向旋转使用）。 */
+  private ensureShieldFlashTexture(): void {
+    if (this.scene.textures.exists(SHIELD_FLASH_TEXTURE_KEY)) {
+      return;
+    }
+    const canvasTexture = this.scene.textures.createCanvas(SHIELD_FLASH_TEXTURE_KEY, SHIELD_FLASH_TEXTURE_SIZE, SHIELD_FLASH_TEXTURE_SIZE);
+    const context = canvasTexture?.getContext();
+    if (!canvasTexture || !context) {
+      return;
+    }
+    const half = SHIELD_FLASH_TEXTURE_SIZE / 2;
+    const halfAngle = Math.PI / 3;
+    context.clearRect(0, 0, SHIELD_FLASH_TEXTURE_SIZE, SHIELD_FLASH_TEXTURE_SIZE);
+    const gradient = context.createRadialGradient(half, half, 2, half, half, half - 1);
+    gradient.addColorStop(0, "rgba(246, 212, 114, 0.95)");
+    gradient.addColorStop(0.6, "rgba(240, 214, 120, 0.45)");
+    gradient.addColorStop(1, "rgba(240, 214, 120, 0)");
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.moveTo(half, half);
+    context.arc(half, half, half - 1, -halfAngle, halfAngle);
+    context.closePath();
+    context.fill();
+    context.lineWidth = 2;
+    context.strokeStyle = "rgba(252, 234, 168, 0.9)";
+    context.beginPath();
+    context.arc(half, half, half - 3, -halfAngle, halfAngle);
+    context.stroke();
+    canvasTexture.refresh();
   }
 
   private createTargetSnapshot(enemy: EnemyRuntime): EnemyTargetSnapshot {
@@ -2055,6 +2404,20 @@ function getLungeScale(ageMs: number): number {
   }
   const t = (ageMs - LUNGE_OUT_MS) / LUNGE_BACK_MS;
   const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  return 1 - eased;
+}
+
+/** 扑咬前扑系数（t∈[0,1]）：前 40% easeOutQuad 快速扑到满幅，后 60% easeInOutQuad 缓回 0，首尾均为 0。 */
+function getPounceForwardScale(t: number): number {
+  if (t <= 0 || t >= 1) {
+    return 0;
+  }
+  if (t < 0.4) {
+    const u = t / 0.4;
+    return 1 - (1 - u) * (1 - u);
+  }
+  const u = (t - 0.4) / 0.6;
+  const eased = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
   return 1 - eased;
 }
 

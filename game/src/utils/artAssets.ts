@@ -53,6 +53,8 @@ import vfxBossWhirlwindWarningUrl from "../assets/vfx/vfx_boss_whirlwind_warning
 import vfxDeathVignetteUrl from "../assets/vfx/vfx_death_vignette.png";
 import vfxEliteWarningUrl from "../assets/vfx/vfx_elite_warning.png";
 import vfxEnemyDieUrl from "../assets/vfx/vfx_enemy_die.png";
+import vfxFireBurstUrl from "../assets/vfx/vfx_fire_burst.png";
+import vfxFireWallUrl from "../assets/vfx/vfx_fire_wall.png";
 import vfxGroundCrackUrl from "../assets/vfx/vfx_ground_crack.png";
 import vfxHeroHurtFlashUrl from "../assets/vfx/vfx_hero_hurt_flash.png";
 import vfxHitLightUrl from "../assets/vfx/vfx_hit_light.png";
@@ -103,6 +105,8 @@ import uiIconSkillZhenshanUrl from "../assets/ui/sw-art-015/ui_icon_skill_zhensh
 import uiIconSkillZhenshanAdvancedUrl from "../assets/ui/sw-art-015/ui_icon_skill_zhenshan_advanced.png";
 import uiIconSkillMoranUrl from "../assets/ui/ui_icon_skill_moran.png";
 import uiIconSkillMoranAdvancedUrl from "../assets/ui/ui_icon_skill_moran_advanced.png";
+import uiIconSkillLiehuoUrl from "../assets/ui/ui_icon_skill_liehuo.png";
+import uiIconSkillLiehuoAdvancedUrl from "../assets/ui/ui_icon_skill_liehuo_advanced.png";
 import uiMarkPoisonUrl from "../assets/ui/ui_mark_poison.png";
 import uiBadgeDuplicateUrl from "../assets/ui/sw-art-016/ui_badge_duplicate.png";
 import uiBadgePityUrl from "../assets/ui/sw-art-016/ui_badge_pity.png";
@@ -213,6 +217,8 @@ export const artAssetUrls = {
   vfx_death_vignette: vfxDeathVignetteUrl,
   vfx_elite_warning: vfxEliteWarningUrl,
   vfx_enemy_die: vfxEnemyDieUrl,
+  vfx_fire_burst: vfxFireBurstUrl,
+  vfx_fire_wall: vfxFireWallUrl,
   vfx_ground_crack: vfxGroundCrackUrl,
   vfx_hero_hurt_flash: vfxHeroHurtFlashUrl,
   vfx_hit_light: vfxHitLightUrl,
@@ -263,6 +269,8 @@ export const artAssetUrls = {
   ui_icon_skill_zhenshan_advanced: uiIconSkillZhenshanAdvancedUrl,
   ui_icon_skill_moran: uiIconSkillMoranUrl,
   ui_icon_skill_moran_advanced: uiIconSkillMoranAdvancedUrl,
+  ui_icon_skill_liehuo: uiIconSkillLiehuoUrl,
+  ui_icon_skill_liehuo_advanced: uiIconSkillLiehuoAdvancedUrl,
   ui_mark_poison: uiMarkPoisonUrl,
   ui_badge_duplicate: uiBadgeDuplicateUrl,
   ui_badge_pity: uiBadgePityUrl,

@@ -29,6 +29,10 @@ const INSIGHT_RECOVERY_AMOUNT = 20;
 /** 技能 id 的匹配键（用 includes 兼容 "moran" 前缀的变体 id）。 */
 const MORAN_SKILL_ID_KEY = "moran";
 const MORAN_SKILL_ID = "moran_ink_zone";
+// ── 烈火神掌（liehuo_firewall）调试/表现接入常量 ──
+/** 技能 id 的匹配键（用 includes 兼容 "liehuo" 前缀的变体 id）。 */
+const LIEHUO_SKILL_ID_KEY = "liehuo";
+const LIEHUO_SKILL_ID = "liehuo_firewall";
 /** 施放墨圈最短间隔：防止高频施放时墨圈叠加。 */
 const MORAN_INK_RIPPLE_MIN_INTERVAL_MS = 1500;
 /** 进阶演出事件/快照双通道去重窗口。 */
@@ -376,7 +380,15 @@ export class GameScene extends Phaser.Scene {
       },
       knockbackEnemy: (runtimeId, originWorld, distance, source) => this.enemyDirector?.knockbackEnemy(runtimeId, originWorld, distance, source) ?? false,
       onEnemyKilled: (result) => this.handleEnemyKilled(result),
-      playSfx: (eventId) => getAudioSystem(this).playPlaceholder(eventId)
+      playSfx: (eventId) => getAudioSystem(this).playPlaceholder(eventId),
+      // 英雄面向（归一化输入方向）：烈火神掌无有效目标时按面向横置火墙；静止/缺失时 SkillSystem 回退默认方向
+      getHeroFacing: () => {
+        const movement = this.latestMovement;
+        if (!movement || movement.inputMagnitude <= 0.05) {
+          return undefined;
+        }
+        return { x: movement.inputX, y: movement.inputY };
+      }
     });
     this.latestSkillSnapshot = this.skillSystem.getSnapshot();
     this.drawHud();
@@ -414,7 +426,14 @@ export class GameScene extends Phaser.Scene {
         this.debugPanel?.toggle();
       };
 
-      const startInsight = (): void => this.openInsight();
+      // F1：顿悟预览；Shift+F1：直接授予烈火神掌 Lv1（F1 已占用，修饰键避让，与 F5 系同约定）
+      const startInsight = (event?: KeyboardEvent): void => {
+        if (event?.shiftKey) {
+          this.grantLiehuoSkillForDebug();
+          return;
+        }
+        this.openInsight();
+      };
       // F6：压测批量刷怪（按当前波次段敌种组成 +30，连按可叠到 aliveCap×1.5 硬上限）
       const stressSpawnWave = (): void => this.spawnStressWaveForDebug();
       const toggleGodMode = (): void => this.toggleGodModeForPerf();
@@ -1805,6 +1824,25 @@ export class GameScene extends Phaser.Scene {
     this.spawnEnemyShowcaseForDebug();
   }
 
+  /** Shift+F1 调试：直接授予 liehuo_firewall Lv1（防御性调用，同 F4 墨染江山约定），并放 showcase 木桩便于验证火墙效果。 */
+  private grantLiehuoSkillForDebug(): void {
+    if (getScreenState(this) !== "game") {
+      return;
+    }
+    const granter = this.skillSystem as unknown as {
+      unlockSkill?: (skillId: string, level?: number) => boolean;
+      setSkillLevel?: (skillId: string, level: number) => boolean;
+    } | undefined;
+    const unlocked = granter?.unlockSkill?.(LIEHUO_SKILL_ID, 1) ?? false;
+    if (!unlocked) {
+      // 已解锁或 id 未注册时静默；setSkillLevel 兜底尝试一次
+      granter?.setSkillLevel?.(LIEHUO_SKILL_ID, 1);
+    }
+    this.latestSkillSnapshot = this.skillSystem?.getSnapshot();
+    this.updateSkillSlots();
+    this.spawnEnemyShowcaseForDebug();
+  }
+
   /** 石灯笼假光晕纹理：程序化径向渐变白心圆（tint 染暖色后 ADD 混合），按 key 缓存只生成一次。 */
   private ensureLanternGlowTexture(): void {
     if (this.textures.exists(LANTERN_GLOW_TEXTURE_KEY)) {
@@ -2528,11 +2566,13 @@ export class GameScene extends Phaser.Scene {
     this.skillSlotCooldownMasks = [];
     const slotSize = 64;
     const gap = 8;
-    const totalWidth = slotSize * 4 + gap * 3;
+    // 技能槽 5 位：四槽时代扩到五槽（第 5 位为烈火神掌等后续技能预留）
+    const slotCount = 5;
+    const totalWidth = slotSize * slotCount + gap * (slotCount - 1);
     const startX = this.scale.width / 2 - totalWidth / 2 + slotSize / 2;
     const y = this.scale.height - 40;
 
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < slotCount; index += 1) {
       const x = startX + index * (slotSize + gap);
       const frame = this.textures.exists("ui_skill_slot_frame")
         ? this.add.image(x, y, "ui_skill_slot_frame").setDisplaySize(slotSize, slotSize).setDepth(HUD_DEPTH_CONTENT)
@@ -3285,8 +3325,42 @@ const DEBUG_INSIGHT_ART_SHOWCASES: Array<{ levelBefore: number; levelAfter: numb
     ]
   },
   {
+    // 烈火神掌（liehuo_firewall）图标/进阶映射 showcase：新招式 / 强化 / 进阶信物（火枣核）
     levelBefore: 18,
     levelAfter: 19,
+    options: [
+      {
+        id: "debug_liehuo_unlock_icon",
+        category: "new_skill",
+        title: "烈火神掌 Lv1",
+        description: "烈火成墙，灼敌断路",
+        typeLabel: "新招式",
+        iconKey: "ui_icon_skill_liehuo",
+        applyEffectId: "unlock_liehuo_firewall"
+      },
+      {
+        id: "debug_liehuo_advanced_icon",
+        category: "skill_advance",
+        title: "金焰神掌",
+        description: "金焰长墙，灼烧更烈",
+        typeLabel: "进阶",
+        iconKey: "ui_icon_skill_liehuo_advanced",
+        applyEffectId: "advance_liehuo_firewall"
+      },
+      {
+        id: "debug_fire_jujube_pit_key",
+        category: "advance_key",
+        title: "火枣核",
+        description: "烈火神掌进阶所需",
+        typeLabel: "进阶信物",
+        iconKey: "advance_key_fire_jujube_pit",
+        applyEffectId: "collect_advance_key_fire_jujube_pit"
+      }
+    ]
+  },
+  {
+    levelBefore: 19,
+    levelAfter: 20,
     options: [
       {
         id: "debug_passive_body_training_icon",
@@ -3361,6 +3435,21 @@ function getHudSkillIconAssetId(scene: Phaser.Scene, skillId: SkillId, advanced:
     }
     return advanced ? advancedKey : normalKey;
   }
+  // 烈火神掌（liehuo_firewall）：与 moran 同一防御性映射约定。
+  if (String(skillId).includes(LIEHUO_SKILL_ID_KEY)) {
+    const advancedKey = "ui_icon_skill_liehuo_advanced";
+    const normalKey = "ui_icon_skill_liehuo";
+    if (advanced && scene.textures.exists(advancedKey)) {
+      return advancedKey;
+    }
+    if (scene.textures.exists(normalKey)) {
+      return normalKey;
+    }
+    if (scene.textures.exists("icon_scroll")) {
+      return "icon_scroll";
+    }
+    return advanced ? advancedKey : normalKey;
+  }
   if (skillId === "huifeng_dart") {
     return advanced ? "ui_icon_skill_huifeng_advanced" : "ui_icon_skill_huifeng";
   }
@@ -3376,10 +3465,12 @@ function getFirstExistingHudSkillIconAssetId(scene: Phaser.Scene): string | unde
     "ui_icon_skill_huifeng",
     "ui_icon_skill_zhenshan",
     "ui_icon_skill_moran",
+    "ui_icon_skill_liehuo",
     "ui_icon_skill_yulong_advanced",
     "ui_icon_skill_huifeng_advanced",
     "ui_icon_skill_zhenshan_advanced",
     "ui_icon_skill_moran_advanced",
+    "ui_icon_skill_liehuo_advanced",
     "icon_scroll"
   ].find((assetId) => scene.textures.exists(assetId));
 }
@@ -3415,7 +3506,8 @@ function isAdvanceKeyId(value: string): value is AdvanceKeyId {
   return value === "sword_manual_page"
     || value === "hidden_weapon_pouch"
     || value === "inner_force_manual"
-    || value === "pine_soot_inkstick";
+    || value === "pine_soot_inkstick"
+    || value === "fire_jujube_pit";
 }
 
 const KILL_MILESTONES: Array<{ count: number; label: string }> = [
