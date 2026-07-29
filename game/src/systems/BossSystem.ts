@@ -101,6 +101,12 @@ export type BossSystemSnapshot = {
   maxHp: number;
   hpPercent: number;
   currentAttack: BossAttackId | "none";
+  /**
+   * 当前出手招式显示名（读当前 Boss 配置的 charge/whirlwind.displayName；currentAttack 为 none 时缺省）。
+   * GameScene 血条下招式名文本（GameScene.ts ~2171 处按 attackId 硬映射 "冲撞斩"/"旋风刀"）
+   * 由主代理对接改读此字段一行替换，BossSystem 侧事件载荷早已带 displayName。
+   */
+  attackDisplayName?: string;
   nextChargeSeconds: number;
   nextWhirlwindSeconds: number;
   lastWarningDuration: number;
@@ -255,7 +261,7 @@ export class BossSystem {
       return false;
     }
 
-    // 按当前地图选 Boss（显式注入 config 时优先，供测试定点覆盖）；断剑镖头纹理缺失自动回退黑风寨主
+    // 按当前地图选 Boss（显式注入 config 时优先，供测试定点覆盖）；目标 Boss 纹理缺失自动回退黑风寨主
     this.config = this.options.config ?? this.resolveBossConfigForCurrentMap();
     const stageMapId = this.getCurrentStageMapId() ?? "qingshi_mountain_road";
 
@@ -407,6 +413,7 @@ export class BossSystem {
       maxHp: this.config.maxHp,
       hpPercent: Math.round((runtime.hp / this.config.maxHp) * 1000) / 10,
       currentAttack: runtime.currentAttack,
+      attackDisplayName: this.getCurrentAttackDisplayName(runtime),
       nextChargeSeconds: Math.round((runtime.chargeCooldownMs / 1000) * 10) / 10,
       nextWhirlwindSeconds: Math.round((runtime.whirlwindCooldownMs / 1000) * 10) / 10,
       lastWarningDuration: Math.round((runtime.lastWarningDurationMs / 1000) * 100) / 100,
@@ -417,6 +424,17 @@ export class BossSystem {
       stageCleared: runtime.stageCleared,
       runtimeId: runtime.runtimeId
     };
+  }
+
+  /** 当前出手招式的配置显示名（如「百蛊蚀心」「万毒朝宗」）；未出手时 undefined。 */
+  private getCurrentAttackDisplayName(runtime: BossRuntime): string | undefined {
+    if (runtime.currentAttack === "charge_slash") {
+      return this.config.charge.displayName;
+    }
+    if (runtime.currentAttack === "whirlwind_blade") {
+      return this.config.whirlwind.displayName;
+    }
+    return undefined;
   }
 
   destroy(): void {

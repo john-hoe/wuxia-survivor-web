@@ -260,6 +260,37 @@ export const artManifest: ArtManifestItem[] = [
     tags: ["boss", "duanjian", "attack", "maple"]
   },
   {
+    id: "boss_tanzhu_idle",
+    type: "spritesheet",
+    path: "sprites/boss_tanzhu_idle.png",
+    width: 416,
+    height: 416,
+    frames: 4,
+    frameRate: 5,
+    collisionRadius: 34,
+    visualRadius: 96,
+    usage: "夜雨破庙 Boss 邪教坛主待机动画",
+    fallback: "shape",
+    required: true,
+    tags: ["boss", "tanzhu", "idle", "temple"]
+  },
+  {
+    id: "boss_tanzhu_attack",
+    type: "spritesheet",
+    path: "sprites/boss_tanzhu_attack.png",
+    width: 416,
+    height: 416,
+    frames: 6,
+    frameRate: 8,
+    loop: false,
+    collisionRadius: 34,
+    visualRadius: 96,
+    usage: "夜雨破庙 Boss 邪教坛主攻击动画",
+    fallback: "shape",
+    required: true,
+    tags: ["boss", "tanzhu", "attack", "temple"]
+  },
+  {
     id: "skill_yulong_projectile",
     type: "spritesheet",
     path: "vfx/skill_yulong_projectile.png",

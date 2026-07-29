@@ -2168,11 +2168,7 @@ export class GameScene extends Phaser.Scene {
     this.bossHudFill.setDisplaySize(Math.round(fullWidth * ratio), 12);
     this.bossHudFill.setFillStyle(boss.hpPercent <= 25 ? PALETTE.lowHp : PALETTE.cinnabar, 0.95);
     this.bossHudText?.setText(`${boss.bossName ?? "黑风寨主"}  ${boss.hp}/${boss.maxHp}`);
-    const attackLabel = boss.currentAttack === "charge_slash"
-      ? "冲撞斩"
-      : boss.currentAttack === "whirlwind_blade"
-        ? "旋风刀"
-        : "";
+    const attackLabel = boss.attackDisplayName ?? "";
     this.bossHudTip?.setText(attackLabel ? `${attackLabel} 预警中` : "");
   }
 

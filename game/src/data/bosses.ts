@@ -1,4 +1,4 @@
-export type BossId = "heifeng_chief" | "duanjian_escort";
+export type BossId = "heifeng_chief" | "duanjian_escort" | "xiejiao_tanzhu";
 
 export type BossState =
   | "pending"
@@ -129,9 +129,52 @@ export const duanjianEscortConfig: BossConfig = {
   }
 };
 
+/**
+ * 邪教坛主（夜雨破庙 Boss）：数值以黑风寨主/断剑镖头为基准微调，全部参数标注可调。
+ * 素材 416²×4 idle / 416²×6 attack（与前两个 Boss 同规格，BOSS_SPRITE_SCALE 复用无需改）。
+ * tint 走紫黑系贴合邪教蛊毒气质（可调；受击金闪/蓄力红闪结束后恢复该色）。
+ * 法系定位：移速略低于黑风寨主，冲撞突进也稍缓，靠 HP 与招式范围施压。
+ */
+export const tanzhuConfig: BossConfig = {
+  id: "xiejiao_tanzhu",
+  displayName: "邪教坛主",
+  textureKeys: { idle: "boss_tanzhu_idle", attack: "boss_tanzhu_attack" },
+  tint: 0x8a5fbf, // 可调：淡紫（紫黑系邪教气质）；想不染色调为 undefined
+  maxHp: 5000, // 可调：第三图 Boss，肉于断剑镖头（4600）
+  moveSpeed: 64, // 可调：法系，步伐缓于黑风寨主（70）/断剑镖头（76）
+  collisionRadius: 34,
+  visualRadius: 52,
+  contactDamage: 18, // 可调
+  spawnSeconds: 360,
+  copperReward: 210, // 可调：第三图赏金，略高于镖头（180）
+  introMs: 1200,
+  charge: {
+    id: "charge_slash",
+    displayName: "百蛊蚀心", // 可调：招式名
+    cooldownMs: 5500, // 可调
+    warningMs: 750,
+    activeMs: 550,
+    damage: 30, // 可调
+    dashSpeed: 540, // 可调：法系突进稍缓（黑风 560 / 镖头 580）
+    warningWidth: 78,
+    warningLength: 460
+  },
+  whirlwind: {
+    id: "whirlwind_blade",
+    displayName: "万毒朝宗", // 可调：招式名
+    cooldownMs: 8000, // 可调
+    warningMs: 900,
+    activeMs: 1300,
+    damage: 22, // 可调
+    startRadius: 90,
+    endRadius: 310
+  }
+};
+
 export const bossConfigsById: Record<BossId, BossConfig> = {
   heifeng_chief: heifengChiefConfig,
-  duanjian_escort: duanjianEscortConfig
+  duanjian_escort: duanjianEscortConfig,
+  xiejiao_tanzhu: tanzhuConfig
 };
 
 /** 默认 Boss：仅作 resolveBossConfigForMap 的运行时兜底（mapId 缺失/异常入参）；正式地图必须在 MAP_BOSS_IDS 显式登记。 */
@@ -139,14 +182,14 @@ export const DEFAULT_BOSS_ID: BossId = "heifeng_chief";
 
 /**
  * 地图 → Boss 映射（key 为 stageMapConfig 的地图 id，沿用 MAP_ENEMY_TEXTURE_KEYS 的 Record<string, ...> 解耦模式）。
- * 青石山道 = 黑风寨主；枫叶官道 = 断剑镖头；夜雨破庙 = 黑风寨主（暂复用，待专属坛主）。
+ * 青石山道 = 黑风寨主；枫叶官道 = 断剑镖头；夜雨破庙 = 邪教坛主。
  * QA-005：stageMapConfig.maps 每个条目都必须在此显式登记，ConfigSystem 构建期断言缺失即抛错；
  * 未列出地图的 DEFAULT_BOSS_ID 回退仅保留为运行时兜底，不再是正式地图的隐式约定。
  */
 export const MAP_BOSS_IDS: Record<string, BossId> = {
   qingshi_mountain_road: "heifeng_chief",
   maple_official_road: "duanjian_escort",
-  temple_ruin_nightrain: "heifeng_chief" // 暂复用黑风寨主，待专属坛主 Boss 落地后替换
+  temple_ruin_nightrain: "xiejiao_tanzhu"
 };
 
 /** 按地图 id 解析 Boss 配置；mapId 缺失/无映射时回退默认 Boss（黑风寨主）——仅作运行时兜底，正式地图映射以 MAP_BOSS_IDS + ConfigSystem 构建期断言为准。 */

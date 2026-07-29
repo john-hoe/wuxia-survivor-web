@@ -28,6 +28,8 @@ import bossDuanjianAttackUrl from "../assets/sprites/boss_duanjian_attack.png";
 import bossDuanjianIdleUrl from "../assets/sprites/boss_duanjian_idle.png";
 import bossHeifengAttackUrl from "../assets/sprites/boss_heifeng_attack.png";
 import bossHeifengIdleUrl from "../assets/sprites/boss_heifeng_idle.png";
+import bossTanzhuAttackUrl from "../assets/sprites/boss_tanzhu_attack.png";
+import bossTanzhuIdleUrl from "../assets/sprites/boss_tanzhu_idle.png";
 import enemyBanditGruntWalkUrl from "../assets/sprites/enemy_bandit_grunt_walk.png";
 import enemyHoundRunUrl from "../assets/sprites/enemy_hound_run.png";
 import enemyShieldBanditWalkUrl from "../assets/sprites/enemy_shield_bandit_walk.png";
@@ -165,6 +167,8 @@ export const artAssetUrls = {
   boss_duanjian_idle: bossDuanjianIdleUrl,
   boss_heifeng_attack: bossHeifengAttackUrl,
   boss_heifeng_idle: bossHeifengIdleUrl,
+  boss_tanzhu_attack: bossTanzhuAttackUrl,
+  boss_tanzhu_idle: bossTanzhuIdleUrl,
   decor_flag: decorFlagUrl,
   decor_lantern: decorLanternUrl,
   decor_stele: decorSteleUrl,
