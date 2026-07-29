@@ -1,3 +1,5 @@
+import { stageMapConfig } from "./gameConfig";
+
 export type AudioEventConfig = {
   id: string;
   path: string;
@@ -12,6 +14,9 @@ export type AudioEventConfig = {
 };
 
 const BGM_QINGSHI_URL = new URL("../assets/audio/bgm_qingshi_loop.ogg", import.meta.url).href;
+/** QA-006：枫叶官道 / 夜雨破庙专属 BGM（音频文件由并行代理生成至 assets/audio/，缺失时 AudioSystem 静默回退） */
+const BGM_MAPLE_URL = new URL("../assets/audio/bgm_maple_loop.ogg", import.meta.url).href;
+const BGM_TEMPLE_URL = new URL("../assets/audio/bgm_temple_loop.ogg", import.meta.url).href;
 const SFX_SWORD_SWISH_URL = new URL("../assets/audio/sword_swish.ogg", import.meta.url).href;
 const SFX_SWORD_SWISH_HEAVY_URL = new URL("../assets/audio/sword_swish_heavy.ogg", import.meta.url).href;
 const SFX_PALM_BOOM_URL = new URL("../assets/audio/palm_boom.ogg", import.meta.url).href;
@@ -46,6 +51,28 @@ export const audioEvents: AudioEventConfig[] = [
   {
     id: "music_stage_qingshi",
     path: BGM_QINGSHI_URL,
+    bus: "music",
+    priority: 1,
+    volume: 0.42,
+    throttleMs: 0,
+    loop: true,
+    required: false,
+    source: "generated"
+  },
+  {
+    id: "music_stage_maple",
+    path: BGM_MAPLE_URL,
+    bus: "music",
+    priority: 1,
+    volume: 0.42,
+    throttleMs: 0,
+    loop: true,
+    required: false,
+    source: "generated"
+  },
+  {
+    id: "music_stage_temple",
+    path: BGM_TEMPLE_URL,
     bus: "music",
     priority: 1,
     volume: 0.42,
@@ -301,4 +328,16 @@ export const audioEvents: AudioEventConfig[] = [
 
 export function countMissingRequiredAudioEvents(): number {
   return audioEvents.filter((item) => item.required && item.path.length === 0).length;
+}
+
+/**
+ * QA-006：按地图 id 取关卡 BGM 事件 id（读 stageMapConfig.maps[].musicId）。
+ * 防御性：未知 id 回默认地图；条目缺失/无 musicId 时回旧版 music_stage_qingshi，保证不崩。
+ */
+export function getStageMusicId(mapId: string): string {
+  const entry =
+    stageMapConfig.maps.find((map) => map.id === mapId) ??
+    stageMapConfig.maps.find((map) => map.id === stageMapConfig.defaultMapId) ??
+    stageMapConfig.maps[0];
+  return entry?.musicId ?? "music_stage_qingshi";
 }

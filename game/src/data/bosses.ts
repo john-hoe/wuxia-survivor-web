@@ -134,19 +134,22 @@ export const bossConfigsById: Record<BossId, BossConfig> = {
   duanjian_escort: duanjianEscortConfig
 };
 
-/** 默认 Boss：地图无映射（含 temple_ruin_nightrain 等后续新图）时回退黑风寨主。 */
+/** 默认 Boss：仅作 resolveBossConfigForMap 的运行时兜底（mapId 缺失/异常入参）；正式地图必须在 MAP_BOSS_IDS 显式登记。 */
 export const DEFAULT_BOSS_ID: BossId = "heifeng_chief";
 
 /**
  * 地图 → Boss 映射（key 为 stageMapConfig 的地图 id，沿用 MAP_ENEMY_TEXTURE_KEYS 的 Record<string, ...> 解耦模式）。
- * 青石山道 = 黑风寨主（现状）；枫叶官道 = 断剑镖头；未列出的地图走 DEFAULT_BOSS_ID。
+ * 青石山道 = 黑风寨主；枫叶官道 = 断剑镖头；夜雨破庙 = 黑风寨主（暂复用，待专属坛主）。
+ * QA-005：stageMapConfig.maps 每个条目都必须在此显式登记，ConfigSystem 构建期断言缺失即抛错；
+ * 未列出地图的 DEFAULT_BOSS_ID 回退仅保留为运行时兜底，不再是正式地图的隐式约定。
  */
 export const MAP_BOSS_IDS: Record<string, BossId> = {
   qingshi_mountain_road: "heifeng_chief",
-  maple_official_road: "duanjian_escort"
+  maple_official_road: "duanjian_escort",
+  temple_ruin_nightrain: "heifeng_chief" // 暂复用黑风寨主，待专属坛主 Boss 落地后替换
 };
 
-/** 按地图 id 解析 Boss 配置；mapId 缺失/无映射时回退默认 Boss（黑风寨主）。 */
+/** 按地图 id 解析 Boss 配置；mapId 缺失/无映射时回退默认 Boss（黑风寨主）——仅作运行时兜底，正式地图映射以 MAP_BOSS_IDS + ConfigSystem 构建期断言为准。 */
 export function resolveBossConfigForMap(mapId: string | undefined): BossConfig {
   const bossId = (mapId ? MAP_BOSS_IDS[mapId] : undefined) ?? DEFAULT_BOSS_ID;
   return bossConfigsById[bossId];

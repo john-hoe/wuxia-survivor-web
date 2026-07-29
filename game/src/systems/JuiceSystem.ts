@@ -72,6 +72,9 @@ export class JuiceSystem {
         }
       }
       this.damagePool = [];
+      // QA-001a：注销实例。once 监听器已消费，Scene 对象重启复用后
+      // JuiceSystem.get 必须返回全新实例，避免旧实例残留已销毁的引用。
+      JuiceSystem.instances.delete(scene);
     });
   }
 
@@ -328,8 +331,18 @@ export class JuiceSystem {
   private obtainText(
     style: (typeof DAMAGE_STYLE)[DamageKind]
   ): Phaser.GameObjects.Text {
-    const pooled = this.damagePool.find((t) => !t.active);
-    if (pooled) {
+    // QA-001b：复用前校验对象完好；任何残留路径留下的已销毁/纹理失效对象
+    // 一律剔除并新建，杜绝对已销毁 Text 调用 setColor/setFontSize 导致的崩溃。
+    for (let i = 0; i < this.damagePool.length; i += 1) {
+      const pooled = this.damagePool[i];
+      if (pooled.active) {
+        continue;
+      }
+      if (!this.isTextIntact(pooled)) {
+        this.damagePool.splice(i, 1);
+        i -= 1;
+        continue;
+      }
       pooled.setColor(style.color).setFontSize(style.fontSize);
       return pooled;
     }
@@ -349,6 +362,16 @@ export class JuiceSystem {
       this.damagePool.push(t);
     }
     return t;
+  }
+
+  /** 飘字对象完好性：未销毁（scene 仍在）且 canvas 纹理源仍可用。 */
+  private isTextIntact(t: Phaser.GameObjects.Text): boolean {
+    if (!t.scene) {
+      return false;
+    }
+    const source = t.texture?.source?.[0];
+    const image = source?.image as HTMLCanvasElement | undefined;
+    return Boolean(image && typeof image.getContext === "function");
   }
 
   private ensureTextures(): void {

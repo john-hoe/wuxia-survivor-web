@@ -1,11 +1,12 @@
 import Phaser from "phaser";
+import { bossConfigsById, DEFAULT_BOSS_ID } from "../data/bosses";
+import type { BossId } from "../data/bosses";
 import type { RunResultKind, RunSummary, SaveData } from "../types";
 import { eventBus } from "../utils/EventBus";
 import { getSaveData, setRunSummary, setSaveData } from "../utils/registry";
 import { saveSystem } from "./SaveSystem";
 
 const DIFFICULTY_MULTIPLIER = 1;
-const BOSS_BONUS_COPPER = 150;
 const SETTLED_RUN_IDS_KEY = "settledRunIds";
 
 export type RunCopperBreakdown = {
@@ -14,6 +15,10 @@ export type RunCopperBreakdown = {
   levelCopper: number;
   baseCopper: number;
   bossBonus: number;
+  /** QA-002：实际计入奖励的 Boss id（bossBonus > 0 时存在；summary 未携带 bossId 时为默认 Boss 兜底）。 */
+  bossRewardBossId?: BossId;
+  /** QA-002：被击败 Boss 的显示名，供结算明细文案使用。 */
+  bossRewardDisplayName?: string;
   difficultyMultiplier: number;
   copperEarned: number;
 };
@@ -37,7 +42,9 @@ export function calculateRunCopper(summary: RunSummary): RunCopperBreakdown {
   const killCopper = isRewardable ? kills : 0;
   const levelCopper = isRewardable ? level * 8 : 0;
   const baseCopper = survivalCopper + killCopper + levelCopper;
-  const bossBonus = isRewardable && summary.bossDefeated ? BOSS_BONUS_COPPER : 0;
+  // QA-002：Boss 奖励按实际被击败 Boss 的 copperReward 结算（断剑镖头 180 / 黑风寨主 150），不再固定 150
+  const bossRewardConfig = isRewardable && summary.bossDefeated ? resolveBossRewardConfig(summary) : undefined;
+  const bossBonus = bossRewardConfig?.copperReward ?? 0;
   const copperEarned = Math.floor((baseCopper + bossBonus) * DIFFICULTY_MULTIPLIER);
 
   return {
@@ -46,9 +53,28 @@ export function calculateRunCopper(summary: RunSummary): RunCopperBreakdown {
     levelCopper,
     baseCopper,
     bossBonus,
+    bossRewardBossId: bossRewardConfig?.id,
+    bossRewardDisplayName: bossRewardConfig?.displayName,
     difficultyMultiplier: DIFFICULTY_MULTIPLIER,
     copperEarned
   };
+}
+
+/**
+ * QA-002：解析本次实际被击败 Boss 的配置。
+ * bossId 缺失/非法（旧链路未携带、调试路径）时回退默认 Boss，保持历史结算行为不变。
+ */
+function resolveBossRewardConfig(summary: RunSummary): (typeof bossConfigsById)[BossId] {
+  return bossConfigsById[readSummaryBossId(summary) ?? DEFAULT_BOSS_ID];
+}
+
+/**
+ * 防御性读取 RunSummary.bossId：types.ts 的 RunSummary 字段由其他代理补充，
+ * 未补前运行期载荷仍可能带值（BossSystem boss_defeated 事件载荷含 bossId），此处按 unknown 收窄。
+ */
+function readSummaryBossId(summary: RunSummary): BossId | undefined {
+  const raw = (summary as RunSummary & { bossId?: unknown }).bossId;
+  return typeof raw === "string" && raw in bossConfigsById ? (raw as BossId) : undefined;
 }
 
 export function applyRunSettlement(scene: Phaser.Scene, inputSummary: RunSummary): RunSettlement {
@@ -174,7 +200,7 @@ function applySummaryToSave(saveData: SaveData, runSummary: RunSummary, copperEa
 }
 
 function normalizeRunSummary(summary: RunSummary): RunSummary {
-  return {
+  const normalized: RunSummary = {
     runId: readRunId(summary.runId),
     result: readResultKind(summary.result),
     survivalSeconds: readNonNegativeInteger(summary.survivalSeconds),
@@ -184,6 +210,12 @@ function normalizeRunSummary(summary: RunSummary): RunSummary {
     bossDefeated: Boolean(summary.bossDefeated),
     deathCause: summary.deathCause
   };
+  // QA-002：bossId 透传（字段由其他代理补入 types.ts；未补前按可选字段防御性保留）
+  const bossId = readSummaryBossId(summary);
+  if (bossId) {
+    (normalized as RunSummary & { bossId?: BossId }).bossId = bossId;
+  }
+  return normalized;
 }
 
 function readRunId(value: unknown): string {

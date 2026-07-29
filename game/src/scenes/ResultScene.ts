@@ -1,4 +1,6 @@
 import Phaser from "phaser";
+import { bossConfigsById } from "../data/bosses";
+import type { BossId } from "../data/bosses";
 import type { RunSummary } from "../types";
 import { applyRunSettlement, type RunSettlement } from "../systems/RunSettlementSystem";
 import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle } from "../ui/minimalTheme";
@@ -93,7 +95,12 @@ export class ResultScene extends Phaser.Scene {
     addMinimalTitle(this, title, TITLE_Y, TITLE_FONT_SIZE, sealChar).setStroke(titleStroke, 5);
 
     if (this.runSummary.bossDefeated) {
-      this.add.text(centerX, BOSS_LINE_Y, "头目已被击败", {
+      // QA-002：按 RunSummary 实际携带的 bossId 显示 Boss 名（字段由其他代理补入 types.ts，缺省回退旧文案）
+      const rawBossId = (this.runSummary as RunSummary & { bossId?: unknown }).bossId;
+      const bossDisplayName = typeof rawBossId === "string" && rawBossId in bossConfigsById
+        ? bossConfigsById[rawBossId as BossId].displayName
+        : undefined;
+      this.add.text(centerX, BOSS_LINE_Y, bossDisplayName ? `头目·${bossDisplayName} 已被击败` : "头目已被击败", {
         color: PALETTE.hpCss,
         fontFamily: FONT_BODY,
         fontSize: "14px"
@@ -260,8 +267,13 @@ function createSettlementLines(settlement: RunSettlement): { saveStatusText: str
       ? `当前铜钱 ${settlement.totalCopperAfter}    本次结算已记录`
       : "本地存档失败，请稍后再试；本局铜钱未写入";
 
+  // QA-002：头目奖励按实际被击败 Boss 显示（如「头目·断剑镖头 180」），无 Boss 信息时回退旧文案
+  const bossPart = breakdown.bossBonus > 0
+    ? `头目·${breakdown.bossRewardDisplayName ?? "未知"} ${breakdown.bossBonus}`
+    : `头目 ${breakdown.bossBonus}`;
+
   return {
     saveStatusText,
-    detailText: `明细：存活 ${breakdown.survivalCopper} + 击杀 ${breakdown.killCopper} + 等级 ${breakdown.levelCopper} + 头目 ${breakdown.bossBonus}`
+    detailText: `明细：存活 ${breakdown.survivalCopper} + 击杀 ${breakdown.killCopper} + 等级 ${breakdown.levelCopper} + ${bossPart}`
   };
 }

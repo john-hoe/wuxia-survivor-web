@@ -252,6 +252,7 @@ export class ScriptureScene extends Phaser.Scene {
   private selectedLayoutHandle?: LayoutTunerHandle;
   private revealTimers: Phaser.Time.TimerEvent[] = [];
   private tenRevealEntries: TenRevealEntry[] = [];
+  private skipRevealText?: Phaser.GameObjects.Text;
   private scrollRig?: ScrollRig;
   private resultContent?: Phaser.GameObjects.Container;
   private resultClosing = false;
@@ -967,6 +968,7 @@ export class ScriptureScene extends Phaser.Scene {
     this.revealTimers = [];
     this.tenRevealEntries.forEach((entry) => this.tweens.killTweensOf(entry.slot));
     this.tenRevealEntries = [];
+    this.skipRevealText = undefined;
   }
 
   private showSwArt017SingleResultShowcase(): void {
@@ -1061,7 +1063,15 @@ export class ScriptureScene extends Phaser.Scene {
     title.setVisible(false);
 
     const postRevealObjects: Array<Phaser.GameObjects.Text | Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle> = [];
-    const detail = result.pityTriggered ? "保底触发" : result.duplicate ? "重复奖励" : "已收入收藏";
+    // QA-007：奖励详情按类型区分——铜钱返还显示返还数额（不带收藏语义）、
+    // 残页/碎片/外观/称号类收入收藏、重复收藏转为补偿；保底触发沿用最高优先提示。
+    const detail = result.pityTriggered
+      ? "保底触发"
+      : result.duplicate
+        ? "已转化为补偿"
+        : result.reward.kind === "copper"
+          ? `已返还 ${result.reward.amount} 铜钱`
+          : "已收入收藏";
     const detailText = this.registerLayoutTunerTarget("single.detail", this.add.text(0, 41, detail, {
       color: PALETTE.legacyGoldCss,
       fontFamily: FONT_BODY,
@@ -1285,6 +1295,8 @@ export class ScriptureScene extends Phaser.Scene {
       if (entry.result.pityTriggered) {
         this.addPityFx(entry.slot, entry.label);
       }
+      // QA-009：跳过路径——即时补全后检查是否全部揭示完成
+      this.maybeHideSkipReveal();
       return;
     }
     const rarity = entry.result.reward.rarity;
@@ -1293,6 +1305,8 @@ export class ScriptureScene extends Phaser.Scene {
       if (entry.result.pityTriggered) {
         this.addPityFx(entry.slot, entry.label);
       }
+      // QA-009：翻面路径——最后一张翻开时隐藏"跳过"
+      this.maybeHideSkipReveal();
     });
   }
 
@@ -1309,13 +1323,31 @@ export class ScriptureScene extends Phaser.Scene {
       event?.stopPropagation();
       this.skipTenReveal();
     });
+    this.skipRevealText = text;
     return text;
+  }
+
+  /** QA-009：全部揭示完成后隐藏并禁用"跳过"（全部翻面与被跳过两种路径共用）。 */
+  private hideSkipRevealText(): void {
+    if (!this.skipRevealText) {
+      return;
+    }
+    this.skipRevealText.disableInteractive().setVisible(false);
+  }
+
+  /** 十连条目全部揭示（revealed 标记齐）时收尾隐藏"跳过"。 */
+  private maybeHideSkipReveal(): void {
+    if (this.tenRevealEntries.length > 0 && this.tenRevealEntries.every((entry) => entry.revealed)) {
+      this.hideSkipRevealText();
+    }
   }
 
   private skipTenReveal(): void {
     this.revealTimers.forEach((timer) => timer.remove(false));
     this.revealTimers = [];
     this.tenRevealEntries.forEach((_entry, index) => this.revealTenEntry(index, true));
+    // QA-009：跳过收尾——兜底确保"跳过"隐藏（即时路径已在 revealTenEntry 内检查）
+    this.maybeHideSkipReveal();
   }
 
   /** 保底演出：金色粒子尾迹 + 标题金色脉动（承接 scripture_pity_triggered）。 */

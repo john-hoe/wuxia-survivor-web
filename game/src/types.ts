@@ -92,6 +92,8 @@ export type RunSummary = {
   level: number;
   copperEarned: number;
   bossDefeated: boolean;
+  /** 被击败的 Boss id（胜利时携带，用于按实际 Boss 配置结算奖励）。 */
+  bossId?: string;
   deathCause?: string;
 };
 

@@ -155,6 +155,8 @@ export type DayNightTintTier = {
 export type StageMapEntry = {
   id: StageMapId;
   displayName: string;
+  /** QA-006：该图关卡 BGM 的音频事件 id（注册于 data/audio.ts；AudioSystem.playMusic 按当前地图重映射时读取） */
+  musicId: string;
   /** 官方地面平铺纹理 key（textures.exists 防御，缺失时走兜底） */
   groundTexture: string;
   /** 地面兜底纹理 key（GameScene 程序化生成，保证不崩） */
@@ -202,6 +204,7 @@ export const stageMapConfig: StageMapConfig = {
     {
       id: "qingshi_mountain_road",
       displayName: "青石山道",
+      musicId: "music_stage_qingshi",
       groundTexture: "ground_qingshi_base",
       fallbackGroundTexture: "qingshi_ground_tile",
       groundAlphaOfficial: 0.72,
@@ -223,6 +226,7 @@ export const stageMapConfig: StageMapConfig = {
     {
       id: "maple_official_road",
       displayName: "枫叶官道",
+      musicId: "music_stage_maple",
       groundTexture: "ground_maple_base",
       fallbackGroundTexture: "maple_ground_tile",
       groundAlphaOfficial: 0.8,
@@ -254,6 +258,7 @@ export const stageMapConfig: StageMapConfig = {
     {
       id: "temple_ruin_nightrain",
       displayName: "夜雨破庙",
+      musicId: "music_stage_temple",
       groundTexture: "ground_darktemple_base",
       fallbackGroundTexture: "temple_ground_tile",
       groundAlphaOfficial: 0.85,
@@ -278,6 +283,34 @@ export const stageMapConfig: StageMapConfig = {
       nightOverlay: { tint: 0x2a3a52, strength: 0.22 }
     }
   ]
+};
+
+/** QA-003 遮挡治理视觉参数（纯表现层，不含玩法数值）：出生安全区 / 动态淡出 / HUD 安全区 / Boss 出场落点。 */
+export type OcclusionVisualConfig = {
+  /** 出生安全区半径（px）：以英雄出生点（屏幕中心）为圆心，区内不生成高遮挡大件 prop（换小件或跳过） */
+  spawnSafeRadiusPx: number;
+  /** 高遮挡大件 prop 纹理 key（竹丛/枫树/石佛/残垣）；石堆/酒坛等小件不受安全区与淡出限制 */
+  largeOccluderKeys: string[];
+  /** 动态淡出触发半径（px）：英雄与大件 prop 水平距离小于该值且 prop depth 高于英雄时触发 */
+  propFadeRadiusPx: number;
+  /** 动态淡出目标透明度（离开后恢复 prop 生成时的基础 alpha） */
+  propFadeAlpha: number;
+  /** 动态淡出/恢复补间时长（毫秒） */
+  propFadeMs: number;
+  /** HUD 安全区高度（px）：屏幕顶部该条带内不生成任何散布 prop（生成时按屏幕 y 坐标过滤） */
+  hudSafeTopPx: number;
+  /** Boss 出场落点距屏幕底边最小留白（px）：落点屏幕 y 须 ≤ 屏幕高 - 该值，避开底部技能栏 */
+  bossIntroMinBottomMarginPx: number;
+};
+
+export const occlusionVisualConfig: OcclusionVisualConfig = {
+  spawnSafeRadiusPx: 220,
+  largeOccluderKeys: ["bamboo_edge_cluster", "maple_tree_cluster", "decor_broken_buddha", "decor_temple_ruin"],
+  propFadeRadiusPx: 70,
+  propFadeAlpha: 0.3,
+  propFadeMs: 220,
+  hudSafeTopPx: 96,
+  bossIntroMinBottomMarginPx: 150
 };
 
 /** 重击屏幕压暗聚焦参数。 */

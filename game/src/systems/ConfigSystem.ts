@@ -1,6 +1,7 @@
 import { artManifest, countMissingRequiredAssets } from "../data/artManifest";
 import { audioEvents, countMissingRequiredAudioEvents } from "../data/audio";
-import { debugConfig, feedbackSettingsDefaults, shakeScaleLevels, stageConfig } from "../data/gameConfig";
+import { MAP_BOSS_IDS } from "../data/bosses";
+import { debugConfig, feedbackSettingsDefaults, shakeScaleLevels, stageConfig, stageMapConfig } from "../data/gameConfig";
 import type { ConfigLoadResult, GameConfigBundle, ManifestStats } from "../types";
 
 const NOT_LOADED_RESULT: ConfigLoadResult = {
@@ -56,6 +57,24 @@ function createManifestStats(items: Array<{ required: boolean }>, missingRequire
     missingRequired
   };
 }
+
+/**
+ * QA-005 构建期断言：stageMapConfig.maps 每个条目都必须在 MAP_BOSS_IDS 有显式 Boss 映射，
+ * 缺失直接抛错（禁静默回退到默认 Boss）；resolveBossConfigForMap 的 DEFAULT_BOSS_ID 仅作运行时兜底。
+ * 模块加载即执行，配置缺失时构建/启动阶段立刻失败，不会进入运行期。
+ */
+function assertStageMapBossMappings(): void {
+  const missingMapIds = stageMapConfig.maps
+    .filter((entry) => !(entry.id in MAP_BOSS_IDS))
+    .map((entry) => entry.id);
+  if (missingMapIds.length > 0) {
+    throw new Error(
+      `[ConfigSystem] stageMapConfig.maps 存在未登记 Boss 映射的地图：${missingMapIds.join(", ")}。` +
+        "请在 game/src/data/bosses.ts 的 MAP_BOSS_IDS 补显式映射（QA-005，禁止静默回退默认 Boss）。"
+    );
+  }
+}
+assertStageMapBossMappings();
 
 function validateConfig(config: GameConfigBundle): string[] {
   const errors: string[] = [];

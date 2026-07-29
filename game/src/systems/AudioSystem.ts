@@ -1,4 +1,4 @@
-import { audioEvents, isSampleAudioPath, type AudioEventConfig } from "../data/audio";
+import { audioEvents, getStageMusicId, isSampleAudioPath, type AudioEventConfig } from "../data/audio";
 import type { GameSettings } from "../types";
 import { eventBus } from "../utils/EventBus";
 
@@ -7,6 +7,11 @@ const HIT_JITTER_RATIO = 0.08;
 const GENERIC_JITTER_RATIO = 0.05;
 const HEARTBEAT_PERIOD_SECONDS = 1;
 const EVENT_BY_ID = new Map(audioEvents.map((event) => [event.id, event]));
+/**
+ * QA-006：旧版 GameScene 硬编码的关卡 BGM key。
+ * playMusic 收到该 key 时按当前地图 musicId 重映射；新 key（music_stage_maple 等）与 music_menu 不重映射。
+ */
+const LEGACY_STAGE_MUSIC_KEY = "music_stage_qingshi";
 const DEFAULT_EVENT: AudioEventConfig = {
   id: "unknown",
   path: "procedural:unknown",
@@ -99,6 +104,10 @@ export class AudioSystem {
   private currentMusic?: MusicVoice;
   private musicToken = 0;
   private desiredMusicKey?: string;
+  /** QA-010：首次可信手势解锁后才允许创建 AudioContext（消除控制台 autoplay 警告）。 */
+  private gestureUnlocked = false;
+  /** QA-006：MenuScene 注入的"当前选关地图 id"解析器；缺失/异常时 playMusic 保留原请求 key。 */
+  private stageMapIdResolver?: () => string | undefined;
   private heartbeatSource?: AudioBufferSourceNode;
   private heartbeatGain?: GainNode;
 
@@ -177,7 +186,16 @@ export class AudioSystem {
     }
   }
 
+  /**
+   * QA-006：注册"当前地图 id"解析器（由 MenuScene 在 create 时注入，闭包读全局 registry 存档）。
+   * GameScene 仍以旧 key（music_stage_qingshi）请求 BGM 时，playMusic 按解析出的当前地图重映射到该图 musicId。
+   */
+  setStageMapIdResolver(resolver: () => string | undefined): void {
+    this.stageMapIdResolver = resolver;
+  }
+
   unlockFromGesture(): void {
+    this.gestureUnlocked = true;
     const context = this.ensureAudioContext();
     if (context?.state === "suspended") {
       void context.resume().catch(() => undefined);
@@ -188,23 +206,58 @@ export class AudioSystem {
         void this.loadSample(event.path);
       }
     }
+    // QA-010：补播手势前记录的目标 BGM（手势前的 playMusic 仅记录 desiredMusicKey、不创建 AudioContext）
+    if (this.desiredMusicKey && !this.currentMusic) {
+      this.playMusic(this.desiredMusicKey);
+    }
   }
 
   /**
    * 播放循环 BGM（music 总线，淡入 800ms）。
    * 同时只保留一首；同 key 重复调用幂等不重启；采样缺失/解码失败时静默跳过。
+   * QA-006：请求 key 为旧版硬编码关卡曲时，按当前地图 musicId 重映射（不改 GameScene 调用侧）。
+   * QA-010：首次可信手势前不创建 AudioContext，仅记录目标 key，由 unlockFromGesture 补播。
    */
   playMusic(key: string): void {
-    const config = this.getEventConfig(key);
+    this.playMusicResolved(this.resolveStageMusicKey(key), key);
+  }
+
+  /** QA-006：旧版 GameScene 硬编码请求 → 当前地图 musicId；解析器缺失/目标事件异常时回退原 key。 */
+  private resolveStageMusicKey(requestedKey: string): string {
+    if (requestedKey !== LEGACY_STAGE_MUSIC_KEY) {
+      return requestedKey;
+    }
+    try {
+      const mapId = this.stageMapIdResolver?.();
+      if (!mapId) {
+        return requestedKey;
+      }
+      const mappedKey = getStageMusicId(mapId);
+      const mappedConfig = EVENT_BY_ID.get(mappedKey);
+      if (!mappedConfig || mappedConfig.bus !== "music" || !isSampleAudioPath(mappedConfig.path)) {
+        return requestedKey;
+      }
+      return mappedKey;
+    } catch {
+      return requestedKey;
+    }
+  }
+
+  private playMusicResolved(resolvedKey: string, fallbackKey: string): void {
+    const config = this.getEventConfig(resolvedKey);
     if (config.bus !== "music" || !isSampleAudioPath(config.path)) {
       return;
     }
     // 记录想播的曲子；静音/音量归零时先不播，取消静音后由 updateSettings 恢复
-    this.desiredMusicKey = key;
+    this.desiredMusicKey = resolvedKey;
     if (this.settings.muted || this.settings.masterVolume <= 0.01 || this.settings.musicVolume <= 0.01) {
       return;
     }
-    if (this.currentMusic?.key === key) {
+    if (this.currentMusic?.key === resolvedKey) {
+      return;
+    }
+    // QA-010：首次可信手势前不创建 AudioContext（避免 autoplay 警告）；解锁后由 unlockFromGesture 补播
+    if (!this.gestureUnlocked && !this.audioContext) {
       return;
     }
 
@@ -219,14 +272,21 @@ export class AudioSystem {
     }
 
     void this.loadSample(config.path).then((buffer) => {
-      if (!buffer || token !== this.musicToken) {
+      if (token !== this.musicToken) {
+        return;
+      }
+      if (!buffer) {
+        // QA-006 防御：重映射目标采样缺失/解码失败（如并行代理音频文件未就绪）时回退原始请求 key
+        if (fallbackKey !== resolvedKey) {
+          this.playMusicResolved(fallbackKey, fallbackKey);
+        }
         return;
       }
       const currentContext = this.ensureAudioContext();
       if (!currentContext) {
         return;
       }
-      this.startMusicLoop(currentContext, key, config, buffer, token);
+      this.startMusicLoop(currentContext, resolvedKey, config, buffer, token);
     });
   }
 

@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { heavyHitFocusConfig, narrativeTintConfig, stageConfig, stageMapConfig, stageVisualConfig, vignetteDynamicsConfig, weatherVisualConfig } from "../data/gameConfig";
+import { heavyHitFocusConfig, narrativeTintConfig, occlusionVisualConfig, stageConfig, stageMapConfig, stageVisualConfig, vignetteDynamicsConfig, weatherVisualConfig } from "../data/gameConfig";
 import type { DayNightTintTier, StageMapEntry, StageMapId, WeatherKind } from "../data/gameConfig";
 import type { InsightOption, PendingInsight } from "../data/progression";
 import { isSkillId, type AdvanceKeyId, type SkillId } from "../data/skills";
@@ -18,7 +18,7 @@ import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
 import { getAudioSystem, getConfigLoadResult, getSaveData, getScreenState, prepareScreenTransition, setRunSummary } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
-import type { DebugSnapshot, RunSummary } from "../types";
+import type { DebugSnapshot, GameEventName, RunSummary } from "../types";
 import { SCENE_KEYS } from "./sceneKeys";
 
 const DEBUG_DAMAGE_AMOUNT = 18;
@@ -130,6 +130,19 @@ type LanternGlowMeta = {
   baseAlpha: number;
 };
 
+/** 散布 prop 记录：image + 散布世界（scroll 空间）坐标 + 微动画/光晕元数据 + QA-003 遮挡淡出状态。 */
+type ScatterPropRecord = {
+  image: Phaser.GameObjects.Image;
+  worldX: number;
+  worldY: number;
+  /** 生成时的基础透明度（含槽位种子随机抖动），动态淡出离开后恢复到此值。 */
+  baseAlpha: number;
+  /** 动态淡出当前是否处于淡化态：仅在状态翻转时重启 Tween，避免每帧叠加补间。 */
+  occlusionFaded: boolean;
+  sway?: ScatterPropSway;
+  glow?: LanternGlowMeta;
+};
+
 export class GameScene extends Phaser.Scene {
   private debugPanel?: DebugPanel;
   private heroHealth?: HeroHealthSystem;
@@ -166,8 +179,11 @@ export class GameScene extends Phaser.Scene {
   private currentMapId: StageMapId = stageMapConfig.defaultMapId;
   /** 地图切换淡入淡出进行中：屏蔽重复 F2，避免叠化穿插。 */
   private stageMapSwitching = false;
-  private scatterProps = new Map<string, { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway; glow?: LanternGlowMeta }>();
+  private scatterProps = new Map<string, ScatterPropRecord>();
   private propSlotSizePx = 256;
+  /** QA-003① 出生安全区圆心（scroll 空间）：create 时按 scroll 起点 + 英雄屏幕位置采样一次；F2 切图不重置。 */
+  private heroSpawnScrollX = 0;
+  private heroSpawnScrollY = 0;
   private bossDimOverlay?: Phaser.GameObjects.Rectangle;
   private bossDimActive = false;
   /** 夜雨破庙·永夜夜色叠加层（全屏冷蓝 MULTIPLY 常驻；仅配置了 nightOverlay 的地图创建）。 */
@@ -252,6 +268,9 @@ export class GameScene extends Phaser.Scene {
     this.runId = createRunId();
     this.stageScrollX = 0;
     this.stageScrollY = 0;
+    // QA-003① 出生安全区圆心：英雄出生点的散布世界（scroll 空间）坐标 = scroll 起点(0,0) + 英雄屏幕位置（屏幕中心）。
+    this.heroSpawnScrollX = this.stageScrollX + this.scale.width / 2;
+    this.heroSpawnScrollY = this.stageScrollY + this.getHeroScreenY();
     // 开局地图：读存档选关（lastMapId），缺失/非法回默认（青石山道）；F2 局内切换仅预览、不回写存档
     const savedMapId = getSaveData(this).lastMapId;
     this.currentMapId = stageMapConfig.maps.some((entry) => entry.id === savedMapId)
@@ -471,8 +490,22 @@ export class GameScene extends Phaser.Scene {
     const unsubscribeBossIntroInk = eventBus.on("boss_intro_started", () => {
       this.playBossIntroInkWipe();
     });
+    // QA-003④ Boss 出场落点守护：落点屏幕 y 须 ≤ 屏幕高 - bossIntroMinBottomMarginPx（避开底部技能栏）。
+    // 落点由 BossSystem 按英雄相对偏移计算（当前为英雄上方 90px，落点约屏幕 y=192，已满足约束）；
+    // 出场落点不归本场景管辖，此处仅防御性校验：并行代理改动越界时留 console 痕迹，不改写 Boss 世界坐标。
+    const unsubscribeBossSlamGuard = eventBus.on<{ screenY?: number }>("boss_slam_landed" as GameEventName, (payload) => {
+      const screenY = typeof payload?.screenY === "number" ? payload.screenY : undefined;
+      if (screenY === undefined) {
+        return;
+      }
+      const maxLandingY = this.scale.height - occlusionVisualConfig.bossIntroMinBottomMarginPx;
+      if (screenY > maxLandingY) {
+        console.debug(`[QA-003] Boss 出场落点 y=${Math.round(screenY)} 越过底部安全线 y≤${Math.round(maxLandingY)}（BossSystem 出场偏移被改动，请复查）`);
+      }
+    });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       unsubscribeBossIntroInk();
+      unsubscribeBossSlamGuard();
     });
     const unsubscribeInsightSelected = eventBus.on<{ optionId?: string; cardId?: string }>("insight_option_selected", (payload) => {
       this.applyInsightSelection(payload.optionId ?? payload.cardId ?? "");
@@ -772,6 +805,8 @@ export class GameScene extends Phaser.Scene {
     this.nightOverlay?.destroy();
     this.nightOverlay = undefined;
     for (const prop of this.scatterProps.values()) {
+      // 淡出补间随重建一并清理，避免残留 Tween 引用已销毁对象。
+      this.tweens.killTweensOf(prop.image);
       prop.image.destroy();
       prop.glow?.image.destroy();
     }
@@ -858,6 +893,8 @@ export class GameScene extends Phaser.Scene {
 
     for (const [key, prop] of this.scatterProps) {
       if (!needed.has(key)) {
+        // 淡出补间随回收一并清理，避免残留 Tween 引用已销毁对象。
+        this.tweens.killTweensOf(prop.image);
         prop.image.destroy();
         prop.glow?.image.destroy();
         this.scatterProps.delete(key);
@@ -875,7 +912,7 @@ export class GameScene extends Phaser.Scene {
     slotI: number,
     slotJ: number,
     slotSize: number
-  ): { image: Phaser.GameObjects.Image; worldX: number; worldY: number; sway?: ScatterPropSway; glow?: LanternGlowMeta } | undefined {
+  ): ScatterPropRecord | undefined {
     const random = mulberry32(hashScatterSlot(slotI, slotJ));
     if (random() > stageVisualConfig.propDensity) {
       return undefined;
@@ -894,12 +931,30 @@ export class GameScene extends Phaser.Scene {
     if (!this.textures.exists(textureKey)) {
       return undefined;
     }
-    const base = SCATTER_PROP_BASE[textureKey] ?? { depth: -21, alpha: 0.55, scale: 0.8 };
     const worldX = slotI * slotSize + random() * slotSize;
     const worldY = slotJ * slotSize + random() * slotSize;
+    // QA-003③ HUD 安全区：屏幕顶部条带（hudSafeTopPx）内不生成任何散布 prop。
+    // 槽位本次跳过、不记账，滚出条带后由后续 refreshPropScatter 补生，保证确定性布局不变。
+    if (worldY - this.stageScrollY < occlusionVisualConfig.hudSafeTopPx) {
+      return undefined;
+    }
+    // QA-003① 出生安全区：高遮挡大件（竹丛/枫树/石佛/残垣）落到出生点半径内时，
+    // 换当前地图散布池中的首个小件（石堆/酒坛等不受影响）；池中无小件可用则跳过本槽位。
+    if (occlusionVisualConfig.largeOccluderKeys.includes(textureKey)) {
+      const distanceToSpawn = Math.hypot(worldX - this.heroSpawnScrollX, worldY - this.heroSpawnScrollY);
+      if (distanceToSpawn < occlusionVisualConfig.spawnSafeRadiusPx) {
+        const smallKey = this.pickSmallScatterPropKey();
+        if (!smallKey || !this.textures.exists(smallKey)) {
+          return undefined;
+        }
+        textureKey = smallKey;
+      }
+    }
+    const base = SCATTER_PROP_BASE[textureKey] ?? { depth: -21, alpha: 0.55, scale: 0.8 };
+    const baseAlpha = base.alpha * (0.85 + random() * 0.3);
     const image = this.add.image(worldX - this.stageScrollX, worldY - this.stageScrollY, textureKey)
       .setDepth(base.depth)
-      .setAlpha(base.alpha * (0.85 + random() * 0.3))
+      .setAlpha(baseAlpha)
       .setScale(base.scale * (0.85 + random() * 0.35))
       .setFlipX(random() >= 0.5);
     // 移动背景：残旗/竹丛/灯笼挂微动画元数据，相位由槽位种子错开。
@@ -928,7 +983,56 @@ export class GameScene extends Phaser.Scene {
         glow = { image: glowImage, phase: random() * Math.PI * 2, baseAlpha: LANTERN_GLOW_BASE_ALPHA };
       }
     }
-    return { image, worldX, worldY, sway, glow };
+    return { image, worldX, worldY, baseAlpha, occlusionFaded: false, sway, glow };
+  }
+
+  /**
+   * QA-003① 出生安全区大件替换：从当前地图散布池中挑首个非高遮挡小件 key（石堆/酒坛等）；
+   * 池中无小件（极端配置）时返回 undefined，调用方跳过本槽位。
+   */
+  private pickSmallScatterPropKey(): string | undefined {
+    const pool = this.getCurrentStageMap().scatterPool;
+    for (const entry of pool) {
+      if (!occlusionVisualConfig.largeOccluderKeys.includes(entry.key)) {
+        return entry.key;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * QA-003② 动态淡出（每帧检查）：英雄进入大件 prop 遮挡范围
+   * （水平距离 < propFadeRadiusPx 且 prop depth 高于英雄）时 alpha 补间到 propFadeAlpha，
+   * 离开后补间回生成时的 baseAlpha。仅在状态翻转时重启 Tween，避免每帧叠加补间。
+   * 注：depth 判定逐帧读取 prop.image.depth，兼容并行代理对树冠/石像层级的动态调整；
+   * 当前 SCATTER_PROP_BASE 中大件 depth(-22) 低于英雄(14) 时自然不触发，零副作用。
+   */
+  private updatePropOcclusionFade(): void {
+    if (this.scatterProps.size === 0) {
+      return;
+    }
+    const heroScreenX = this.scale.width / 2;
+    const heroDepth = this.heroView?.depth ?? HERO_VIEW_DEPTH;
+    const radiusPx = occlusionVisualConfig.propFadeRadiusPx;
+    for (const prop of this.scatterProps.values()) {
+      if (!occlusionVisualConfig.largeOccluderKeys.includes(prop.image.texture.key)) {
+        continue;
+      }
+      const coversHeroDepth = prop.image.depth > heroDepth;
+      const withinRadius = Math.abs(prop.worldX - this.stageScrollX - heroScreenX) < radiusPx;
+      const shouldFade = coversHeroDepth && withinRadius;
+      if (shouldFade === prop.occlusionFaded) {
+        continue;
+      }
+      prop.occlusionFaded = shouldFade;
+      this.tweens.killTweensOf(prop.image);
+      this.tweens.add({
+        targets: prop.image,
+        alpha: shouldFade ? occlusionVisualConfig.propFadeAlpha : prop.baseAlpha,
+        duration: occlusionVisualConfig.propFadeMs,
+        ease: "Sine.easeInOut"
+      });
+    }
   }
 
   private updateAtmosphere(deltaMs: number): void {
@@ -957,6 +1061,7 @@ export class GameScene extends Phaser.Scene {
     this.updateWeatherTimeline();
     this.updateDayNightCycle(deltaMs);
     this.updatePropSway();
+    this.updatePropOcclusionFade();
     this.updateWeatherRipples();
   }
 
@@ -2296,7 +2401,7 @@ export class GameScene extends Phaser.Scene {
   private createRunSummary(
     result: RunSummary["result"],
     deathCause?: string,
-    overrides: Partial<Pick<RunSummary, "bossDefeated">> = {}
+    overrides: Partial<Pick<RunSummary, "bossDefeated" | "bossId">> = {}
   ): RunSummary {
     return {
       runId: this.runId,
@@ -2306,6 +2411,7 @@ export class GameScene extends Phaser.Scene {
       level: this.heroLevel,
       copperEarned: 0,
       bossDefeated: overrides.bossDefeated ?? false,
+      bossId: overrides.bossId,
       deathCause
     };
   }
@@ -2815,7 +2921,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.bossEndQueued = true;
     const runSummary = this.createRunSummary("win", undefined, {
-      bossDefeated: true
+      bossDefeated: true,
+      bossId: _summary.bossId
     });
     setRunSummary(this, runSummary);
     JuiceSystem.get(this).bossDeath();

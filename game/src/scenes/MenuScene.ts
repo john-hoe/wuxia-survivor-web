@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { stageMapConfig } from "../data/gameConfig";
 import type { StageMapId } from "../data/gameConfig";
 import { saveSystem } from "../systems/SaveSystem";
-import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle, spacedText } from "../ui/minimalTheme";
+import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle, spacedText, type MinimalRowHandle } from "../ui/minimalTheme";
 import { FONT_BODY, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
@@ -17,10 +17,25 @@ const MENU_FIRST_ROW_Y = 246;
 const MENU_ROW_GAP = 64;
 /** 选关行紧跟"开始闯荡"，弱化行距更紧凑 */
 const MAP_ROW_GAP = 50;
+/** QA-004：◀ ▶ 箭头与选关行文字边缘的间距（px，容器局部坐标） */
+const MAP_ARROW_GAP = 44;
+/** QA-004：行尾页码与 ▶ 箭头的间距（px） */
+const MAP_PAGE_GAP = 34;
+/** QA-004：行下"点击切换"提示的纵向偏移（px） */
+const MAP_HINT_OFFSET_Y = 30;
+/** QA-004：标题下"当前关卡 · X"联动行的 y 坐标 */
+const CURRENT_MAP_LABEL_Y = TITLE_Y + 54;
 
 export class MenuScene extends Phaser.Scene {
   /** 选关行的文字对象（addMinimalMenuRow 容器第 0 个元素），切换时行内更新。 */
   private mapRowText?: Phaser.GameObjects.Text;
+  /** QA-004：选关行 ◀ ▶ 切换箭头（挂在选关行容器内，随入场 stagger 一起淡入）。 */
+  private mapArrowLeft?: Phaser.GameObjects.Text;
+  private mapArrowRight?: Phaser.GameObjects.Text;
+  /** QA-004：行尾页码（1/3、2/3、3/3）。 */
+  private mapPageText?: Phaser.GameObjects.Text;
+  /** QA-004：标题下"当前关卡 · X"联动行（13px 芥金）。 */
+  private currentMapText?: Phaser.GameObjects.Text;
 
   constructor() {
     super(SCENE_KEYS.menu);
@@ -29,8 +44,16 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     enterScreen(this, "menu");
 
-    // 菜单 BGM（与关卡同曲不同 key；AudioSystem 未实现 playMusic 时静默跳过）
-    (getAudioSystem(this) as any)?.playMusic?.("music_menu");
+    // QA-006：注入"当前选关地图 id"解析器（闭包读全局 registry 存档，场景关闭后仍有效）；
+    // AudioSystem 据此把 GameScene 旧版硬编码的关卡 BGM 请求重映射到该图 musicId。
+    getAudioSystem(this).setStageMapIdResolver(() => {
+      try {
+        return this.readSelectedMapId(getSaveData(this));
+      } catch {
+        return undefined;
+      }
+    });
+    // QA-010：菜单 BGM 不随 create 立即播放，延迟到首次可信手势解锁后（见底部 POINTER_DOWN）
 
     const saveData = getSaveData(this);
     const centerX = this.scale.width / 2;
@@ -51,8 +74,15 @@ export class MenuScene extends Phaser.Scene {
       }
     ).setOrigin(0.5).setResolution(2);
 
-    // 书法标题 + 朱砂"侠"印
+    // 书法标题 + 朱砂"侠"印（"青石山道"保留为产品名，不随选关变化）
     addMinimalTitle(this, "青石山道", TITLE_Y, 72, "侠");
+
+    // QA-004：标题下常驻"当前关卡 · X"（13px 芥金），与选关行联动
+    this.currentMapText = this.add.text(centerX, CURRENT_MAP_LABEL_Y, "", {
+      color: PALETTE.accentGoldCss,
+      fontFamily: FONT_BODY,
+      fontSize: "13px"
+    }).setOrigin(0.5).setResolution(2).setAlpha(0.9);
 
     this.createHero(centerX, screenHeight);
 
@@ -69,6 +99,8 @@ export class MenuScene extends Phaser.Scene {
       this.cycleMapSelection();
     }, { fontSize: 20 });
     this.mapRowText = mapRow.container.getAt(0) as Phaser.GameObjects.Text;
+    // QA-004：◀ ▶ 可点击箭头 + 行尾页码 + 行下"点击切换"提示（挂入选关行容器，随入场动画淡入）
+    this.addMapRowChrome(mapRow);
 
     const scriptureRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP + MENU_ROW_GAP, "翻阅秘籍", () => {
       getAudioSystem(this).playPlaceholder("ui_click");
@@ -97,10 +129,14 @@ export class MenuScene extends Phaser.Scene {
 
     this.addFullscreenButton();
 
-    // 首次手势解锁音频（autoplay 策略），AudioSystem 若未实现则静默跳过
+    // 首次可信手势统一创建/恢复 AudioContext（QA-010，消除 autoplay 警告），随后再开播菜单 BGM
     this.input.once(Phaser.Input.Events.POINTER_DOWN, () => {
-      (getAudioSystem(this) as unknown as { unlockFromGesture?: () => void }).unlockFromGesture?.();
+      getAudioSystem(this).unlockFromGesture();
+      getAudioSystem(this).playMusic("music_menu");
     });
+
+    // QA-004：初始化页码 / 标题下"当前关卡 · X" / document.title / 画布 aria-label
+    this.syncSelectedMapChrome();
 
     fadeIn(this);
   }
@@ -155,8 +191,8 @@ export class MenuScene extends Phaser.Scene {
     return found ? found.id : stageMapConfig.defaultMapId;
   }
 
-  /** 选关行点击：按 maps 数组顺序循环切换（三图） → 行内文字更新 + 金色微闪 + ui_click → 写存档。 */
-  private cycleMapSelection(): void {
+  /** 选关行/◀ ▶ 箭头点击：按 maps 数组顺序循环切换（direction ±1） → 写存档 → 联动 UI 同步 → 金色微闪。 */
+  private cycleMapSelection(direction = 1): void {
     const saveData = getSaveData(this);
     const maps = stageMapConfig.maps;
     if (maps.length < 2 || !this.mapRowText) {
@@ -164,7 +200,7 @@ export class MenuScene extends Phaser.Scene {
     }
     const currentId = this.readSelectedMapId(saveData);
     const currentIndex = Math.max(0, maps.findIndex((entry) => entry.id === currentId));
-    const next = maps[(currentIndex + 1) % maps.length];
+    const next = maps[(currentIndex + direction + maps.length) % maps.length];
 
     saveData.lastMapId = next.id;
     saveSystem.write(saveData);
@@ -172,8 +208,10 @@ export class MenuScene extends Phaser.Scene {
 
     getAudioSystem(this).playPlaceholder("ui_click");
 
+    // QA-004：行内文字 + 行尾页码 + 标题下联动行 + document.title / aria-label 一次性同步
+    this.syncSelectedMapChrome();
+
     const text = this.mapRowText;
-    text.setText(spacedText(`关卡 · ${next.displayName}`));
     // 金色微闪：染金 + 120ms 缩放脉冲；清色用 delayedCall（hover 会 killTweensOf(text)，避免金色残留）
     this.tweens.killTweensOf(text);
     text.setTint(PALETTE.accentGold);
@@ -191,6 +229,102 @@ export class MenuScene extends Phaser.Scene {
     this.time.delayedCall(240, () => {
       text.clearTint();
     });
+  }
+
+  /**
+   * QA-004 选关可发现性：选关行两侧 ◀ ▶ 可点击箭头、行尾页码、行下"点击切换"小字。
+   * 全部挂进选关行容器（局部坐标），随行的入场 stagger 一起淡入；初始位置由 layoutMapRowChrome 校正。
+   */
+  private addMapRowChrome(mapRow: MinimalRowHandle): void {
+    this.mapArrowLeft = this.add.text(-80, 0, "◀", {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_BODY,
+      fontSize: "20px"
+    }).setOrigin(0.5).setResolution(2).setAlpha(0.7);
+    this.mapArrowRight = this.add.text(80, 0, "▶", {
+      color: PALETTE.textPrimary,
+      fontFamily: FONT_BODY,
+      fontSize: "20px"
+    }).setOrigin(0.5).setResolution(2).setAlpha(0.7);
+    this.mapPageText = this.add.text(120, 0, "", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "13px"
+    }).setOrigin(0.5).setResolution(2).setAlpha(0.9);
+    const hint = this.add.text(0, MAP_HINT_OFFSET_Y, "点击切换", {
+      color: PALETTE.textSecondary,
+      fontFamily: FONT_BODY,
+      fontSize: "11px"
+    }).setOrigin(0.5).setResolution(2).setAlpha(0.75);
+
+    this.bindMapArrow(this.mapArrowLeft, -1);
+    this.bindMapArrow(this.mapArrowRight, 1);
+    mapRow.container.add([this.mapArrowLeft, this.mapArrowRight, this.mapPageText, hint]);
+    this.layoutMapRowChrome();
+  }
+
+  /** ◀ ▶ 箭头：加大热区 + hover 染金，点击按方向切换（阻止冒泡到选关行容器，避免一次点击连切两回）。 */
+  private bindMapArrow(arrow: Phaser.GameObjects.Text, direction: number): void {
+    arrow.setInteractive(
+      new Phaser.Geom.Rectangle(-18, -16, arrow.width + 36, arrow.height + 32),
+      Phaser.Geom.Rectangle.Contains
+    );
+    if (arrow.input) {
+      arrow.input.cursor = "pointer";
+    }
+    arrow.on(Phaser.Input.Events.POINTER_OVER, () => {
+      arrow.setAlpha(1).setTint(PALETTE.accentGold);
+    });
+    arrow.on(Phaser.Input.Events.POINTER_OUT, () => {
+      arrow.setAlpha(0.7).clearTint();
+    });
+    arrow.on(
+      Phaser.Input.Events.POINTER_DOWN,
+      (_pointer: Phaser.Input.Pointer, _localX: number, _localY: number, event: Phaser.Types.Input.EventData) => {
+        event.stopPropagation();
+        this.cycleMapSelection(direction);
+      }
+    );
+  }
+
+  /** 选关行文字宽度变化后重排 ◀ ▶ 与页码（容器局部坐标，行文字居中于 0）。 */
+  private layoutMapRowChrome(): void {
+    if (!this.mapRowText || !this.mapArrowLeft || !this.mapArrowRight || !this.mapPageText) {
+      return;
+    }
+    const halfWidth = this.mapRowText.width / 2;
+    this.mapArrowLeft.setX(-(halfWidth + MAP_ARROW_GAP));
+    this.mapArrowRight.setX(halfWidth + MAP_ARROW_GAP);
+    this.mapPageText.setX(halfWidth + MAP_ARROW_GAP + MAP_PAGE_GAP);
+  }
+
+  /**
+   * QA-004：选关状态 → 全部联动处一次性同步：
+   * 行内文字、行尾页码、标题下"当前关卡 · X"、document.title、canvas / #game-root 的 aria-label。
+   */
+  private syncSelectedMapChrome(): void {
+    const maps = stageMapConfig.maps;
+    if (maps.length === 0) {
+      return;
+    }
+    const mapId = this.readSelectedMapId(getSaveData(this));
+    const index = Math.max(0, maps.findIndex((entry) => entry.id === mapId));
+    const map = maps[index] ?? maps[0];
+
+    this.mapRowText?.setText(spacedText(`关卡 · ${map.displayName}`));
+    this.mapPageText?.setText(`${index + 1}/${maps.length}`);
+    this.currentMapText?.setText(`当前关卡 · ${map.displayName}`);
+    this.layoutMapRowChrome();
+
+    // document.title 与画布 aria-label 随当前地图同步（标签页与屏幕阅读器可辨识当前关卡）
+    try {
+      document.title = map.displayName;
+      const ariaLabel = `${map.displayName}游戏画布`;
+      this.game.canvas?.setAttribute("aria-label", ariaLabel);
+      document.getElementById("game-root")?.setAttribute("aria-label", ariaLabel);
+    } catch {
+      // 非浏览器环境（测试/SSR）静默跳过
+    }
   }
 
   /** 少侠待机：居中下方漂浮（纹理/动画存在才启用），底部垫一团墨影。 */
