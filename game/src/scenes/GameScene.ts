@@ -1513,6 +1513,7 @@ export class GameScene extends Phaser.Scene {
    * 毒化「墨里淬毒」Lv3+：主墨环下垫一缕 0x3fae8a 碧色弧（起笔错开 30°，比主环宽 1px 透出绿韵）；
    * 进阶「金蛊江山」碧弧转金绿 0xa9c04a。level/advanced 防御性读取，缺省按 Lv1 纯墨。
    */
+  /** 「一笔落成」：施放时一道飞白笔锋在落点横向刷开（替代原圆圈勾勒），随后淡化融入地面墨痕。 */
   private playMoranZoneRing(worldX?: number, worldY?: number, radius?: number, level?: number, advanced?: boolean): void {
     if (!this.scene.isActive() || getScreenState(this) !== "game") {
       return;
@@ -1529,44 +1530,74 @@ export class GameScene extends Phaser.Scene {
       const heroScreen = this.getHeroScreenPosition();
       const centerX = worldX !== undefined ? heroScreen.x + (worldX - heroWorld.x) : heroScreen.x;
       const centerY = worldY !== undefined ? heroScreen.y + (worldY - heroWorld.y) : heroScreen.y;
-      const ringRadius = Math.max(48, radius ?? 90);
+      const zoneRadius = Math.max(48, radius ?? 90);
       const poisonEdge = (typeof level === "number" && Number.isFinite(level) ? level : 1) >= 3;
-      const poisonEdgeColor = advanced === true ? 0xa9c04a : 0x3fae8a;
-      const ink = this.add.graphics().setDepth(64);
+      const strokeKey = `vfx_ink_stroke_${Phaser.Math.Between(1, 4)}`;
+      const accentKey = `vfx_ink_stroke_${Phaser.Math.Between(1, 4)}`;
+      const mainScale = (zoneRadius * 2) / 256;
+      const rotation = Phaser.Math.DegToRad(Phaser.Math.Between(-18, 18));
+
+      // 主笔锋：随机一张飞白笔触，横向 crop 从 0 刷开
+      const mainStroke = this.textures.exists(strokeKey)
+        ? this.add.image(centerX, centerY, strokeKey)
+        : undefined;
+      if (!mainStroke) {
+        return; // 笔触缺失时静默（领域本身的墨痕已足够表达）
+      }
+      mainStroke
+        .setDepth(64)
+        .setOrigin(0.5)
+        .setScale(mainScale)
+        .setRotation(rotation)
+        .setAlpha(0.95);
+      if (poisonEdge) {
+        mainStroke.setTint(advanced === true ? 0xd4b84a : 0x9fd4ba);
+      }
+
+      // 副笔锋：更小、错位旋转，增加"连笔"感
+      let accentStroke: Phaser.GameObjects.Image | undefined;
+      if (this.textures.exists(accentKey)) {
+        accentStroke = this.add.image(
+          centerX + Phaser.Math.Between(-14, 14),
+          centerY + Phaser.Math.Between(-10, 10),
+          accentKey
+        );
+        accentStroke
+          .setDepth(63)
+          .setOrigin(0.5)
+          .setScale(mainScale * Phaser.Math.FloatBetween(0.55, 0.7))
+          .setRotation(rotation + Phaser.Math.DegToRad(Phaser.Math.Between(60, 110)))
+          .setAlpha(0.6);
+        if (poisonEdge) {
+          accentStroke.setTint(advanced === true ? 0xa9c04a : 0x3fae8a);
+        }
+      }
+
+      const frame = mainStroke.frame;
       const state = { t: 0 };
       this.tweens.add({
         targets: state,
         t: 1,
-        duration: 350,
+        duration: 300,
         ease: Phaser.Math.Easing.Quadratic.Out,
         onUpdate: () => {
-          ink.clear();
-          if (poisonEdge) {
-            // 碧色弧垫底：5px 比主墨环宽 1px、起笔错开 30°（-60° 起笔），透出墨缘绿韵
-            ink.lineStyle(5, poisonEdgeColor, 0.6);
-            ink.beginPath();
-            ink.arc(centerX, centerY, ringRadius, Phaser.Math.DegToRad(-60), Phaser.Math.DegToRad(-60 + state.t * 360));
-            ink.strokePath();
-          }
-          // 主墨环：从 -90° 起笔扫到当前进度
-          ink.lineStyle(4, 0x1a1f1a, 0.85);
-          ink.beginPath();
-          ink.arc(centerX, centerY, ringRadius, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + state.t * 360));
-          ink.strokePath();
-          // 内圈淡金墨意（进阶感，极浅）
-          ink.lineStyle(2, 0xa99a20, 0.25);
-          ink.beginPath();
-          ink.arc(centerX, centerY, ringRadius * 0.82, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + state.t * 360));
-          ink.strokePath();
+          mainStroke.setCrop(0, 0, Math.round(frame.width * state.t), frame.height);
+          accentStroke?.setAlpha(0.6 * state.t);
         },
         onComplete: () => {
-          this.tweens.add({
-            targets: ink,
-            alpha: 0,
-            duration: 300,
-            delay: 250,
-            onComplete: () => ink.destroy()
-          });
+          mainStroke.setCrop();
+          for (const [index, stroke] of [mainStroke, accentStroke].entries()) {
+            if (!stroke) {
+              continue;
+            }
+            this.tweens.add({
+              targets: stroke,
+              alpha: 0,
+              duration: 300,
+              delay: 240 + index * 60,
+              onComplete: () => stroke.destroy()
+            });
+          }
         }
       });
     } catch {
