@@ -23,7 +23,7 @@ type SkillSystemOptions = {
   knockbackEnemy: (runtimeId: number, originWorld: Point, distance: number, source: string) => boolean;
   onEnemyKilled: (result: EnemyDamageResult) => void;
   playSfx: (eventId: string) => void;
-  /** 可选：英雄面向（归一化输入方向）。烈火神掌无有效目标时按面向横置火墙；缺省/静止时回退默认方向。 */
+  /** 可选：英雄面向（归一化输入方向）。烈火神掌无有效目标时按面向喷发火径；缺省/静止时回退默认方向。 */
   getHeroFacing?: () => Point | undefined;
 };
 
@@ -114,16 +114,28 @@ type VfxRuntime = {
   type: "hit" | "die" | "advance";
 };
 
+/** 火浪推进计划项：推浪火点按 atMs 错峰喷发（纯数据，随墙销毁，无定时器泄漏面） */
+type FireWaveBurstPlan = {
+  /** 距施放毫秒数（火浪总时长 FIRE_WAVE_DURATION_MS 内 stagger） */
+  atMs: number;
+  worldX: number;
+  worldY: number;
+  /** 火点显示缩放（墙宽基准 × 0.8-1.0 随机） */
+  scale: number;
+};
+
 /**
- * 烈火神掌·火墙：世界锚定的旋转矩形线状 DoT 场，长轴垂直于施放指向。
- * 视图为段贴图拼接 Container（vfx_fire_wall 4 帧序列，缺失走程序化兜底），随墙销毁。
+ * 烈火神掌·地火喷发：世界锚定的旋转矩形线状 DoT 场，长轴沿施放指向、起点即英雄位置
+ * （判定矩形中心 = 英雄 + 指向 × 墙长/2，与火径视觉线完全重合）。
+ * 呈现两段式：①火浪推进——pendingBursts 计划表 300ms 内沿指向错峰喷出 vfx_fire_burst 火点；
+ * ②火径留守——vfx_fire_wall 段沿指向拼接（1.5× 厚度、50% 重叠、NORMAL 主体 + ADD 焰心），随墙销毁。
  */
 type WallRuntime = {
   runtimeId: number;
   skillId: SkillId;
   worldX: number;
   worldY: number;
-  /** 墙长轴方向（弧度）；施放指向 + 90° */
+  /** 火径长轴方向（弧度）= 施放指向（密集方向/英雄面向） */
   angleRad: number;
   length: number;
   width: number;
@@ -137,6 +149,11 @@ type WallRuntime = {
   advanced: boolean;
   /** 灼烧跳数（基础 1 / 进阶 2） */
   burnTicks: number;
+  /** 施放瞬间英雄世界坐标（出掌爆点位置，火径/推浪起点） */
+  castX: number;
+  castY: number;
+  /** 火浪推进计划（atMs 升序）：updateWalls 到点喷发，喷完即空 */
+  pendingBursts: FireWaveBurstPlan[];
   view: Phaser.GameObjects.Container;
 };
 
@@ -253,26 +270,43 @@ const ORBIT_RING_ALPHA_BASE = 0.14;
 const ORBIT_RING_ALPHA_ADVANCED = 0.22;
 /** 轨道环深度：地面墨层（2）之上、敌人（8-9）之下，仅作轨道指引 */
 const ORBIT_RING_DEPTH = 4;
-// ── 烈火神掌 · 火墙（kind "wall"）──
-/** 火墙并发上限（冷却 4-5s > 持续 3-3.4s，常态单墙，进阶/低压时可短暂双墙） */
+// ── 烈火神掌 · 地火喷发（kind "wall"）──
+/** 火径并发上限（冷却 4-5s > 持续 3-3.4s，常态单条，进阶/低压时可短暂双条） */
 const MAX_WALLS = 2;
-/** 火墙段贴图（4 帧序列，跨代理约定键，未注册时走程序化兜底火焰矩形） */
+/** 火径段贴图（4 帧序列，跨代理约定键，未注册时走程序化兜底火径） */
 const FIRE_WALL_SEGMENT_TEXTURE = "vfx_fire_wall";
-/** 施放点一次性迸发序列帧（跨代理约定键，缺失退化为金红扩散环） */
+/** 推浪火点/出掌爆点一次性迸发序列帧（跨代理约定键，缺失退化为金红扩散环） */
 const FIRE_WALL_BURST_TEXTURE = "vfx_fire_burst";
 /** 段贴图 0 号帧缺省尺寸（读取失败时按 48×48 方形帧计） */
 const FIRE_WALL_SEGMENT_FALLBACK_SIZE = 48;
-/** 火墙深度：地面墨层（2）之上、敌人（8-9）之下——火墙贴地燃烧，不盖角色 */
+/** 火径深度：地面墨层（2）之上、敌人（8-9）之下——火径贴地燃烧，不盖角色 */
 const FIRE_WALL_DEPTH = 6;
-/** 施放点迸发深度：火墙之上、敌人之下 */
+/** 推浪火点/出掌爆点深度：火径之上、敌人之下 */
 const FIRE_WALL_BURST_DEPTH = 7;
-/** 火墙淡入/淡出时长：出手即燃（快淡入），熄灭前渐隐（慢淡出） */
+/** 火径淡入/淡出时长：出手即燃（快淡入），熄灭前渐隐（慢淡出） */
 const FIRE_WALL_FADE_IN_MS = 160;
 const FIRE_WALL_FADE_OUT_MS = 420;
-/** 火墙整体透明度上限（ADD 混合下保留地面可读性） */
+/** 火径整体透明度上限（NORMAL 混合下保留地面可读性） */
 const FIRE_WALL_MAX_ALPHA = 0.96;
-/** 无有效目标时的兜底施放：英雄面向前方该距离处横置火墙 */
-const FIRE_WALL_FALLBACK_CAST_DISTANCE = 180;
+/** 火浪推进：总时长 300ms，火点间距目标 45px（数量钳 5-7 个，间隔 = 300/数量 ≈ 43-60ms stagger） */
+const FIRE_WAVE_DURATION_MS = 300;
+const FIRE_WAVE_POINT_SPACING_PX = 45;
+const FIRE_WAVE_MIN_POINTS = 5;
+const FIRE_WAVE_MAX_POINTS = 7;
+/** 推浪火点缩放区间（乘墙宽基准）；出掌爆点固定 ×1.2，明显大于火点 */
+const FIRE_WAVE_POINT_SCALE_MIN = 0.8;
+const FIRE_WAVE_POINT_SCALE_MAX = 1;
+const FIRE_CAST_BURST_SCALE = 1.2;
+/** 火径留守：段放大 1.5×（墙厚 36-48 → 54-72）、相邻段重叠 50% 消除缝隙 */
+const FIRE_TRAIL_SEGMENT_SCALE = 1.5;
+const FIRE_TRAIL_SEGMENT_OVERLAP = 0.5;
+/** 火径主体 NORMAL 混合透明度（禁止整墙 ADD：水墨底上发灰发粉） */
+const FIRE_TRAIL_SEGMENT_ALPHA = 0.92;
+/** 焰心提亮：每段中心同贴图小 copy，ADD 混合低透明度（小面积提亮不过曝） */
+const FIRE_TRAIL_CORE_SCALE = 0.55;
+const FIRE_TRAIL_CORE_ALPHA = 0.35;
+/** 火径段随推浪逐个点燃的亮起时长 */
+const FIRE_TRAIL_REVEAL_FADE_MS = 90;
 /** 灼烧：最后一次命中后再跳的延迟与进阶多跳间隔（表现层常量，不进 data/skills 数值表） */
 const FIRE_WALL_BURN_DELAY_MS = 2000;
 const FIRE_WALL_BURN_TICK_INTERVAL_MS = 500;
@@ -1214,12 +1248,14 @@ export class SkillSystem {
     return this.scene.textures.exists(POISON_BUBBLE_FALLBACK_TEXTURE) ? POISON_BUBBLE_FALLBACK_TEXTURE : undefined;
   }
 
-  // ---------- 烈火神掌 · 火墙（kind "wall"） ----------
+  // ---------- 烈火神掌 · 地火喷发（kind "wall"） ----------
 
   /**
-   * 施放：敌人最密集方向（密度质心，复用 pickZoneCenter 的单趟 O(n²) 邻域计数，≥4s 一次开销可忽略）
-   * 横置火墙——长轴垂直于英雄→质心指向，切断来敌路径；无有效目标时按英雄面向
-   * （getHeroFacing 可选注入）在前方 FIRE_WALL_FALLBACK_CAST_DISTANCE 处横置，面向缺失回退正右方向。
+   * 施放即推掌：敌人最密集方向（密度质心，复用 pickZoneCenter 的单趟 O(n²) 邻域计数，≥4s 一次
+   * 开销可忽略）定火径指向，火径起点即英雄位置——先出掌爆点，再沿指向 300ms 错峰喷出
+   * 5-7 个推浪火点（火浪推进），随后整条火线留下燃烧火径（DoT 期判定矩形 = 英雄沿指向
+   * 偏移 墙长/2，长轴沿指向，时长/数值与现行 wall 完全一致）；无有效目标时按英雄面向
+   * （getHeroFacing 可选注入）喷发，面向缺失回退正右方向。
    */
   private castWallSkillIfReady(runtime: SkillRuntime, targets: CombatTargetSnapshot[]): void {
     if (runtime.cooldownMs > 0 || this.walls.length >= MAX_WALLS) {
@@ -1245,6 +1281,9 @@ export class SkillSystem {
       level: runtime.level,
       advanced: runtime.advanced,
       burnTicks: profile.burnTicks,
+      castX: heroWorld.x,
+      castY: heroWorld.y,
+      pendingBursts: this.buildFireWavePlan(heroWorld, placement.dirX, placement.dirY, profile),
       view: this.createFireWallView(placement, profile, runtime.advanced)
     };
     this.nextWallId += 1;
@@ -1276,44 +1315,83 @@ export class SkillSystem {
     });
   }
 
-  /** 选点：最密方向质心（限 range 内）+ 垂直朝向；无目标走英雄面向兜底。仅施放瞬间调用。 */
+  /**
+   * 选向定矩形：最密方向质心（限 range 内）只取指向；无目标/英雄已在质心处走英雄面向兜底，
+   * 面向缺失回退正右。判定矩形中心 = 英雄 + 指向 × 墙长/2，长轴沿指向——
+   * 火径起点即英雄，不再从密集点凭空出现。仅施放瞬间调用。
+   */
   private pickWallPlacement(
     targets: CombatTargetSnapshot[],
     profile: ReturnType<SkillSystem["getWallProfile"]>,
     heroWorld: Point
-  ): { x: number; y: number; angleRad: number } {
-    // 邻域半径取半墙长：聚类口径与火墙覆盖面一致，墙尽量压住密度最高的一簇
+  ): { x: number; y: number; angleRad: number; dirX: number; dirY: number } {
+    let dir: Point | undefined;
+    // 邻域半径取半墙长：聚类口径与火径覆盖面一致，指向敌人最密的一簇
     const center = this.pickZoneCenter(targets, Math.max(48, profile.length / 2), profile.range);
     if (center) {
       const dirX = center.x - heroWorld.x;
       const dirY = center.y - heroWorld.y;
       const distance = Math.hypot(dirX, dirY);
-      let wallX = center.x;
-      let wallY = center.y;
-      if (distance > profile.range && distance > 1) {
-        wallX = heroWorld.x + (dirX / distance) * profile.range;
-        wallY = heroWorld.y + (dirY / distance) * profile.range;
+      if (distance > 1) {
+        dir = { x: dirX / distance, y: dirY / distance };
       }
-      // 长轴垂直于指向：火墙横拦来敌而不是顺向贴地
-      const angleRad = distance > 1 ? Math.atan2(dirY, dirX) + Math.PI / 2 : 0;
-      return { x: wallX, y: wallY, angleRad };
     }
 
-    const facing = this.options.getHeroFacing?.();
-    const facingLength = facing ? Math.hypot(facing.x, facing.y) : 0;
-    const dir = facing && facingLength > 0.05
-      ? { x: facing.x / facingLength, y: facing.y / facingLength }
-      : { x: 1, y: 0 };
+    if (!dir) {
+      const facing = this.options.getHeroFacing?.();
+      const facingLength = facing ? Math.hypot(facing.x, facing.y) : 0;
+      dir = facing && facingLength > 0.05
+        ? { x: facing.x / facingLength, y: facing.y / facingLength }
+        : { x: 1, y: 0 };
+    }
+
     return {
-      x: heroWorld.x + dir.x * FIRE_WALL_FALLBACK_CAST_DISTANCE,
-      y: heroWorld.y + dir.y * FIRE_WALL_FALLBACK_CAST_DISTANCE,
-      angleRad: Math.atan2(dir.y, dir.x) + Math.PI / 2
+      x: heroWorld.x + dir.x * (profile.length / 2),
+      y: heroWorld.y + dir.y * (profile.length / 2),
+      // 长轴沿指向：火径从英雄脚下推向目标方向（地火喷发，不再横置）
+      angleRad: Math.atan2(dir.y, dir.x),
+      dirX: dir.x,
+      dirY: dir.y
     };
   }
 
   /**
-   * 火墙主循环：老化/跳伤害（每 tick 只遍历一次敌人列表，施放瞬间立即跳第一次）/
-   * 世界锚定对齐镜头/淡入淡出/到期销毁。灼烧由 updateBurns 独立推进。
+   * 火浪推进计划：从施放点沿指向每 40-50px 一个火点（数量钳 5-7），间隔 = 300ms/数量
+   * ≈ 43-60ms 错峰喷发，形成"火从英雄推出去"的动态线；火点缩放 = 墙宽基准 × 0.8-1.0 随机。
+   * 纯数据计划随墙销毁，不挂定时器，无泄漏面。
+   */
+  private buildFireWavePlan(
+    heroWorld: Point,
+    dirX: number,
+    dirY: number,
+    profile: ReturnType<SkillSystem["getWallProfile"]>
+  ): FireWaveBurstPlan[] {
+    const count = Phaser.Math.Clamp(
+      Math.round(profile.length / FIRE_WAVE_POINT_SPACING_PX),
+      FIRE_WAVE_MIN_POINTS,
+      FIRE_WAVE_MAX_POINTS
+    );
+    const spacing = profile.length / count;
+    const staggerMs = FIRE_WAVE_DURATION_MS / count;
+    const baseScale = (profile.width * 2.4) / this.getTextureFrameWidth(FIRE_WALL_BURST_TEXTURE, 96);
+    const plan: FireWaveBurstPlan[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const distance = spacing * (index + 0.5);
+      plan.push({
+        // 出掌爆点占住 t=0，首个火点延后一个 stagger，推浪感更清晰
+        atMs: (index + 1) * staggerMs,
+        worldX: heroWorld.x + dirX * distance,
+        worldY: heroWorld.y + dirY * distance,
+        scale: baseScale * Phaser.Math.FloatBetween(FIRE_WAVE_POINT_SCALE_MIN, FIRE_WAVE_POINT_SCALE_MAX)
+      });
+    }
+    return plan;
+  }
+
+  /**
+   * 地火喷发主循环：老化/跳伤害（每 tick 只遍历一次敌人列表，施放瞬间立即跳第一次）/
+   * 火浪推进（计划表到点喷发火点）/火径段随推浪逐个点燃/世界锚定对齐镜头/淡入淡出/到期销毁。
+   * 灼烧由 updateBurns 独立推进。
    */
   private updateWalls(deltaMs: number, targets: CombatTargetSnapshot[]): void {
     for (let index = this.walls.length - 1; index >= 0; index -= 1) {
@@ -1324,6 +1402,14 @@ export class SkillSystem {
         wall.tickTimerMs += wall.tickIntervalMs;
         this.tickWall(wall, targets);
       }
+      // 火浪推进：计划表 atMs 升序，到点喷发（施放后 300ms 内错峰完成，喷完即空）
+      while (wall.pendingBursts.length > 0 && wall.pendingBursts[0].atMs <= wall.ageMs) {
+        const burst = wall.pendingBursts.shift();
+        if (burst) {
+          this.spawnFireWaveBurst(wall, burst);
+        }
+      }
+      this.updateFireTrailReveal(wall);
       this.updateWorldAnchoredView(wall.view, wall.worldX, wall.worldY);
       // 淡入 160ms 即燃、熄灭前 420ms 渐隐
       const fadeIn = Phaser.Math.Clamp(wall.ageMs / FIRE_WALL_FADE_IN_MS, 0, 1);
@@ -1334,6 +1420,58 @@ export class SkillSystem {
         wall.view.destroy();
         this.walls.splice(index, 1);
       }
+    }
+  }
+
+  /**
+   * 推浪火点：vfx_fire_burst 一次性序列帧（播完销毁，沿用 bindOneShotDestroy 模式），
+   * ADD 透亮小规模迸发、最后一帧随 updateVfx 淡散；纹理缺失退化为金红扩散环（程序化推浪版）。
+   */
+  private spawnFireWaveBurst(wall: WallRuntime, burst: FireWaveBurstPlan): void {
+    const { x: screenX, y: screenY } = this.worldToScreen(burst.worldX, burst.worldY);
+    if (this.scene.textures.exists(FIRE_WALL_BURST_TEXTURE)) {
+      const view = this.scene.add.sprite(screenX, screenY, FIRE_WALL_BURST_TEXTURE)
+        .setDepth(FIRE_WALL_BURST_DEPTH)
+        .setScale(burst.scale)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      if (wall.advanced) {
+        view.setTint(0xffe6a3);
+      }
+      view.setData("spriteArt", true);
+      view.setData("baseScale", burst.scale);
+      const animationKey = getArtAnimationKey(FIRE_WALL_BURST_TEXTURE);
+      if (this.scene.anims.exists(animationKey)) {
+        view.play(animationKey);
+        this.bindOneShotDestroy(view);
+      }
+      this.vfx.push({ view, worldX: burst.worldX, worldY: burst.worldY, ageMs: 0, durationMs: 360, type: "hit" });
+      return;
+    }
+
+    // 程序化兜底火点：金红扩散小环，与出掌爆点同风格、尺寸随缩放计划收敛
+    const radius = Math.max(10, wall.width * 0.7 * burst.scale);
+    const fill = this.scene.add.circle(0, 0, radius, wall.advanced ? 0xff8a3d : 0xff6b3d, 0.4);
+    const rim = this.scene.add.circle(0, 0, radius, 0x000000, 0)
+      .setStrokeStyle(2, wall.advanced ? 0xffe6a3 : 0xffd27a, 0.85);
+    const view = this.scene.add.container(screenX, screenY, [fill, rim])
+      .setDepth(FIRE_WALL_BURST_DEPTH)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.vfx.push({ view, worldX: burst.worldX, worldY: burst.worldY, ageMs: 0, durationMs: 280, type: "hit" });
+  }
+
+  /**
+   * 火径段随推浪逐个点燃：段/焰心创建时写入 revealAtMs（按轴向位置等比映射到 300ms 推浪期），
+   * ageMs 越过 revealAtMs 后 90ms 内亮起至各自 baseAlpha；推浪期结束后短路零开销。
+   */
+  private updateFireTrailReveal(wall: WallRuntime): void {
+    if (wall.ageMs > FIRE_WAVE_DURATION_MS + FIRE_TRAIL_REVEAL_FADE_MS) {
+      return;
+    }
+    for (const child of wall.view.list) {
+      const revealAtMs = getNumericData(child, "revealAtMs", 0);
+      const baseAlpha = getNumericData(child, "baseAlpha", 1);
+      const lit = Phaser.Math.Clamp((wall.ageMs - revealAtMs) / FIRE_TRAIL_REVEAL_FADE_MS, 0, 1);
+      (child as Phaser.GameObjects.Sprite | Phaser.GameObjects.Shape).setAlpha(lit * baseAlpha);
     }
   }
 
@@ -1406,8 +1544,11 @@ export class SkillSystem {
   }
 
   /**
-   * 火墙视图：vfx_fire_wall 段贴图沿长轴拼接（显示高 = 墙宽，段宽按帧纵横比等比缩放、
-   * 12% 重叠防缝隙），各段随机相位播 4 帧序列；ADD 混合火焰透亮。纹理缺失走程序化兜底。
+   * 火径留守视图：vfx_fire_wall 段贴图沿长轴（施放指向，起点即英雄）拼接——段放大 1.5×
+   * （墙厚 36-48 → 54-72）、相邻段重叠 50% 消除缝隙；主体 NORMAL 混合（禁止整墙 ADD：
+   * 水墨底上发灰发粉），每段中心一枚同贴图小 copy 作 ADD 焰心提亮（alpha 0.35）；
+   * 各段随机相位播 4 帧跳动循环（段与焰心同相位），初始 alpha 0、按 revealAtMs 随推浪
+   * 逐个点燃。纹理缺失走程序化兜底。进阶金焰 tint 暖金。
    */
   private createFireWallView(
     placement: { x: number; y: number; angleRad: number },
@@ -1423,34 +1564,57 @@ export class SkillSystem {
     const frame = texture?.get(0) ?? texture?.get("__BASE");
     const frameWidth = frame && frame.width > 0 ? frame.width : FIRE_WALL_SEGMENT_FALLBACK_SIZE;
     const frameHeight = frame && frame.height > 0 ? frame.height : FIRE_WALL_SEGMENT_FALLBACK_SIZE;
-    // 段显示高 = 墙宽；段宽 = 帧宽 × 同比例
-    const scale = profile.width / frameHeight;
+    // 段显示高 = 墙宽 × 1.5（火径更厚）；段宽 = 帧宽 × 同比例
+    const scale = (profile.width * FIRE_TRAIL_SEGMENT_SCALE) / frameHeight;
     const segmentDisplayWidth = Math.max(10, frameWidth * scale);
-    const count = Math.max(2, Math.ceil(profile.length / segmentDisplayWidth));
+    // 50% 重叠：段距 = 段宽一半，消除缝隙连成整条火径
+    const count = Math.max(2, Math.ceil(profile.length / (segmentDisplayWidth * (1 - FIRE_TRAIL_SEGMENT_OVERLAP))));
     const spacing = profile.length / count;
+    const segmentWidth = spacing / (1 - FIRE_TRAIL_SEGMENT_OVERLAP);
+    const trailHeight = profile.width * FIRE_TRAIL_SEGMENT_SCALE;
     const animationKey = getArtAnimationKey(FIRE_WALL_SEGMENT_TEXTURE);
     const hasAnimation = this.scene.anims.exists(animationKey);
     const children: Phaser.GameObjects.Sprite[] = [];
     for (let index = 0; index < count; index += 1) {
-      const segment = this.scene.add.sprite(
-        -profile.length / 2 + spacing * (index + 0.5),
-        0,
-        FIRE_WALL_SEGMENT_TEXTURE
-      )
-        .setDisplaySize(spacing * 1.12, profile.width)
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setAlpha(0.98);
+      const offsetX = -profile.length / 2 + spacing * (index + 0.5);
+      // 推浪到达该段轴向位置的时刻（等比映射到 300ms 推浪期），到时由 updateFireTrailReveal 点亮
+      const revealAtMs = ((index + 0.5) / count) * FIRE_WAVE_DURATION_MS;
+      const phase = Phaser.Math.FloatBetween(0, 1);
+      const segment = this.scene.add.sprite(offsetX, 0, FIRE_WALL_SEGMENT_TEXTURE)
+        .setDisplaySize(segmentWidth, trailHeight)
+        .setBlendMode(Phaser.BlendModes.NORMAL)
+        .setAlpha(0);
       if (advanced) {
         // 金焰：暖金 tint 乘算在橙红火焰上，不过曝
         segment.setTint(0xffe6a3);
       }
       if (hasAnimation) {
         segment.play(animationKey);
-        // 随机相位：拼接段不同步闪烁，火墙整体呈流动感
-        segment.anims.setProgress(Phaser.Math.FloatBetween(0, 1));
+        // 随机相位：拼接段不同步闪烁，火径整体呈流动感
+        segment.anims.setProgress(phase);
       }
       segment.setData("spriteArt", true);
+      segment.setData("revealAtMs", revealAtMs);
+      segment.setData("baseAlpha", FIRE_TRAIL_SEGMENT_ALPHA);
       children.push(segment);
+
+      // 焰心：段中心同贴图小 copy，ADD 混合小面积提亮（整墙只有这里允许 ADD）
+      const core = this.scene.add.sprite(offsetX, 0, FIRE_WALL_SEGMENT_TEXTURE)
+        .setDisplaySize(segmentWidth * FIRE_TRAIL_CORE_SCALE, trailHeight * FIRE_TRAIL_CORE_SCALE)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setAlpha(0);
+      if (advanced) {
+        core.setTint(0xffe6a3);
+      }
+      if (hasAnimation) {
+        core.play(animationKey);
+        // 与主体段同相位：焰心贴在火苗亮部上，不脱节
+        core.anims.setProgress(phase);
+      }
+      core.setData("spriteArt", true);
+      core.setData("revealAtMs", revealAtMs);
+      core.setData("baseAlpha", FIRE_TRAIL_CORE_ALPHA);
+      children.push(core);
     }
 
     return this.scene.add.container(screenX, screenY, children)
@@ -1458,7 +1622,10 @@ export class SkillSystem {
       .setRotation(placement.angleRad);
   }
 
-  /** 程序化兜底火墙：双层金红矩形（外焰橙红 + 内芯亮金），ADD 混合，随墙销毁。 */
+  /**
+   * 程序化兜底火径：沿长轴交错排布的金红火圈段（外焰橙红 NORMAL 大圈 + 内芯亮金 ADD 小圈），
+   * 与贴图版同一套 revealAtMs 推浪点亮逻辑；初始 alpha 0，随墙销毁。
+   */
   private createFireWallFallbackView(
     screenX: number,
     screenY: number,
@@ -1466,23 +1633,39 @@ export class SkillSystem {
     profile: ReturnType<SkillSystem["getWallProfile"]>,
     advanced: boolean
   ): Phaser.GameObjects.Container {
-    const outer = this.scene.add.rectangle(0, 0, profile.length, profile.width, advanced ? 0xff8a3d : 0xff6b3d, 0.5)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    const core = this.scene.add.rectangle(0, 0, profile.length * 0.94, profile.width * 0.45, advanced ? 0xfff1c4 : 0xffd27a, 0.55)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    return this.scene.add.container(screenX, screenY, [outer, core])
+    const count = Math.max(4, Math.ceil(profile.length / (profile.width * 0.9)));
+    const spacing = profile.length / count;
+    const children: Phaser.GameObjects.Arc[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const offsetX = -profile.length / 2 + spacing * (index + 0.5);
+      const revealAtMs = ((index + 0.5) / count) * FIRE_WAVE_DURATION_MS;
+      const outer = this.scene.add.circle(offsetX, 0, profile.width * 0.72, advanced ? 0xff8a3d : 0xff6b3d, 0.5)
+        .setBlendMode(Phaser.BlendModes.NORMAL)
+        .setAlpha(0);
+      outer.setData("revealAtMs", revealAtMs);
+      outer.setData("baseAlpha", 1);
+      children.push(outer);
+      const core = this.scene.add.circle(offsetX, 0, profile.width * 0.34, advanced ? 0xfff1c4 : 0xffd27a, 0.55)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setAlpha(0);
+      core.setData("revealAtMs", revealAtMs);
+      core.setData("baseAlpha", 1);
+      children.push(core);
+    }
+    return this.scene.add.container(screenX, screenY, children)
       .setDepth(FIRE_WALL_DEPTH)
       .setRotation(angleRad);
   }
 
   /**
-   * 施放点迸发：vfx_fire_burst 一次性序列帧（播完销毁，沿用 bindOneShotDestroy 模式）；
-   * 局部效果，不做全屏反馈。纹理缺失退化为金红扩散环。
+   * 出掌爆点：英雄身前（施放点）一枚稍大的 vfx_fire_burst 一次性序列帧（墙宽基准 ×1.2），
+   * 标志"出掌"瞬间、推浪由此出发；播完销毁（沿用 bindOneShotDestroy 模式），局部效果不做
+   * 全屏反馈。纹理缺失退化为金红扩散环。
    */
   private createFireBurstVfx(wall: WallRuntime): void {
-    const { x: screenX, y: screenY } = this.worldToScreen(wall.worldX, wall.worldY);
+    const { x: screenX, y: screenY } = this.worldToScreen(wall.castX, wall.castY);
     if (this.scene.textures.exists(FIRE_WALL_BURST_TEXTURE)) {
-      const baseScale = (wall.width * 2.4) / this.getTextureFrameWidth(FIRE_WALL_BURST_TEXTURE, 96);
+      const baseScale = ((wall.width * 2.4) / this.getTextureFrameWidth(FIRE_WALL_BURST_TEXTURE, 96)) * FIRE_CAST_BURST_SCALE;
       const view = this.scene.add.sprite(screenX, screenY, FIRE_WALL_BURST_TEXTURE)
         .setDepth(FIRE_WALL_BURST_DEPTH)
         .setScale(baseScale)
@@ -1497,7 +1680,7 @@ export class SkillSystem {
         view.play(animationKey);
         this.bindOneShotDestroy(view);
       }
-      this.vfx.push({ view, worldX: wall.worldX, worldY: wall.worldY, ageMs: 0, durationMs: 360, type: "hit" });
+      this.vfx.push({ view, worldX: wall.castX, worldY: wall.castY, ageMs: 0, durationMs: 360, type: "hit" });
       return;
     }
 
@@ -1507,7 +1690,7 @@ export class SkillSystem {
     const view = this.scene.add.container(screenX, screenY, [fill, rim])
       .setDepth(FIRE_WALL_BURST_DEPTH)
       .setBlendMode(Phaser.BlendModes.ADD);
-    this.vfx.push({ view, worldX: wall.worldX, worldY: wall.worldY, ageMs: 0, durationMs: 280, type: "hit" });
+    this.vfx.push({ view, worldX: wall.castX, worldY: wall.castY, ageMs: 0, durationMs: 280, type: "hit" });
   }
 
   /**

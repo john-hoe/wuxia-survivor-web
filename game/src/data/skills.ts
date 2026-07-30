@@ -32,9 +32,9 @@ export type SkillLevelConfig = {
   poisonTickMs?: number;
   /** zone 专用·毒化进阶「金蛊江山」：蚀甲——中毒期间敌人受伤倍率（1.1 = +10%，缺省 1） */
   poisonAmp?: number;
-  /** wall 专用：火墙长轴长度 px（烈火神掌，沿最密方向/英雄面向横置） */
+  /** wall 专用：火径长轴长度 px（烈火神掌·地火喷发，从英雄位置沿最密方向/英雄面向推出） */
   wallLength?: number;
-  /** wall 专用：火墙短轴宽度 px */
+  /** wall 专用：火径短轴宽度 px */
   wallWidth?: number;
 };
 
@@ -324,18 +324,21 @@ export const skillConfigs: Record<SkillId, SkillConfig> = {
     ]
   },
   /**
-   * 烈火神掌（liehuo_firewall，kind "wall"）——烈焰火墙·线状地面 DoT 阻隔场。
-   * 每隔 cooldownMs 在敌人最密集方向（无有效目标时取英雄面向）横置一道火墙
-   * （长 wallLength × 宽 wallWidth，长轴垂直于指向），持续 durationMs；
-   * 墙内敌人每 tickIntervalMs 跳一次 damage 火伤并被点燃——灼烧在最后一次命中 2s 后
+   * 烈火神掌（liehuo_firewall，kind "wall"）——地火喷发·线状地面 DoT 场。
+   * 每隔 cooldownMs 从英雄位置向敌人最密集方向（无有效目标时取英雄面向）推掌喷火：
+   * 先 300ms 火浪推进（沿指向错峰喷出 5-7 个 vfx_fire_burst 火点），随后整条火线
+   * 留下燃烧火径（长 wallLength × 宽 wallWidth，长轴沿指向，判定矩形中心 = 英雄 +
+   * 指向 × 墙长/2，起点即英雄），持续 durationMs；
+   * 火径内敌人每 tickIntervalMs 跳一次 damage 火伤并被点燃——灼烧在最后一次命中 2s 后
    * 再跳 1 跳（进阶「金焰神掌」2 跳，跳间隔 500ms，灼烧参数为 SkillSystem 表现层常量，不增减本表数值）。
-   * 进阶「金焰神掌」：墙长 ×1.5、墙宽 ×1.4、每跳伤害 ×1.5（见 SkillSystem.getWallProfile）。
+   * 进阶「金焰神掌」：墙长 ×1.5、墙宽 ×1.4、每跳伤害 ×1.5、金焰 tint（见 SkillSystem.getWallProfile）。
    * 灼烧飘字走金红档（crit 芥金），与墨里淬毒的孔雀绿 poison 档区分。
    *
    * 【跨代理对接 · GameScene 由本技能代理同步维护】
    * 1. 调试键：F1 顿悟预览保留，Shift+F1 → skillSystem.unlockSkill("liehuo_firewall", 1)。
    * 2. GameScene isAdvanceKeyId 白名单已加入 "fire_jujube_pit"（顿悟池「火枣核」信物）。
-   * 3. 美术键约定：vfx_fire_wall（4 帧序列，沿墙拼接）/ vfx_fire_burst（施放一次性）/
+   * 3. 美术键约定：vfx_fire_wall（4 帧序列，沿火径拼接，段 1.5× 厚/50% 重叠/NORMAL 主体
+   *    + ADD 焰心）/ vfx_fire_burst（出掌爆点 ×1.2 + 推浪火点 ×0.8-1.0，一次性）/
    *    ui_icon_skill_liehuo(_advanced)，缺失时 SkillSystem/InsightScene 走程序化兜底。
    */
   liehuo_firewall: {
