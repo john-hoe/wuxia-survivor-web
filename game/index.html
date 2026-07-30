@@ -18,6 +18,18 @@
         </div>
       </div>
     </main>
+    <script>
+      // 防触控板误触缩放：拦截捏合手势与 Ctrl+滚轮（浏览器设置里的缩放仍可用）
+      // —— 游戏内 pinch 会顶出 HUD/按钮，属于误触高发路径
+      for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+        document.addEventListener(type, (event) => event.preventDefault(), { passive: false });
+      }
+      document.addEventListener("wheel", (event) => {
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+        }
+      }, { passive: false });
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
