@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>烈火神掌 · 地火喷发 效果演示</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0f0c; color: #e8e2d2; font-family: 'Noto Sans SC', sans-serif;
+    display: flex; flex-direction: column; align-items: center; padding: 28px 16px 60px;
+  }
+  h1 { font-family: 'Ma Shan Zheng', serif; font-size: 34px; font-weight: 400; letter-spacing: 4px; color: #f0ead8; }
+  .sub { margin: 10px 0 20px; color: #8a8578; font-size: 13px; letter-spacing: 1px; }
+  .stage {
+    position: relative; width: 960px; height: 540px; border: 1px solid rgba(169,154,32,.3);
+    border-radius: 6px; overflow: hidden; background: #14201b;
+    box-shadow: 0 18px 60px rgba(0,0,0,.55);
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  .bar { display: flex; gap: 14px; margin-top: 18px; align-items: center; }
+  button {
+    background: none; border: 1px solid rgba(169,154,32,.5); color: #d8c990;
+    font-family: inherit; font-size: 14px; letter-spacing: 2px; padding: 8px 22px;
+    border-radius: 4px; cursor: pointer;
+  }
+  button:hover { background: rgba(169,154,32,.12); }
+  .note { margin-top: 14px; color: #6a6558; font-size: 12px; }
+  .tl { margin-top: 18px; width: 960px; height: 4px; background: rgba(255,255,255,.08); border-radius: 2px; overflow: hidden; }
+  .tl i { display: block; height: 100%; width: 0; background: #a99a20; }
+</style>
+</head>
+<body>
+<h1>烈火神掌 · 地火喷发</h1>
+<div class="sub">出掌爆点 → 300ms 火浪推进 → 火径留守 DoT → 淡出 · 循环播放</div>
+<div class="stage"><canvas id="cv" width="960" height="540"></canvas></div>
+<div class="tl"><i id="tlbar"></i></div>
+<div class="bar">
+  <button id="btn">重播</button>
+  <span class="note" id="phase">准备中…</span>
+</div>
+
+<script>
+const ASSETS = "../game/src/assets/";
+const P = (n) => ASSETS + n;
+const IMG = {};
+function load(key, src) {
+  return new Promise((res) => { const i = new Image(); i.onload = () => { IMG[key] = i; res(); }; i.src = src; });
+}
+
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const tl = document.getElementById("tlbar");
+const phaseEl = document.getElementById("phase");
+
+// 与游戏一致的参数
+const WALL_LEN = 200, WALL_W = 36, SEG_SCALE = 1.5, SEG_OVERLAP = 0.5;
+const WAVE_MS = 300, BURST_N = 6, DIRECTION = -0.32; // 朝右上方密集区
+const TRAIL_MS = 2600, FADE_MS = 420, LOOP_PAUSE = 900;
+const CAST = { x: 480, y: 300 };
+
+let t0 = 0, running = false;
+
+function drawGround() {
+  const g = IMG.ground;
+  if (!g) { ctx.fillStyle = "#3a4a42"; ctx.fillRect(0, 0, 960, 540); return; }
+  ctx.globalAlpha = 0.85;
+  ctx.drawImage(g, -32, -180, 1024, 1024);
+  ctx.globalAlpha = 1;
+  // 暗角
+  const vg = ctx.createRadialGradient(480, 270, 200, 480, 270, 620);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, "rgba(3,6,4,.5)");
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, 960, 540);
+}
+
+function drawHero(x, y) {
+  const h = IMG.hero;
+  if (!h) return;
+  ctx.drawImage(h, 0, 0, 256, 256, x - 42, y - 70, 84, 84);
+}
+
+function drawEnemy(x, y, burning, now) {
+  const e = IMG.bandit;
+  if (!e) return;
+  const f = Math.floor(now / 130) % 4;
+  if (burning) { ctx.filter = "sepia(1) saturate(2.4) hue-rotate(-30deg)"; }
+  ctx.drawImage(e, f * 192, 0, 192, 192, x - 48, y - 66, 72, 72);
+  ctx.filter = "none";
+}
+
+function fireBurst(x, y, ageMs, scale) {
+  // vfx_fire_burst 6帧96px 18fps 一次性
+  const fi = Math.min(5, Math.floor(ageMs / 55));
+  const s = 96 * scale;
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = fi >= 5 ? Math.max(0, 1 - (ageMs - 275) / 90) : 1;
+  ctx.drawImage(IMG.burst, fi * 96, 0, 96, 96, x - s / 2, y - s / 2, s, s);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+}
+
+function trailSegment(x, y, angle, alpha, now) {
+  const fw = IMG.wall;
+  const f = Math.floor(now / 100 + (x + y)) % 4;
+  const w = 64 * SEG_SCALE, h = 128 * SEG_SCALE;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle + Math.PI / 2);
+  // 主体 NORMAL
+  ctx.globalAlpha = alpha * 0.92;
+  ctx.drawImage(fw, f * 64, 0, 64, 128, -w / 2, -h / 2, w, h);
+  // 焰心 ADD
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = alpha * 0.35;
+  ctx.drawImage(fw, f * 64, 0, 64, 128, -w * 0.275, -h * 0.275, w * 0.55, h * 0.55);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+}
+
+function axisPoint(t) {
+  return {
+    x: CAST.x + Math.cos(DIRECTION) * WALL_LEN * t,
+    y: CAST.y + Math.sin(DIRECTION) * WALL_LEN * t
+  };
+}
+
+const enemies = [axisPoint(0.55), axisPoint(0.78), axisPoint(0.95)];
+
+function frame(now) {
+  if (!running) return;
+  const t = now - t0;
+  const total = WAVE_MS + TRAIL_MS + FADE_MS;
+  let cycle = t % (total + LOOP_PAUSE);
+
+  ctx.clearRect(0, 0, 960, 540);
+  drawGround();
+
+  // 敌人（在火径上）
+  const burning = cycle > WAVE_MS * 0.55 && cycle < WAVE_MS + TRAIL_MS;
+  for (const e of enemies) drawEnemy(e.x, e.y, burning, now);
+
+  drawHero(CAST.x, CAST.y);
+
+  // 阶段提示
+  let phase = "";
+  // ① 出掌爆点 t=0
+  if (cycle < 430) { fireBurst(CAST.x, CAST.y - 10, cycle, 1.2); phase = "① 出掌爆点"; }
+  // ② 火浪推进 0-300ms
+  if (cycle < WAVE_MS + 430) {
+    for (let i = 0; i < BURST_N; i++) {
+      const pt = axisPoint((i + 1) / (BURST_N + 0.5));
+      const at = (i + 1) * (WAVE_MS / BURST_N);
+      if (cycle >= at && cycle < at + 430) fireBurst(pt.x, pt.y, cycle - at, 0.85 + (i % 3) * 0.1);
+    }
+    if (cycle < WAVE_MS) phase = "② 火浪推进 " + Math.round(cycle / WAVE_MS * 100) + "%";
+  }
+  // ③ 火径逐段点亮
+  if (cycle > 0) {
+    const segs = Math.ceil(WALL_LEN / (64 * SEG_SCALE * (1 - SEG_OVERLAP)));
+    for (let i = 0; i <= segs; i++) {
+      const st = i / segs;
+      const pt = axisPoint(st);
+      const revealAt = st * WAVE_MS;
+      const a = Math.max(0, Math.min(1, (cycle - revealAt) / 90));
+      if (a <= 0) continue;
+      const fade = cycle > WAVE_MS + TRAIL_MS ? Math.max(0, 1 - (cycle - WAVE_MS - TRAIL_MS) / FADE_MS) : 1;
+      trailSegment(pt.x, pt.y, DIRECTION, a * fade, now);
+    }
+    if (cycle >= WAVE_MS && cycle < WAVE_MS + TRAIL_MS) phase = "③ 火径留守 DoT " + ((TRAIL_MS - (cycle - WAVE_MS)) / 1000).toFixed(1) + "s";
+    if (cycle >= WAVE_MS + TRAIL_MS && cycle < total) phase = "④ 淡出";
+  }
+  if (cycle >= total) phase = "（循环重播…）";
+
+  phaseEl.textContent = phase;
+  tl.style.width = Math.min(100, cycle / total * 100) + "%";
+  requestAnimationFrame(frame);
+}
+
+function play() {
+  t0 = performance.now();
+  if (!running) { running = true; requestAnimationFrame(frame); }
+}
+
+document.getElementById("btn").onclick = play;
+
+Promise.all([
+  load("ground", P("backgrounds/ground_qingshi_base.png")),
+  load("hero", P("sprites/hero_shaoxia_idle.png")),
+  load("bandit", P("sprites/enemy_bandit_grunt_walk.png")),
+  load("burst", P("vfx/vfx_fire_burst.png")),
+  load("wall", P("vfx/vfx_fire_wall.png")),
+]).then(play);
+</script>
+</body>
+</html>

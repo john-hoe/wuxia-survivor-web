@@ -707,6 +707,34 @@ export const artManifest: ArtManifestItem[] = [
     tags: ["vfx", "skill", "liehuo", "fire", "cast"]
   },
   {
+    id: "vfx_fire_palm",
+    type: "vfx",
+    path: "vfx/vfx_fire_palm.png",
+    width: 256,
+    height: 256,
+    frames: 1,
+    frameRate: 0,
+    visualRadius: 128,
+    usage: "烈火神掌新表现 金红掌形气劲（五指张开掌心朝前，火焰拖尾余韵，水墨笔触，俯视 3/4 朝右下飞行动势：#f0a35e 主焰 + #c00000 焰心 + #a99a20 飞芒）",
+    fallback: "shape",
+    required: true,
+    tags: ["vfx", "skill", "liehuo", "fire", "palm"]
+  },
+  {
+    id: "vfx_fire_crack",
+    type: "vfx",
+    path: "vfx/vfx_fire_crack.png",
+    width: 256,
+    height: 256,
+    frames: 1,
+    frameRate: 0,
+    visualRadius: 128,
+    usage: "烈火神掌新表现 金红地裂缝（中心放射 4-6 道裂纹，缝内熔金火光 #f0a35e 亮 + #c00000 深焰，飞白碎裂边缘，俯视正视，边缘渐淡贴地）",
+    fallback: "shape",
+    required: true,
+    tags: ["vfx", "skill", "liehuo", "fire", "ground-decal"]
+  },
+  {
     id: "ui_icon_skill_liehuo",
     type: "ui",
     path: "ui/ui_icon_skill_liehuo.png",

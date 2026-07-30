@@ -325,8 +325,9 @@ export const skillConfigs: Record<SkillId, SkillConfig> = {
   },
   /**
    * 烈火神掌（liehuo_firewall，kind "wall"）——地火喷发·线状地面 DoT 场。
-   * 每隔 cooldownMs 从英雄位置向敌人最密集方向（无有效目标时取英雄面向）推掌喷火：
-   * 先 300ms 火浪推进（沿指向错峰喷出 5-7 个 vfx_fire_burst 火点），随后整条火线
+   * 每隔 cooldownMs 从英雄位置向敌人最密集方向（无有效目标时取英雄面向）推掌：
+   * 掌形气劲（vfx_fire_palm，拖残影）约 300ms 飞至火径终点砸地（震屏+轻白闪+
+   * vfx_fire_crack 地裂缝），随后火径段自终点向英雄倒卷点亮（每段约 60ms），
    * 留下燃烧火径（长 wallLength × 宽 wallWidth，长轴沿指向，判定矩形中心 = 英雄 +
    * 指向 × 墙长/2，起点即英雄），持续 durationMs；
    * 火径内敌人每 tickIntervalMs 跳一次 damage 火伤并被点燃——灼烧在最后一次命中 2s 后
@@ -337,8 +338,9 @@ export const skillConfigs: Record<SkillId, SkillConfig> = {
    * 【跨代理对接 · GameScene 由本技能代理同步维护】
    * 1. 调试键：F1 顿悟预览保留，Shift+F1 → skillSystem.unlockSkill("liehuo_firewall", 1)。
    * 2. GameScene isAdvanceKeyId 白名单已加入 "fire_jujube_pit"（顿悟池「火枣核」信物）。
-   * 3. 美术键约定：vfx_fire_wall（4 帧序列，沿火径拼接，段 1.5× 厚/50% 重叠/NORMAL 主体
-   *    + ADD 焰心）/ vfx_fire_burst（出掌爆点 ×1.2 + 推浪火点 ×0.8-1.0，一次性）/
+   * 3. 美术键约定：vfx_fire_palm（掌形气劲+残影，缺失退回"出掌爆点 vfx_fire_burst ×1.2
+   *    + 逐点火浪"旧推浪）/ vfx_fire_crack（终点地裂缝，裁中心 116×116 区，缺失仅震屏白闪）/
+   *    vfx_fire_wall（4 帧序列，沿火径拼接，段 1.5× 厚/50% 重叠/NORMAL 主体 + ADD 焰心）/
    *    ui_icon_skill_liehuo(_advanced)，缺失时 SkillSystem/InsightScene 走程序化兜底。
    */
   liehuo_firewall: {

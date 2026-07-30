@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>烈火神掌 · 表现形式对比（方案一 vs 方案二）</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0f0c; color: #e8e2d2; font-family: 'Noto Sans SC', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 26px 16px 60px; }
+  h1 { font-family: 'Ma Shan Zheng', serif; font-size: 32px; font-weight: 400; letter-spacing: 4px; color: #f0ead8; }
+  .sub { margin: 8px 0 22px; color: #8a8578; font-size: 13px; }
+  .row { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; }
+  .card { width: 640px; }
+  .card h2 { font-family: 'Ma Shan Zheng', serif; font-weight: 400; font-size: 20px; color: #d8c990; letter-spacing: 2px; margin-bottom: 8px; }
+  .card p { color: #8a8578; font-size: 12px; line-height: 1.7; margin-bottom: 10px; }
+  .stage { position: relative; width: 640px; height: 360px; border: 1px solid rgba(169,154,32,.3); border-radius: 6px; overflow: hidden; background: #14201b; box-shadow: 0 14px 44px rgba(0,0,0,.5); }
+  canvas { display: block; width: 100%; height: 100%; }
+  .ph { position: absolute; left: 10px; bottom: 8px; font-size: 12px; color: #d8c990; text-shadow: 0 1px 3px #000; }
+  .bar { margin-top: 20px; }
+  button { background: none; border: 1px solid rgba(169,154,32,.5); color: #d8c990; font-size: 14px; letter-spacing: 2px; padding: 8px 24px; border-radius: 4px; cursor: pointer; font-family: inherit; }
+  button:hover { background: rgba(169,154,32,.12); }
+</style>
+</head>
+<body>
+<h1>烈火神掌 · 表现形式对比</h1>
+<div class="sub">同一机制（地面持续伤害区），两种"出现方式" · 自动循环 · 点击画面重播</div>
+<div class="row">
+  <div class="card">
+    <h2>方案一' · 掌劲引路，火径随行</h2>
+    <p>掌形气劲沿火径飞出 → 终点砸地（震屏顿帧+裂缝）→ 火柱从终点倒卷回英雄脚下连成火径。招牌瞬间 + 直线形态，不与墨染重叠。</p>
+    <div class="stage"><canvas id="cvA" width="640" height="360"></canvas><span class="ph" id="phA"></span></div>
+  </div>
+  <div class="card">
+    <h2>方案二 · 火焰笔触</h2>
+    <p>一笔金红火焰扫过地面 → 边缘碳化 + 余烬上升 + 地面红光。卖点：与墨染江山同语言。</p>
+    <div class="stage"><canvas id="cvB" width="640" height="360"></canvas><span class="ph" id="phB"></span></div>
+  </div>
+</div>
+<div class="bar"><button onclick="replay()">再看一遍</button></div>
+
+<script>
+const ASSETS = "../game/src/assets/";
+const IMG = {};
+const load = (k, s) => new Promise((res) => { const i = new Image(); i.onload = () => { IMG[k] = i; res(); }; i.src = ASSETS + s; });
+
+// ---------- 共用 ----------
+function drawGround(ctx, W, H) {
+  const g = IMG.ground;
+  ctx.globalAlpha = 1;
+  ctx.drawImage(g, -30, -160, 1024, 1024, 0, 0, W + 60, H + 220);
+  ctx.globalAlpha = 1;
+  const vg = ctx.createRadialGradient(W/2, H/2, H*0.36, W/2, H/2, H*0.85);
+  vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(3,6,4,.5)");
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+}
+function drawHero(ctx, x, y) {
+  if (!IMG.hero) return;
+  ctx.drawImage(IMG.hero, 0, 0, 256, 256, x - 28, y - 47, 56, 56);
+}
+function drawEnemy(ctx, x, y, burning, now) {
+  if (!IMG.bandit) return;
+  const f = Math.floor(now / 130) % 4;
+  if (burning) ctx.filter = "sepia(1) saturate(2.4) hue-rotate(-30deg)";
+  ctx.drawImage(IMG.bandit, f * 192, 0, 192, 192, x - 32, y - 44, 48, 48);
+  ctx.filter = "none";
+}
+function wallFlame(ctx, x, y, w, h, alpha, now, seed) {
+  const f = Math.floor(now / 100 + seed) % 4;
+  ctx.globalAlpha = alpha * 0.92;
+  ctx.drawImage(IMG.wall, f * 64, 0, 64, 128, x - w/2, y - h/2, w, h);
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = alpha * 0.4;
+  ctx.drawImage(IMG.wall, f * 64, 0, 64, 128, x - w*0.27, y - h*0.27, w*0.55, h*0.55);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+}
+function ember(ctx, x, y, age) {
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = Math.max(0, 0.8 - age / 1200);
+  ctx.fillStyle = "#f6c05a";
+  ctx.beginPath(); ctx.arc(x, y - age * 0.05, 1.6, 0, 7); ctx.fill();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+}
+function fireColorize(img) {
+  const c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  const x = c.getContext("2d");
+  x.drawImage(img, 0, 0);
+  x.globalCompositeOperation = "source-in";
+  const g = x.createLinearGradient(0, 0, c.width, c.height);
+  g.addColorStop(0, "#c00000"); g.addColorStop(0.55, "#f0a35e"); g.addColorStop(1, "#a99a20");
+  x.fillStyle = g; x.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+let FIRE_STROKES = [];
+
+// ---------- 方案一：如来神掌 ----------
+const A = {
+  cv: document.getElementById("cvA"), ctx: document.getElementById("cvA").getContext("2d"),
+  ph: document.getElementById("phA"),
+  hero: { x: 320, y: 210 }, target: { x: 470, y: 130 },
+  T: { fly: 260, slam: 250, erupt: 700, dot: 2400, fade: 500, pause: 800 }
+};
+A.total = A.T.fly + A.T.slam + A.T.erupt + A.T.dot + A.T.fade + A.T.pause;
+A.enemies = [
+  { x: A.target.x - 40, y: A.target.y + 34 }, { x: A.target.x + 56, y: A.target.y + 20 }, { x: A.target.x + 8, y: A.target.y + 66 }
+];
+A.crackPts = [];
+for (let i = 0; i < 6; i++) {
+  const st = 1 - i / 6; // 从终点向英雄
+  A.crackPts.push({
+    x: A.hero.x + (A.target.x - A.hero.x) * st,
+    y: A.hero.y + (A.target.y - A.hero.y) * st,
+    h: 84 + (i % 3) * 22
+  });
+}
+A.dir = Math.atan2(A.target.y - A.hero.y, A.target.x - A.hero.x);
+A.palmPath = (t) => ({
+  x: A.hero.x + (A.target.x - A.hero.x) * t,
+  y: A.hero.y + (A.target.y - A.hero.y) * t
+});
+
+function frameA(now, t) {
+  const { ctx, ph } = A; const W = 640, H = 360;
+  ctx.clearRect(0, 0, W, H);
+  const { T } = A;
+  ctx.save();
+  // 震屏：slam 后 160ms
+  const shake = (t > T.fly && t < T.fly + 160) ? 3.5 : 0;
+  ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+  drawGround(ctx, W, H);
+
+  const dotStart = T.fly + T.slam + T.erupt;
+  const fadeStart = dotStart + T.dot;
+  const dotAlpha = t > fadeStart ? Math.max(0, 1 - (t - fadeStart) / T.fade) : 1;
+  for (const e of A.enemies) drawEnemy(ctx, e.x, e.y, t > dotStart - 300 && t < fadeStart, now);
+  drawHero(ctx, A.hero.x, A.hero.y);
+
+  // ① 掌形气劲飞行
+  if (t < T.fly + 120) {
+    const pt = A.palmPath(Math.min(1, t / T.fly));
+    for (let k = 3; k >= 0; k--) {
+      const back = A.palmPath(Math.max(0, (t - k * 26) / T.fly));
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = (k === 0 ? 1 : 0.22 - k * 0.05) * (t > T.fly ? Math.max(0, 1 - (t - T.fly) / 120) : 1);
+      const s = 84 + k * 10;
+      ctx.drawImage(IMG.palm, back.x - s/2, back.y - s/2, s, s);
+    }
+    ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+    ph.textContent = "① 掌形气劲沿火径飞出";
+  }
+  // ② 砸地：白闪 + 地裂
+  if (t > T.fly && t < T.fly + T.slam) {
+    const st = (t - T.fly) / T.slam;
+    ctx.fillStyle = `rgba(255,240,200,${Math.max(0, 0.5 - st * 2)})`;
+    ctx.fillRect(-8, -8, W + 16, H + 16);
+    ph.textContent = "② 终点砸地（震屏 + 顿帧 + 裂缝）";
+  }
+  if (t > T.fly) {
+    const crackA = Math.min(1, (t - T.fly) / 0.12e3) * dotAlpha;
+    const cs = 150 * (t - T.fly < 120 ? 1.25 - 0.25 * (t - T.fly) / 120 : 1);
+    // 只取纹理中心 46% 的裂缝本体（外圈淡晕圈弃用），压在火柱根下
+    const src = 256 * 0.27, srcSize = 256 * 0.46;
+    ctx.globalAlpha = crackA * 0.95;
+    ctx.drawImage(IMG.crack, src, src, srcSize, srcSize, A.target.x - cs / 2, A.target.y - cs / 2 + 8, cs, cs);
+    ctx.globalAlpha = 1;
+  }
+  // ③ 裂缝喷火柱
+  if (t > T.fly + 120 && t < fadeStart + T.fade) {
+    A.crackPts.forEach((p, i) => {
+      const at = T.fly + 160 + i * 110;
+      if (t < at) return;
+      const up = Math.min(1, (t - at) / 180);
+      const h = p.h * up * dotAlpha, w = 44;
+      wallFlame(ctx, p.x, p.y - h / 2, w, Math.max(20, h), (0.4 + 0.6 * up) * dotAlpha, now, i * 7);
+    });
+    if (t < dotStart) ph.textContent = "③ 火柱倒卷，连成火径";
+  }
+  // ④ DoT 余烬 + 裂缝呼吸
+  if (t > dotStart && t < fadeStart + T.fade) {
+    A.crackPts.forEach((p, i) => {
+      if ((now / 90 + i * 3) % 6 < 3) ember(ctx, p.x + Math.sin(now / 300 + i) * 6, p.y, (now + i * 260) % 1200);
+    });
+    if (t < fadeStart) ph.textContent = "④ 火径 DoT " + Math.max(0, (fadeStart - t) / 1000).toFixed(1) + "s";
+    else ph.textContent = "⑤ 淡出";
+  }
+  ctx.restore();
+}
+
+// ---------- 方案二：火焰笔触 ----------
+const B = {
+  cv: document.getElementById("cvB"), ctx: document.getElementById("cvB").getContext("2d"),
+  ph: document.getElementById("phB"),
+  hero: { x: 320, y: 210 }, center: { x: 400, y: 150 },
+  T: { wipe: 300, burn: 2900, fade: 600, pause: 800 }
+};
+B.total = B.T.wipe + B.T.burn + B.T.fade + B.T.pause;
+B.enemies = [
+  { x: B.center.x + 60, y: B.center.y + 30 }, { x: B.center.x - 30, y: B.center.y + 56 }, { x: B.center.x + 130, y: B.center.y - 16 }
+];
+
+function frameB(now, t) {
+  const { ctx, ph } = B; const W = 640, H = 360;
+  ctx.clearRect(0, 0, W, H);
+  const { T } = B;
+  drawGround(ctx, W, H);
+  const fadeStart = T.wipe + T.burn;
+  const fade = t > fadeStart ? Math.max(0, 1 - (t - fadeStart) / T.fade) : 1;
+
+  for (const e of B.enemies) drawEnemy(ctx, e.x, e.y, t > T.wipe && t < fadeStart, now);
+  drawHero(ctx, B.hero.x, B.hero.y);
+
+  // 地面暖红光晕
+  if (t > T.wipe) {
+    const g = ctx.createRadialGradient(B.center.x, B.center.y, 20, B.center.x, B.center.y, 220);
+    g.addColorStop(0, `rgba(240,140,60,${0.14 * fade * (0.8 + 0.2 * Math.sin(now / 500))})`);
+    g.addColorStop(1, "rgba(240,140,60,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+
+  // 火焰笔触：两笔交叉，crop 扫入
+  const strokes = [
+    { x: B.center.x, y: B.center.y, rot: -0.28, w: 460, h: 460, img: FIRE_STROKES[0], dir: 1 },
+    { x: B.center.x + 8, y: B.center.y + 10, rot: 1.05, w: 380, h: 380, img: FIRE_STROKES[2], dir: -1 }
+  ];
+  const burnA = (0.82 + 0.18 * Math.sin(now / 260)) * fade;
+  for (const s of strokes) {
+    if (!s.img) continue;
+    const prog = Math.min(1, t / T.wipe);
+    ctx.save();
+    ctx.translate(s.x, s.y); ctx.rotate(s.rot);
+    const cw = Math.round(s.w * prog);
+    if (s.dir > 0) ctx.drawImage(s.img, 0, 0, cw / s.w * s.img.width, s.img.height, -s.w/2, -s.h/2, cw, s.h);
+    else ctx.drawImage(s.img, s.img.width - cw / s.w * s.img.width, 0, cw / s.w * s.img.width, s.img.height, -s.w/2, -s.h/2, cw, s.h);
+    ctx.restore();
+    if (t > T.wipe) {
+      ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.rot);
+      ctx.globalAlpha = burnA * 0.96;
+      ctx.drawImage(s.img, -s.w/2, -s.h/2, s.w, s.h);
+      ctx.globalAlpha = 1; ctx.restore();
+    }
+  }
+  // 碳化边：燃烧期叠加一层变暗笔触
+  if (t > T.wipe && t < fadeStart + T.fade) {
+    const charA = Math.min(0.5, (t - T.wipe) / 2200) * fade;
+    ctx.save(); ctx.translate(B.center.x, B.center.y); ctx.rotate(-0.28);
+    ctx.globalCompositeOperation = "multiply";
+    ctx.globalAlpha = charA;
+    ctx.drawImage(FIRE_STROKES[1] || FIRE_STROKES[0], -230, -230, 460, 460);
+    ctx.restore();
+    // 余烬
+    for (let i = 0; i < 10; i++) {
+      const a = (now / 120 + i * 137) % 1400;
+      const ex = B.center.x - 160 + i * 34 + Math.sin(now / 280 + i) * 8;
+      const ey = B.center.y + 30 + Math.cos(i * 2.1) * 40 - a * 0.055;
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = Math.max(0, 0.7 - a / 1400) * fade;
+      ctx.fillStyle = i % 3 ? "#f6c05a" : "#ff8a3c";
+      ctx.beginPath(); ctx.arc(ex, ey, 1.7, 0, 7); ctx.fill();
+    }
+    ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+  }
+  ph.textContent = t < T.wipe ? "① 一笔火扫过" : (t < fadeStart ? "② 碳化 + 余烬 DoT " + ((fadeStart - t) / 1000).toFixed(1) + "s" : "③ 淡出");
+}
+
+// ---------- 主循环 ----------
+let t0 = 0, running = false;
+const start = { A: 0, B: 0 };
+function loop(now) {
+  if (!running) return;
+  frameA(now, (now - start.A) % A.total);
+  frameB(now, (now - start.B) % B.total);
+  requestAnimationFrame(loop);
+}
+function replay() { start.A = start.B = performance.now(); if (!running) { running = true; requestAnimationFrame(loop); } }
+document.querySelectorAll(".stage").forEach(el => el.addEventListener("click", replay));
+
+Promise.all([
+  load("ground", "backgrounds/ground_qingshi_base.png"),
+  load("hero", "sprites/hero_shaoxia_idle.png"),
+  load("bandit", "sprites/enemy_bandit_grunt_walk.png"),
+  load("wall", "vfx/vfx_fire_wall.png"),
+  load("palm", "vfx/vfx_fire_palm.png"),
+  load("crack", "vfx/vfx_fire_crack.png"),
+  load("stroke0", "vfx/vfx_ink_stroke_1.png"),
+  load("stroke1", "vfx/vfx_ink_stroke_2.png"),
+  load("stroke2", "vfx/vfx_ink_stroke_4.png"),
+]).then(() => {
+  FIRE_STROKES = [IMG.stroke0, IMG.stroke1, IMG.stroke2].map(fireColorize);
+  replay();
+});
+</script>
+</body>
+</html>

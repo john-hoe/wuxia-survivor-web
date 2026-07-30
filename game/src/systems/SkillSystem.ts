@@ -114,7 +114,8 @@ type VfxRuntime = {
   type: "hit" | "die" | "advance";
 };
 
-/** 火浪推进计划项：推浪火点按 atMs 错峰喷发（纯数据，随墙销毁，无定时器泄漏面） */
+/** 火浪推进计划项：推浪火点按 atMs 错峰喷发（纯数据，随墙销毁，无定时器泄漏面）。
+ *  现为兜底路径：vfx_fire_palm 缺失时退回逐点火浪；掌形气劲在时计划表为空。 */
 type FireWaveBurstPlan = {
   /** 距施放毫秒数（火浪总时长 FIRE_WAVE_DURATION_MS 内 stagger） */
   atMs: number;
@@ -125,10 +126,37 @@ type FireWaveBurstPlan = {
 };
 
 /**
+ * 掌形气劲（方案一"掌劲引路，火径随行"）：vfx_fire_palm 从英雄沿施放指向约 300ms 飞至
+ * 火径终点，拖 2-3 个渐隐残影副本（k 越大越淡越大，沿已飞行路径拖尾，ADD 混合）；
+ * 到达即砸地（震屏+轻白闪），随后 140ms 内掌与残影原地消散。全部对象随 SkillSystem 销毁。
+ */
+type FirePalmRuntime = {
+  /** 所属火径（到达时校验墙仍在才触发震屏/白闪；墙提前销毁则仅消散） */
+  wallRuntimeId: number;
+  startX: number;
+  startY: number;
+  dirX: number;
+  dirY: number;
+  /** 飞行总距离 = 墙长（英雄 → 火径终点） */
+  totalDist: number;
+  /** 飞行方向角（贴图朝向右下动势，按飞行方向 setRotation + 轻微摆动） */
+  angle: number;
+  ageMs: number;
+  durationMs: number;
+  /** 到达后置位：进入 140ms 原地消散阶段 */
+  landed: boolean;
+  advanced: boolean;
+  view: Phaser.GameObjects.Sprite;
+  /** 残影副本（index 0 = 最近最浓；data 内 baseAlpha/baseScale 供消散阶段读取） */
+  ghosts: Phaser.GameObjects.Sprite[];
+};
+
+/**
  * 烈火神掌·地火喷发：世界锚定的旋转矩形线状 DoT 场，长轴沿施放指向、起点即英雄位置
  * （判定矩形中心 = 英雄 + 指向 × 墙长/2，与火径视觉线完全重合）。
- * 呈现两段式：①火浪推进——pendingBursts 计划表 300ms 内沿指向错峰喷出 vfx_fire_burst 火点；
- * ②火径留守——vfx_fire_wall 段沿指向拼接（1.5× 厚度、50% 重叠、NORMAL 主体 + ADD 焰心），随墙销毁。
+ * 呈现两段式：①掌劲引路——掌形气劲飞至终点砸地（兜底：pendingBursts 逐点火浪）；
+ * ②火径随行——vfx_fire_wall 段沿指向拼接（1.5× 厚度、50% 重叠、NORMAL 主体 + ADD 焰心），
+ * 自终点向英雄倒卷点亮（兜底路径正向点亮），随墙销毁。
  */
 type WallRuntime = {
   runtimeId: number;
@@ -152,7 +180,9 @@ type WallRuntime = {
   /** 施放瞬间英雄世界坐标（出掌爆点位置，火径/推浪起点） */
   castX: number;
   castY: number;
-  /** 火浪推进计划（atMs 升序）：updateWalls 到点喷发，喷完即空 */
+  /** 火径段/裂缝全部点亮的截止时刻（updateFireTrailReveal 超过即短路零开销） */
+  trailRevealDoneMs: number;
+  /** 火浪推进兜底计划（atMs 升序）：updateWalls 到点喷发，喷完即空；掌劲路径为空表 */
   pendingBursts: FireWaveBurstPlan[];
   view: Phaser.GameObjects.Container;
 };
@@ -305,8 +335,40 @@ const FIRE_TRAIL_SEGMENT_ALPHA = 0.92;
 /** 焰心提亮：每段中心同贴图小 copy，ADD 混合低透明度（小面积提亮不过曝） */
 const FIRE_TRAIL_CORE_SCALE = 0.55;
 const FIRE_TRAIL_CORE_ALPHA = 0.35;
-/** 火径段随推浪逐个点燃的亮起时长 */
+/** 火径段亮起时长（倒卷/正向通用；裂缝用 FIRE_CRACK_FADE_IN_MS） */
 const FIRE_TRAIL_REVEAL_FADE_MS = 90;
+// ── 掌劲引路（方案一，vfx_fire_palm 存在时启用；缺失退回上方逐点火浪兜底）──
+/** 掌形气劲贴图（256×256 单帧，朝向右下动势；跨代理约定键） */
+const FIRE_PALM_TEXTURE = "vfx_fire_palm";
+/** 终点地裂缝贴图（256×256 单帧，外圈淡晕不可用，仅裁中心 116×116 区绘制） */
+const FIRE_CRACK_TEXTURE = "vfx_fire_crack";
+/** 掌形气劲飞行时长（≈300ms，与墙 ageMs 时间轴对齐：到达即裂缝落地/火径倒卷起点） */
+const FIRE_PALM_FLIGHT_MS = 300;
+/** 掌形气劲显示尺寸 px（80-100 档中值；按贴图帧宽换算 scale） */
+const FIRE_PALM_DISPLAY_SIZE = 88;
+/** 掌形气劲深度：与投射物同档（14），飞行中压过敌人；残影同深度按创建序垫在掌下 */
+const FIRE_PALM_DEPTH = 14;
+/** 残影副本数与相邻拖尾间距：k 越大越淡（0.38/0.26/0.14）越大（×1.18/1.36/1.54） */
+const FIRE_PALM_GHOST_COUNT = 3;
+const FIRE_PALM_GHOST_SPACING_PX = 22;
+/** 残影 k=1 起始透明度（每远一档 -0.12） */
+const FIRE_PALM_GHOST_ALPHA_STEP = 0.38;
+const FIRE_PALM_GHOST_SCALE_STEP = 0.18;
+/** 掌飞行途中轻微摆动幅度（弧度）与角频率 */
+const FIRE_PALM_WOBBLE_RAD = 0.12;
+const FIRE_PALM_WOBBLE_FREQ = 0.03;
+/** 掌与残影到达后的原地消散时长 */
+const FIRE_PALM_LAND_FADE_MS = 140;
+/** 火柱倒卷：段自终点向英雄依次点亮的间隔（约 60ms/段） */
+const FIRE_TRAIL_REVERSE_INTERVAL_MS = 60;
+/** 终点裂缝：裁中心 src 70,70,116,116 区（外圈淡晕不可用），绘制尺寸 = 墙宽 ×1.3 */
+const FIRE_CRACK_CROP_X = 70;
+const FIRE_CRACK_CROP_Y = 70;
+const FIRE_CRACK_CROP_SIZE = 116;
+const FIRE_CRACK_SIZE_RATIO = 1.3;
+/** 裂缝淡入时长与透明度（落地即现，随火径一起淡出销毁） */
+const FIRE_CRACK_FADE_IN_MS = 120;
+const FIRE_CRACK_ALPHA = 0.9;
 /** 灼烧：最后一次命中后再跳的延迟与进阶多跳间隔（表现层常量，不进 data/skills 数值表） */
 const FIRE_WALL_BURN_DELAY_MS = 2000;
 const FIRE_WALL_BURN_TICK_INTERVAL_MS = 500;
@@ -323,6 +385,8 @@ export class SkillSystem {
   private readonly waves: WaveRuntime[] = [];
   private readonly zones: ZoneRuntime[] = [];
   private readonly walls: WallRuntime[] = [];
+  /** 飞行中的掌形气劲（vfx_fire_palm 存在时的施放前奏；数量 ≤ MAX_WALLS） */
+  private readonly firePalms: FirePalmRuntime[] = [];
   /** 灼烧状态表：key = 目标 runtimeId（仅敌人；死亡/离场即清除），SkillSystem 自承载不跨系统 */
   private readonly burnStates = new Map<number, BurnRuntime>();
   private readonly vfx: VfxRuntime[] = [];
@@ -388,6 +452,7 @@ export class SkillSystem {
     this.updateWaves(clampedDeltaMs, targets);
     this.updateZones(clampedDeltaMs, targets);
     this.updateWalls(clampedDeltaMs, targets);
+    this.updateFirePalms(clampedDeltaMs);
     this.updateBurns(clampedDeltaMs);
     this.updateVfx(clampedDeltaMs);
     this.ageHitSamples(clampedDeltaMs);
@@ -406,7 +471,7 @@ export class SkillSystem {
       orbitalsAlive: this.orbitals.length,
       zonesAlive: this.zones.length,
       wallsAlive: this.walls.length,
-      activeVfx: this.vfx.length + this.waves.length + this.zones.length + this.walls.length,
+      activeVfx: this.vfx.length + this.waves.length + this.zones.length + this.walls.length + this.firePalms.length,
       skillHitsLast10s: this.hitSamples.length,
       skillDpsLast10s: Math.round((totalDamage / dpsWindowSeconds) * 10) / 10,
       advancedSkills: this.formatAdvancedSkills(),
@@ -455,6 +520,13 @@ export class SkillSystem {
     for (const wall of this.walls) {
       wall.view.destroy();
     }
+    for (const palm of this.firePalms) {
+      palm.view.destroy();
+      for (const ghost of palm.ghosts) {
+        ghost.destroy();
+      }
+    }
+    this.firePalms.length = 0;
     for (const vfx of this.vfx) {
       vfx.view.destroy();
     }
@@ -1251,11 +1323,12 @@ export class SkillSystem {
   // ---------- 烈火神掌 · 地火喷发（kind "wall"） ----------
 
   /**
-   * 施放即推掌：敌人最密集方向（密度质心，复用 pickZoneCenter 的单趟 O(n²) 邻域计数，≥4s 一次
-   * 开销可忽略）定火径指向，火径起点即英雄位置——先出掌爆点，再沿指向 300ms 错峰喷出
-   * 5-7 个推浪火点（火浪推进），随后整条火线留下燃烧火径（DoT 期判定矩形 = 英雄沿指向
-   * 偏移 墙长/2，长轴沿指向，时长/数值与现行 wall 完全一致）；无有效目标时按英雄面向
-   * （getHeroFacing 可选注入）喷发，面向缺失回退正右方向。
+   * 施放即推掌（方案一"掌劲引路，火径随行"）：敌人最密集方向（密度质心，复用 pickZoneCenter
+   * 的单趟 O(n²) 邻域计数，≥4s 一次开销可忽略）定火径指向，火径起点即英雄位置——
+   * vfx_fire_palm 掌形气劲拖残影约 300ms 飞至火径终点，到达瞬间震屏+轻白闪+地裂缝落地，
+   * 火径段再自终点向英雄倒卷点亮；判定矩形 = 英雄沿指向偏移 墙长/2，长轴沿指向，
+   * DoT 时长/判定/数值与现行 wall 完全一致。vfx_fire_palm 缺失时退回"出掌爆点+逐点火浪"
+   * 兜底（火径正向点亮）。无有效目标时按英雄面向（getHeroFacing 可选注入）喷发，面向缺失回退正右。
    */
   private castWallSkillIfReady(runtime: SkillRuntime, targets: CombatTargetSnapshot[]): void {
     if (runtime.cooldownMs > 0 || this.walls.length >= MAX_WALLS) {
@@ -1265,6 +1338,8 @@ export class SkillSystem {
     const profile = this.getWallProfile(runtime);
     const heroWorld = this.options.getHeroWorld();
     const placement = this.pickWallPlacement(targets, profile, heroWorld);
+    const palmDriven = this.scene.textures.exists(FIRE_PALM_TEXTURE);
+    const trail = this.createFireWallView(placement, profile, runtime.advanced, palmDriven);
     const wall: WallRuntime = {
       runtimeId: this.nextWallId,
       skillId: runtime.skillId,
@@ -1283,13 +1358,19 @@ export class SkillSystem {
       burnTicks: profile.burnTicks,
       castX: heroWorld.x,
       castY: heroWorld.y,
-      pendingBursts: this.buildFireWavePlan(heroWorld, placement.dirX, placement.dirY, profile),
-      view: this.createFireWallView(placement, profile, runtime.advanced)
+      trailRevealDoneMs: trail.revealDoneMs,
+      pendingBursts: palmDriven ? [] : this.buildFireWavePlan(heroWorld, placement.dirX, placement.dirY, profile),
+      view: trail.view
     };
     this.nextWallId += 1;
     this.walls.push(wall);
     this.updateWorldAnchoredView(wall.view, wall.worldX, wall.worldY);
-    this.createFireBurstVfx(wall);
+    if (palmDriven) {
+      this.spawnFirePalm(wall, placement.dirX, placement.dirY);
+    } else {
+      // 兜底：出掌爆点 + 逐点火浪（旧推浪逻辑）
+      this.createFireBurstVfx(wall);
+    }
     runtime.cooldownMs = profile.cooldownMs;
     this.options.playSfx(runtime.advanced ? "skill_cast_advanced" : "skill_cast");
     eventBus.emit("skill_cast", {
@@ -1389,9 +1470,131 @@ export class SkillSystem {
   }
 
   /**
+   * 掌形气劲起飞：vfx_fire_palm 主掌（约 88px，按飞行方向 setRotation + 途中轻微摆动）
+   * + 2-3 个残影副本（k 越大越淡越大，ADD 混合，先创建垫在主掌下）；进阶金焰 tint。
+   * 飞行/落地由 updateFirePalms 推进，全部对象随 SkillSystem 销毁。
+   */
+  private spawnFirePalm(wall: WallRuntime, dirX: number, dirY: number): void {
+    const { x: screenX, y: screenY } = this.worldToScreen(wall.castX, wall.castY);
+    const frameWidth = this.getTextureFrameWidth(FIRE_PALM_TEXTURE, 256);
+    const baseScale = FIRE_PALM_DISPLAY_SIZE / frameWidth;
+    const angle = Math.atan2(dirY, dirX);
+    const ghosts: Phaser.GameObjects.Sprite[] = [];
+    for (let k = FIRE_PALM_GHOST_COUNT; k >= 1; k -= 1) {
+      // k 越大越淡（0.38/0.26/0.14）越大（×1.18/1.36/1.54）
+      const ghostAlpha = FIRE_PALM_GHOST_ALPHA_STEP - (k - 1) * 0.12;
+      const ghostScale = baseScale * (1 + k * FIRE_PALM_GHOST_SCALE_STEP);
+      const ghost = this.scene.add.sprite(screenX, screenY, FIRE_PALM_TEXTURE)
+        .setDepth(FIRE_PALM_DEPTH)
+        .setRotation(angle)
+        .setScale(ghostScale)
+        .setAlpha(ghostAlpha)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      if (wall.advanced) {
+        ghost.setTint(0xffe6a3);
+      }
+      ghost.setData("baseAlpha", ghostAlpha);
+      ghost.setData("baseScale", ghostScale);
+      ghosts.push(ghost);
+    }
+    // ghosts 当前顺序 [k3, k2, k1]（先淡后浓），翻转为 [k1, k2, k3] 便于按下标取间距
+    ghosts.reverse();
+    const view = this.scene.add.sprite(screenX, screenY, FIRE_PALM_TEXTURE)
+      .setDepth(FIRE_PALM_DEPTH)
+      .setRotation(angle)
+      .setScale(baseScale)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    if (wall.advanced) {
+      view.setTint(0xffe6a3);
+    }
+    view.setData("baseScale", baseScale);
+    this.firePalms.push({
+      wallRuntimeId: wall.runtimeId,
+      startX: wall.castX,
+      startY: wall.castY,
+      dirX,
+      dirY,
+      totalDist: wall.length,
+      angle,
+      ageMs: 0,
+      durationMs: FIRE_PALM_FLIGHT_MS,
+      landed: false,
+      advanced: wall.advanced,
+      view,
+      ghosts
+    });
+  }
+
+  /**
+   * 掌形气劲主循环：Cubic.Out 飞行（世界锚定对齐镜头 + 摆动），残影沿已飞行路径拖尾
+   * （k×22px 之后，钳制不越过起点）；到达终点即落地（震屏+轻白闪，裂缝由火径 reveal 同步落地），
+   * 随后 140ms 内掌与残影原地放大消散并销毁。
+   */
+  private updateFirePalms(deltaMs: number): void {
+    for (let index = this.firePalms.length - 1; index >= 0; index -= 1) {
+      const palm = this.firePalms[index];
+      palm.ageMs += deltaMs;
+      const flyProgress = Phaser.Math.Clamp(palm.ageMs / palm.durationMs, 0, 1);
+      const eased = 1 - Math.pow(1 - flyProgress, 3);
+      const traveled = palm.totalDist * eased;
+      const worldX = palm.startX + palm.dirX * traveled;
+      const worldY = palm.startY + palm.dirY * traveled;
+      const { x: screenX, y: screenY } = this.worldToScreen(worldX, worldY);
+      palm.view.setPosition(screenX, screenY);
+      // 轻微摆动：气劲飞行不僵硬（落地后停止摆动，定住压向地面）
+      if (!palm.landed) {
+        palm.view.setRotation(palm.angle + Math.sin(palm.ageMs * FIRE_PALM_WOBBLE_FREQ) * FIRE_PALM_WOBBLE_RAD);
+      }
+      for (let k = 0; k < palm.ghosts.length; k += 1) {
+        const ghostDist = Math.max(0, traveled - (k + 1) * FIRE_PALM_GHOST_SPACING_PX);
+        const ghostScreen = this.worldToScreen(palm.startX + palm.dirX * ghostDist, palm.startY + palm.dirY * ghostDist);
+        const ghost = palm.ghosts[k];
+        ghost.setPosition(ghostScreen.x, ghostScreen.y);
+        ghost.setRotation(palm.view.rotation);
+      }
+
+      if (!palm.landed && palm.ageMs >= palm.durationMs) {
+        this.landFirePalm(palm);
+      }
+
+      if (palm.landed) {
+        // 原地消散：掌与残影按各自 baseAlpha/baseScale 快速淡出并微放大（残影 k 越大越淡越大）
+        const fade = Phaser.Math.Clamp(1 - (palm.ageMs - palm.durationMs) / FIRE_PALM_LAND_FADE_MS, 0, 1);
+        palm.view.setAlpha(fade);
+        palm.view.setScale(getNumericData(palm.view, "baseScale", 1) * (1 + (1 - fade) * 0.2));
+        for (const ghost of palm.ghosts) {
+          ghost.setAlpha(getNumericData(ghost, "baseAlpha", 1) * fade);
+          ghost.setScale(getNumericData(ghost, "baseScale", 1) * (1 + (1 - fade) * 0.3));
+        }
+        if (fade <= 0) {
+          palm.view.destroy();
+          for (const ghost of palm.ghosts) {
+            ghost.destroy();
+          }
+          this.firePalms.splice(index, 1);
+        }
+      }
+    }
+  }
+
+  /**
+   * 掌到达终点砸地：震屏（JuiceSystem.heavyHit）+ 120ms 轻白暖闪；
+   * 墙已提前销毁（场景切换等）则跳过反馈仅消散。地裂缝/火径倒卷由墙 reveal 时间轴同步触发。
+   */
+  private landFirePalm(palm: FirePalmRuntime): void {
+    palm.landed = true;
+    const wallAlive = this.walls.some((entry) => entry.runtimeId === palm.wallRuntimeId);
+    if (!wallAlive) {
+      return;
+    }
+    JuiceSystem.get(this.scene).heavyHit();
+    this.scene.cameras.main.flash(120, 255, 230, 190);
+  }
+
+  /**
    * 地火喷发主循环：老化/跳伤害（每 tick 只遍历一次敌人列表，施放瞬间立即跳第一次）/
-   * 火浪推进（计划表到点喷发火点）/火径段随推浪逐个点燃/世界锚定对齐镜头/淡入淡出/到期销毁。
-   * 灼烧由 updateBurns 独立推进。
+   * 火浪推进兜底（计划表到点喷发火点）/火径段与裂缝按 reveal 时间轴点亮/世界锚定对齐镜头/
+   * 淡入淡出/到期销毁。灼烧由 updateBurns 独立推进。
    */
   private updateWalls(deltaMs: number, targets: CombatTargetSnapshot[]): void {
     for (let index = this.walls.length - 1; index >= 0; index -= 1) {
@@ -1460,17 +1663,19 @@ export class SkillSystem {
   }
 
   /**
-   * 火径段随推浪逐个点燃：段/焰心创建时写入 revealAtMs（按轴向位置等比映射到 300ms 推浪期），
-   * ageMs 越过 revealAtMs 后 90ms 内亮起至各自 baseAlpha；推浪期结束后短路零开销。
+   * 火径段/裂缝按 reveal 时间轴点亮：段与焰心创建时写入 revealAtMs（掌劲路径 = 飞行 300ms 后
+   * 自终点向英雄每 60ms 倒卷一段；兜底路径 = 按轴向位置正向等比映射 300ms 推浪期），
+   * ageMs 越过 revealAtMs 后在各自 revealFadeMs 内亮起至 baseAlpha；全部点亮后短路零开销。
    */
   private updateFireTrailReveal(wall: WallRuntime): void {
-    if (wall.ageMs > FIRE_WAVE_DURATION_MS + FIRE_TRAIL_REVEAL_FADE_MS) {
+    if (wall.ageMs > wall.trailRevealDoneMs) {
       return;
     }
     for (const child of wall.view.list) {
       const revealAtMs = getNumericData(child, "revealAtMs", 0);
+      const revealFadeMs = getNumericData(child, "revealFadeMs", FIRE_TRAIL_REVEAL_FADE_MS);
       const baseAlpha = getNumericData(child, "baseAlpha", 1);
-      const lit = Phaser.Math.Clamp((wall.ageMs - revealAtMs) / FIRE_TRAIL_REVEAL_FADE_MS, 0, 1);
+      const lit = Phaser.Math.Clamp((wall.ageMs - revealAtMs) / revealFadeMs, 0, 1);
       (child as Phaser.GameObjects.Sprite | Phaser.GameObjects.Shape).setAlpha(lit * baseAlpha);
     }
   }
@@ -1547,17 +1752,21 @@ export class SkillSystem {
    * 火径留守视图：vfx_fire_wall 段贴图沿长轴（施放指向，起点即英雄）拼接——段放大 1.5×
    * （墙厚 36-48 → 54-72）、相邻段重叠 50% 消除缝隙；主体 NORMAL 混合（禁止整墙 ADD：
    * 水墨底上发灰发粉），每段中心一枚同贴图小 copy 作 ADD 焰心提亮（alpha 0.35）；
-   * 各段随机相位播 4 帧跳动循环（段与焰心同相位），初始 alpha 0、按 revealAtMs 随推浪
-   * 逐个点燃。纹理缺失走程序化兜底。进阶金焰 tint 暖金。
+   * 各段随机相位播 4 帧跳动循环（段与焰心同相位），初始 alpha 0 按 reveal 时间轴点亮——
+   * 掌劲路径：飞行 300ms 后自终点向英雄每 60ms 倒卷一段（火柱倒卷），并在终点预埋
+   * vfx_fire_crack 地裂缝（裁中心 116×116 区，尺寸 1.3×墙宽，掌到达即 120ms 淡入）；
+   * 兜底路径：按轴向位置正向等比映射 300ms 推浪期。纹理缺失走程序化兜底。进阶金焰 tint 暖金。
+   * 返回视图与全部点亮截止时刻（revealDoneMs，供 updateFireTrailReveal 短路）。
    */
   private createFireWallView(
     placement: { x: number; y: number; angleRad: number },
     profile: ReturnType<SkillSystem["getWallProfile"]>,
-    advanced: boolean
-  ): Phaser.GameObjects.Container {
+    advanced: boolean,
+    palmDriven: boolean
+  ): { view: Phaser.GameObjects.Container; revealDoneMs: number } {
     const { x: screenX, y: screenY } = this.worldToScreen(placement.x, placement.y);
     if (!this.scene.textures.exists(FIRE_WALL_SEGMENT_TEXTURE)) {
-      return this.createFireWallFallbackView(screenX, screenY, placement.angleRad, profile, advanced);
+      return this.createFireWallFallbackView(screenX, screenY, placement.angleRad, profile, advanced, palmDriven);
     }
 
     const texture = this.scene.textures.get(FIRE_WALL_SEGMENT_TEXTURE);
@@ -1572,13 +1781,38 @@ export class SkillSystem {
     const spacing = profile.length / count;
     const segmentWidth = spacing / (1 - FIRE_TRAIL_SEGMENT_OVERLAP);
     const trailHeight = profile.width * FIRE_TRAIL_SEGMENT_SCALE;
+    // 点亮时刻：掌劲路径 = 掌到达（300ms）后自终点（index 大端）向英雄每 60ms 倒卷一段；
+    // 兜底路径 = 正向等比映射 300ms 推浪期
+    const revealAtFor = (index: number): number => palmDriven
+      ? FIRE_PALM_FLIGHT_MS + (count - 1 - index) * FIRE_TRAIL_REVERSE_INTERVAL_MS
+      : ((index + 0.5) / count) * FIRE_WAVE_DURATION_MS;
+    const revealDoneMs = palmDriven
+      ? FIRE_PALM_FLIGHT_MS + (count - 1) * FIRE_TRAIL_REVERSE_INTERVAL_MS + FIRE_TRAIL_REVEAL_FADE_MS
+      : FIRE_WAVE_DURATION_MS + FIRE_TRAIL_REVEAL_FADE_MS;
     const animationKey = getArtAnimationKey(FIRE_WALL_SEGMENT_TEXTURE);
     const hasAnimation = this.scene.anims.exists(animationKey);
     const children: Phaser.GameObjects.Sprite[] = [];
+
+    // 终点地裂缝（掌劲路径且贴图在）：裁中心 116×116 区（外圈淡晕不可用），尺寸 1.3×墙宽，
+    // 掌到达时刻 120ms 淡入；作为首个子对象垫在火焰段之下，随火径一起淡出销毁
+    if (palmDriven && this.scene.textures.exists(FIRE_CRACK_TEXTURE)) {
+      const crack = this.scene.add.sprite(profile.length / 2, 0, FIRE_CRACK_TEXTURE)
+        .setCrop(FIRE_CRACK_CROP_X, FIRE_CRACK_CROP_Y, FIRE_CRACK_CROP_SIZE, FIRE_CRACK_CROP_SIZE)
+        .setScale((profile.width * FIRE_CRACK_SIZE_RATIO) / FIRE_CRACK_CROP_SIZE)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setAlpha(0);
+      if (advanced) {
+        crack.setTint(0xffe6a3);
+      }
+      crack.setData("revealAtMs", FIRE_PALM_FLIGHT_MS);
+      crack.setData("revealFadeMs", FIRE_CRACK_FADE_IN_MS);
+      crack.setData("baseAlpha", FIRE_CRACK_ALPHA);
+      children.push(crack);
+    }
+
     for (let index = 0; index < count; index += 1) {
       const offsetX = -profile.length / 2 + spacing * (index + 0.5);
-      // 推浪到达该段轴向位置的时刻（等比映射到 300ms 推浪期），到时由 updateFireTrailReveal 点亮
-      const revealAtMs = ((index + 0.5) / count) * FIRE_WAVE_DURATION_MS;
+      const revealAtMs = revealAtFor(index);
       const phase = Phaser.Math.FloatBetween(0, 1);
       const segment = this.scene.add.sprite(offsetX, 0, FIRE_WALL_SEGMENT_TEXTURE)
         .setDisplaySize(segmentWidth, trailHeight)
@@ -1617,28 +1851,34 @@ export class SkillSystem {
       children.push(core);
     }
 
-    return this.scene.add.container(screenX, screenY, children)
-      .setDepth(FIRE_WALL_DEPTH)
-      .setRotation(placement.angleRad);
+    return {
+      view: this.scene.add.container(screenX, screenY, children)
+        .setDepth(FIRE_WALL_DEPTH)
+        .setRotation(placement.angleRad),
+      revealDoneMs
+    };
   }
 
   /**
    * 程序化兜底火径：沿长轴交错排布的金红火圈段（外焰橙红 NORMAL 大圈 + 内芯亮金 ADD 小圈），
-   * 与贴图版同一套 revealAtMs 推浪点亮逻辑；初始 alpha 0，随墙销毁。
+   * 与贴图版同一套 reveal 时间轴（掌劲路径倒卷 / 兜底路径正向）；初始 alpha 0，随墙销毁。
    */
   private createFireWallFallbackView(
     screenX: number,
     screenY: number,
     angleRad: number,
     profile: ReturnType<SkillSystem["getWallProfile"]>,
-    advanced: boolean
-  ): Phaser.GameObjects.Container {
+    advanced: boolean,
+    palmDriven: boolean
+  ): { view: Phaser.GameObjects.Container; revealDoneMs: number } {
     const count = Math.max(4, Math.ceil(profile.length / (profile.width * 0.9)));
     const spacing = profile.length / count;
     const children: Phaser.GameObjects.Arc[] = [];
     for (let index = 0; index < count; index += 1) {
       const offsetX = -profile.length / 2 + spacing * (index + 0.5);
-      const revealAtMs = ((index + 0.5) / count) * FIRE_WAVE_DURATION_MS;
+      const revealAtMs = palmDriven
+        ? FIRE_PALM_FLIGHT_MS + (count - 1 - index) * FIRE_TRAIL_REVERSE_INTERVAL_MS
+        : ((index + 0.5) / count) * FIRE_WAVE_DURATION_MS;
       const outer = this.scene.add.circle(offsetX, 0, profile.width * 0.72, advanced ? 0xff8a3d : 0xff6b3d, 0.5)
         .setBlendMode(Phaser.BlendModes.NORMAL)
         .setAlpha(0);
@@ -1652,15 +1892,21 @@ export class SkillSystem {
       core.setData("baseAlpha", 1);
       children.push(core);
     }
-    return this.scene.add.container(screenX, screenY, children)
-      .setDepth(FIRE_WALL_DEPTH)
-      .setRotation(angleRad);
+    const revealDoneMs = palmDriven
+      ? FIRE_PALM_FLIGHT_MS + (count - 1) * FIRE_TRAIL_REVERSE_INTERVAL_MS + FIRE_TRAIL_REVEAL_FADE_MS
+      : FIRE_WAVE_DURATION_MS + FIRE_TRAIL_REVEAL_FADE_MS;
+    return {
+      view: this.scene.add.container(screenX, screenY, children)
+        .setDepth(FIRE_WALL_DEPTH)
+        .setRotation(angleRad),
+      revealDoneMs
+    };
   }
 
   /**
-   * 出掌爆点：英雄身前（施放点）一枚稍大的 vfx_fire_burst 一次性序列帧（墙宽基准 ×1.2），
-   * 标志"出掌"瞬间、推浪由此出发；播完销毁（沿用 bindOneShotDestroy 模式），局部效果不做
-   * 全屏反馈。纹理缺失退化为金红扩散环。
+   * 出掌爆点（仅 vfx_fire_palm 缺失的兜底路径使用）：英雄身前一枚稍大的 vfx_fire_burst
+   * 一次性序列帧（墙宽基准 ×1.2），标志"出掌"瞬间、推浪由此出发；播完销毁（沿用
+   * bindOneShotDestroy 模式），局部效果不做全屏反馈。纹理缺失退化为金红扩散环。
    */
   private createFireBurstVfx(wall: WallRuntime): void {
     const { x: screenX, y: screenY } = this.worldToScreen(wall.castX, wall.castY);

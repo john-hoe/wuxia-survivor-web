@@ -54,6 +54,8 @@ import vfxDeathVignetteUrl from "../assets/vfx/vfx_death_vignette.png";
 import vfxEliteWarningUrl from "../assets/vfx/vfx_elite_warning.png";
 import vfxEnemyDieUrl from "../assets/vfx/vfx_enemy_die.png";
 import vfxFireBurstUrl from "../assets/vfx/vfx_fire_burst.png";
+import vfxFireCrackUrl from "../assets/vfx/vfx_fire_crack.png";
+import vfxFirePalmUrl from "../assets/vfx/vfx_fire_palm.png";
 import vfxFireWallUrl from "../assets/vfx/vfx_fire_wall.png";
 import vfxGroundCrackUrl from "../assets/vfx/vfx_ground_crack.png";
 import vfxHeroHurtFlashUrl from "../assets/vfx/vfx_hero_hurt_flash.png";
@@ -218,6 +220,8 @@ export const artAssetUrls = {
   vfx_elite_warning: vfxEliteWarningUrl,
   vfx_enemy_die: vfxEnemyDieUrl,
   vfx_fire_burst: vfxFireBurstUrl,
+  vfx_fire_crack: vfxFireCrackUrl,
+  vfx_fire_palm: vfxFirePalmUrl,
   vfx_fire_wall: vfxFireWallUrl,
   vfx_ground_crack: vfxGroundCrackUrl,
   vfx_hero_hurt_flash: vfxHeroHurtFlashUrl,
