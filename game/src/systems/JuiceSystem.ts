@@ -60,12 +60,14 @@ export class JuiceSystem {
   private damagePool: Phaser.GameObjects.Text[] = [];
   private ambientEmitter: Phaser.GameObjects.Particles.ParticleEmitter | null =
     null;
+  private levelUpZoomComplete?: () => void;
 
   private constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.ensureTextures();
     // 场景重启/关闭时清空飘字池与环境粒子，避免持有已销毁对象
     scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.resetLevelUpZoom();
       this.stopAmbient();
       for (const t of this.damagePool) {
         if (t.scene) {
@@ -105,19 +107,37 @@ export class JuiceSystem {
     cam.flash(180, 255, 240, 200);
   }
 
-  /** 升级/顿悟：淡金闪 + 轻微推拉（推拉基准为当前高清渲染缩放 K，不可写死 1）。 */
+  /** 升级/顿悟：淡金闪 + 轻微推拉；完整往返必须早于 350ms 的顿悟暂停。 */
   levelUp(): void {
     const cam = this.scene.cameras.main;
-    cam.flash(200, 246, 212, 114);
     const baseZoom = RESOLUTION_SCALE;
-    cam.zoomTo(baseZoom * 1.04, 300, Phaser.Math.Easing.Cubic.Out, true, (
-      _cam,
-      progress
-    ) => {
-      if (progress === 1) {
-        cam.zoomTo(baseZoom, 260, Phaser.Math.Easing.Cubic.InOut);
-      }
-    });
+    this.resetLevelUpZoom();
+    cam.flash(200, 246, 212, 114);
+
+    // Phaser 的 zoomTo onUpdate(progress=1) 发生在 ZoomEffect 标记完成之前，
+    // 因此不能在 onUpdate 内启动第二段 zoomTo，否则第二段会因 effect 仍在运行而被忽略。
+    this.levelUpZoomComplete = () => {
+      this.levelUpZoomComplete = undefined;
+      cam.zoomTo(baseZoom, 180, Phaser.Math.Easing.Cubic.InOut, true);
+    };
+    cam.once(Phaser.Cameras.Scene2D.Events.ZOOM_COMPLETE, this.levelUpZoomComplete);
+    cam.zoomTo(baseZoom * 1.04, 140, Phaser.Math.Easing.Cubic.Out, true);
+  }
+
+  /** 顿悟界面暂停游戏前收口相机状态，防止低帧率下把半程 zoom 冻结到恢复后。 */
+  resetLevelUpZoom(): void {
+    // Scene SHUTDOWN 时 CameraManager 可能已先清空 main；此时只需释放本地回调引用。
+    const cam = this.scene.cameras?.main;
+    if (!cam) {
+      this.levelUpZoomComplete = undefined;
+      return;
+    }
+    if (this.levelUpZoomComplete) {
+      cam.off(Phaser.Cameras.Scene2D.Events.ZOOM_COMPLETE, this.levelUpZoomComplete);
+      this.levelUpZoomComplete = undefined;
+    }
+    cam.zoomEffect.reset();
+    cam.setZoom(RESOLUTION_SCALE);
   }
 
   /** 稀有度揭示闪（抽卡）：按稀有度色闪屏。 */

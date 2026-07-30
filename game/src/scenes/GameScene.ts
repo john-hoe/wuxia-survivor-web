@@ -1478,8 +1478,11 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.vignetteTighten = tighten;
-    // 动态层按 1.3 倍屏幕铺设，scale 收紧到 1/(1+t) 时仍满幅覆盖，暗角边界向中心收拢。
-    const targetScale = 1 / (1 + tighten);
+    // setDisplaySize 已把 128×128 纹理换算为非 1 的基础 scale；收紧必须乘在该基础值上。
+    // 若直接把 scale 写成 1/(1+t)，Boss 激活时纹理会缩成约 111×111，形成主角周围的黑方框。
+    const baseScaleX = (DESIGN_WIDTH * 1.3) / this.vignetteDynamic.width;
+    const baseScaleY = (DESIGN_HEIGHT * 1.3) / this.vignetteDynamic.height;
+    const tightenScale = 1 / (1 + tighten);
     const targetAlpha = tighten <= 0
       ? 0
       : vignetteDynamicsConfig.maxAlpha * Phaser.Math.Clamp(tighten / vignetteDynamicsConfig.lowHpTighten, 0, 1);
@@ -1487,8 +1490,8 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({
       targets: this.vignetteDynamic,
       alpha: targetAlpha,
-      scaleX: targetScale,
-      scaleY: targetScale,
+      scaleX: baseScaleX * tightenScale,
+      scaleY: baseScaleY * tightenScale,
       duration: tighten > 0 ? vignetteDynamicsConfig.tweenMs : vignetteDynamicsConfig.releaseMs,
       ease: "Sine.easeInOut"
     });
@@ -2398,6 +2401,7 @@ export class GameScene extends Phaser.Scene {
         options: pendingInsight?.options.map((option) => option.id) ?? []
       });
       this.debugPanel?.update(this.createDebugSnapshot());
+      JuiceSystem.get(this).resetLevelUpZoom();
       this.scene.pause(SCENE_KEYS.game);
       this.scene.launch(SCENE_KEYS.insight, pendingInsight);
     });
