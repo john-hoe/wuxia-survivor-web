@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { DESIGN_WIDTH } from "../ui/designSize";
+import { DESIGN_WIDTH, RESOLUTION_SCALE } from "../ui/designSize";
 import { PALETTE, FONT_MONO } from "../ui/visualConstants";
 
 /**
@@ -105,16 +105,17 @@ export class JuiceSystem {
     cam.flash(180, 255, 240, 200);
   }
 
-  /** 升级/顿悟：淡金闪 + 轻微推拉。 */
+  /** 升级/顿悟：淡金闪 + 轻微推拉（推拉基准为当前高清渲染缩放 K，不可写死 1）。 */
   levelUp(): void {
     const cam = this.scene.cameras.main;
     cam.flash(200, 246, 212, 114);
-    cam.zoomTo(1.04, 300, Phaser.Math.Easing.Cubic.Out, true, (
+    const baseZoom = RESOLUTION_SCALE;
+    cam.zoomTo(baseZoom * 1.04, 300, Phaser.Math.Easing.Cubic.Out, true, (
       _cam,
       progress
     ) => {
       if (progress === 1) {
-        cam.zoomTo(1, 260, Phaser.Math.Easing.Cubic.InOut);
+        cam.zoomTo(baseZoom, 260, Phaser.Math.Easing.Cubic.InOut);
       }
     });
   }
