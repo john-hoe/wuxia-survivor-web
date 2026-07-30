@@ -1,5 +1,9 @@
 # 30 Enemy P0 Asset Implementation Notes
 
+> Archived 1× authoring note. The current runtime asset uses a 192×192 physical
+> frame (2× the 96×96 logical size). Consult `artManifest.ts` before producing
+> replacement sheets.
+
 ## 目的
 
 本文只服务 `SW-COMBAT-001`：敌人生成、追踪、接触伤害。本轮不生成正式 PNG，不改工程代码，只把 `enemy_bandit_grunt_walk` 的 P0 可接入视觉方案写清楚，让工程可以先用程序 fallback，后续再无缝替换 spritesheet。

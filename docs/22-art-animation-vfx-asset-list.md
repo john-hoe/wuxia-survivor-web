@@ -48,15 +48,15 @@ type ArtManifestItem = {
 
 | id | 尺寸 | 帧数 | 用途 | fallback |
 | --- | ---: | ---: | --- | --- |
-| `hero_shaoxia_idle` | 128x128 | 4 | 少侠待机 | 青白菱形 |
-| `hero_shaoxia_move` | 128x128 | 6 | 少侠移动 | 青白菱形 + 朝向箭头 |
-| `hero_shaoxia_hurt` | 128x128 | 2 | 受伤闪烁 | 白/红闪 |
-| `enemy_bandit_grunt_walk` | 96x96 | 4 | 山贼喽啰移动 | 暖色圆角剪影 |
-| `enemy_hound_run` | 96x96 | 4 | 恶犬移动；SW-ART-012 Round 004 B-Fix `004b1` 已接入 | 暗红低矮剪影 |
-| `enemy_shield_bandit_walk` | 128x128 | 4 | 持盾山贼移动；SW-ART-012 Round 004 B-Fix `004b1` 已接入 | 大盾剪影 |
-| `enemy_wooden_dummy_elite_walk` | 176x176 | 4 | 木人机关移动；SW-ART-012 Round 004 B-Fix `004b1` 已接入 | 木色大剪影 |
-| `boss_heifeng_idle` | 208x208 | 4 | 黑风寨主待机；SW-ART-012 Round 004 B-Fix `004b1` 已接入 | 深红大剪影 |
-| `boss_heifeng_attack` | 208x208 | 6 | 头目攻击；SW-ART-012 Round 004 B-Fix `004b1` 已接入 | 深红大剪影 + 刀光 |
+| `hero_shaoxia_idle` | 256x256 | 4 | 少侠待机（2× 最终帧） | 青白菱形 |
+| `hero_shaoxia_move` | 256x256 | 6 | 少侠移动（2× 最终帧） | 青白菱形 + 朝向箭头 |
+| `hero_shaoxia_hurt` | 256x256 | 2 | 受伤闪烁（2× 最终帧） | 白/红闪 |
+| `enemy_bandit_grunt_walk` | 192x192 | 4 | 山贼喽啰移动（2× 最终帧） | 暖色圆角剪影 |
+| `enemy_hound_run` | 192x192 | 4 | 恶犬移动；2× 最终帧 | 暗红低矮剪影 |
+| `enemy_shield_bandit_walk` | 256x256 | 4 | 持盾山贼移动；2× 最终帧 | 大盾剪影 |
+| `enemy_wooden_dummy_elite_walk` | 352x352 | 4 | 木人机关移动；2× 最终帧 | 木色大剪影 |
+| `boss_heifeng_idle` | 416x416 | 4 | 黑风寨主待机；2× 最终帧 | 深红大剪影 |
+| `boss_heifeng_attack` | 416x416 | 6 | 头目攻击；2× 最终帧 | 深红大剪影 + 刀光 |
 
 ## 掉落物资产
 

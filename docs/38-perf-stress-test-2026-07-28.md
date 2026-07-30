@@ -1,5 +1,11 @@
 # 38 · 性能压测报告（2026-07-28）
 
+> Historical, unverified report. The raw samples, exact commit SHA, collection
+> script, browser build, machine profile and console logs were not committed.
+> Numbers below are retained as original observations, not reproducible public
+> acceptance evidence. Re-run the tracked checks and attach raw artifacts before
+> using these claims as a release gate.
+
 ## 环境声明（重要）
 
 本报告数据在 **无头 Chrome + SwiftShader（纯软件渲染）** 下采集。SwiftShader 的绝对帧率（本机约 38-48 FPS）**远低于真实 GPU 环境**，其价值在于**相对衰减趋势**；真实设备请以文末"真机复测步骤"为准。
@@ -10,7 +16,7 @@
 - 调试键（本批新增/确认）：**G** 无敌、**F3** 全技能进阶、**F6** 按当前波次 +30 怪（aliveCap×1.5 硬顶）、**F10** 回血、**F11** Boss、**F2** 切图、反引号 debugPanel
 - 场景：基线 → 敌数爬升 → Boss+满编 → 低特效 → 枫叶官道
 
-## 实测结果（6 轮完整局汇总）
+## 原记录：实测结果（6 轮完整局汇总）
 
 | 场景 | 存活敌数 | FPS 均值 | FPS 最低 |
 |---|---|---|---|
@@ -44,7 +50,7 @@
 - 若真机在 120+ 敌掉出 60FPS：优先把拖尾 emitter 上限与伤害飘字池再降一档；其次考虑敌人阴影合并为单层 RenderTexture
 - God 键与 F6 均为 DEV 门内调试键，不影响线上包
 
-## 附录：真机复测结果（2026-07-29，MacBook Pro ProMotion 120Hz）
+## 附录：原记录的真机复测结果（2026-07-29，设备细节与 raw samples 缺失）
 
 | 场景 | 敌数 | FPS |
 |---|---|---|

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "status": "incomplete",
+  "policy": "A generated label in runtime code is not proof of provider, model, prompt, or license. Missing historical facts remain explicit instead of being invented.",
+  "releaseGate": "Do not represent these files as cleared for redistribution until providerTerms and rightsBasis are verified.",
+  "common": {
+    "declaredRuntimeSource": "generated",
+    "provider": null,
+    "model": null,
+    "prompt": null,
+    "sourceFile": null,
+    "generatedAt": null,
+    "providerTerms": null,
+    "rightsBasis": null,
+    "provenanceStatus": "unverified"
+  },
+  "assets": [
+    { "file": "bgm_maple_loop.ogg", "durationSeconds": 90.000544, "sha256": "6a9e5be07ed305c487edda62d7a76f982c0b62db5eedad5c2253f9254660a44f", "events": ["music_stage_maple"] },
+    { "file": "bgm_qingshi_loop.ogg", "durationSeconds": 90.000544, "sha256": "abceed6aee53f1e40303795b70e2c800b1046e5c3e3fb9891496646f79ece525", "events": ["music_menu", "music_stage_qingshi"] },
+    { "file": "bgm_temple_loop.ogg", "durationSeconds": 90.000544, "sha256": "3c5d5b4d8c270e33267e2a4054bc6907c441cb28b818d452b878f943c2af076d", "events": ["music_stage_temple"] },
+    { "file": "boss_roar.ogg", "durationSeconds": 1.100045, "sha256": "7c2664bd897e1713c1d6164c3959a1f69c4911b5d32d065601a425fc40c956d5", "events": ["boss_intro"] },
+    { "file": "coin_clink.ogg", "durationSeconds": 0.300408, "sha256": "9b4f0baedb3532df80cb96b597ab5e023bd23866e91965f042bde795c41e9046", "events": ["copper_gain"] },
+    { "file": "enemy_die_puff.ogg", "durationSeconds": 0.351202, "sha256": "999fa29b3bff69e74ad7801ff032e0e09d94a16e22733ce7d457c8e912fea29f", "events": ["enemy_die"] },
+    { "file": "heal_warm.ogg", "durationSeconds": 0.801088, "sha256": "351f96bb86cbfe597204ba64a5d3a74d3c32a3b0570650ba319821a2fafa768c", "events": ["heal_pickup"] },
+    { "file": "heartbeat.ogg", "durationSeconds": 0.901224, "sha256": "9654120ad0b69db197e0ed2d6a2e0ff144955fe3dbf0fd914d22c9096f31a7fc", "events": ["low_hp_loop"] },
+    { "file": "hit_thud.ogg", "durationSeconds": 0.181406, "sha256": "7e8313e7e4b6a22afdbec010b03505866160e9632d00159412dc1a930837ad4b", "events": ["hit_light"] },
+    { "file": "palm_boom.ogg", "durationSeconds": 0.600816, "sha256": "3cb2996027458ae9e8a8fe044b7dec30ba4951d61c226b02396695c72b5136c5", "events": ["elite_warning"] },
+    { "file": "pickup_chime.ogg", "durationSeconds": 0.700952, "sha256": "905efbf93ee89b397e81c07ed267af95aac87554f5627c188451ad93df22451d", "events": ["inner_power_pickup"] },
+    { "file": "reveal_common.ogg", "durationSeconds": 0.451338, "sha256": "e613b2debf313605f22364bdcb92430d91df0d6bab8253ce20bdd7621a1dee37", "events": ["scripture_reveal_common"] },
+    { "file": "reveal_epic.ogg", "durationSeconds": 1.200181, "sha256": "fb592496c15739135b338dc14c1f27aa02a39566ef8c6cd647ca860b81c997be", "events": ["scripture_reveal_epic"] },
+    { "file": "reveal_rare.ogg", "durationSeconds": 0.901224, "sha256": "0efb3a23b3cbc1473314f8be31a6c0043884dc9400d9a4a4429b58cbe9380407", "events": ["scripture_reveal_rare"] },
+    { "file": "sword_swish.ogg", "durationSeconds": 0.280091, "sha256": "4009fe8c9905e97c05e3a8d8d192d2310bd94dfd3a6cc98db225ec9fe86ddfcb", "events": ["skill_cast"] },
+    { "file": "sword_swish_heavy.ogg", "durationSeconds": 0.420862, "sha256": "b451d4d4d62f2062dc89556e4130371792c76873d668f4e632b1209ebde11b60", "events": ["skill_cast_advanced"] }
+  ]
+}

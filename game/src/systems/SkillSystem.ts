@@ -8,6 +8,7 @@ import type { EnemyDamageResult, EnemyTargetSnapshot } from "./EnemyDirectorSyst
 import type { BossDamageResult, BossTargetSnapshot } from "./BossSystem";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
+import { segmentIntersectsCircle } from "../utils/geometry";
 import { JuiceSystem, type DamageKind } from "./JuiceSystem";
 
 type Point = {
@@ -19,7 +20,7 @@ type SkillSystemOptions = {
   getHeroWorld: () => Point;
   getHeroScreen: () => Point;
   getTargets: () => CombatTargetSnapshot[];
-  damageTarget: (runtimeId: number, amount: number, source: string) => CombatDamageResult | undefined;
+  damageTarget: (runtimeId: number, amount: number, source: string, attackOriginWorld?: Point) => CombatDamageResult | undefined;
   knockbackEnemy: (runtimeId: number, originWorld: Point, distance: number, source: string) => boolean;
   onEnemyKilled: (result: EnemyDamageResult) => void;
   playSfx: (eventId: string) => void;
@@ -199,6 +200,7 @@ type BurnRuntime = {
   nextTickInMs: number;
   damage: number;
   advanced: boolean;
+  attackOriginWorld: Point;
 };
 
 type HitSample = {
@@ -399,6 +401,7 @@ export class SkillSystem {
   private nextZoneId = 1;
   private nextWallId = 1;
   private hitSfxCooldownMs = 0;
+  private cooldownReductionRatio = 0;
   /** 共享地面墨层：屏幕尺寸 RenderTexture，记录其像素 (0,0) 对应的世界坐标，逐帧随镜头对齐 */
   private inkLayer?: Phaser.GameObjects.RenderTexture;
   private inkLayerWorldX = 0;
@@ -430,6 +433,7 @@ export class SkillSystem {
     }
 
     const targets = this.options.getTargets();
+    const targetGrid = new CombatTargetGrid(targets);
     for (const skillId of skillOrder) {
       const runtime = this.skills.get(skillId);
       if (!runtime) {
@@ -447,7 +451,7 @@ export class SkillSystem {
       }
     }
 
-    this.updateProjectiles(clampedDeltaMs, targets);
+    this.updateProjectiles(clampedDeltaMs, targetGrid);
     this.updateOrbitals(clampedDeltaMs, targets);
     this.updateWaves(clampedDeltaMs, targets);
     this.updateZones(clampedDeltaMs, targets);
@@ -499,6 +503,18 @@ export class SkillSystem {
       advanceKeyIds: Array.from(this.advanceKeys),
       maxSkillSlots: 6
     };
+  }
+
+  increaseCooldownReduction(ratio: number): number {
+    this.cooldownReductionRatio = Phaser.Math.Clamp(
+      this.cooldownReductionRatio + Math.max(0, ratio),
+      0,
+      0.4
+    );
+    for (const runtime of this.skills.values()) {
+      runtime.cooldownMs = Math.min(runtime.cooldownMs, this.getCooldownMs(runtime));
+    }
+    return this.cooldownReductionRatio;
   }
 
   destroy(): void {
@@ -696,7 +712,7 @@ export class SkillSystem {
       this.spawnProjectile(runtime, heroWorld, rotatePoint(direction, spreadAngles[index]), profile);
     }
 
-    runtime.cooldownMs = profile.cooldownMs;
+    runtime.cooldownMs = this.applyCooldownReduction(profile.cooldownMs);
     eventBus.emit("skill_cast", {
       skillId: runtime.skillId,
       displayName: this.getRuntimeDisplayName(runtime),
@@ -715,7 +731,7 @@ export class SkillSystem {
     const profile = this.getWaveProfile(runtime);
     const heroWorld = this.options.getHeroWorld();
     this.spawnWave(runtime, heroWorld, profile);
-    runtime.cooldownMs = profile.cooldownMs;
+    runtime.cooldownMs = this.applyCooldownReduction(profile.cooldownMs);
     this.options.playSfx("skill_cast");
     eventBus.emit("skill_cast", {
       skillId: runtime.skillId,
@@ -843,7 +859,7 @@ export class SkillSystem {
     this.stampInkStrokes(zone, profile.strokeCount, runtime.level);
     this.createInkSplatVfx(zone);
     zone.poisonEmitter = this.createPoisonBubbleEmitter(zone);
-    runtime.cooldownMs = profile.cooldownMs;
+    runtime.cooldownMs = this.applyCooldownReduction(profile.cooldownMs);
     this.options.playSfx(runtime.advanced ? "skill_cast_advanced" : "skill_cast");
     eventBus.emit("skill_cast", {
       skillId: runtime.skillId,
@@ -962,14 +978,13 @@ export class SkillSystem {
       g.generateTexture(INK_ERASE_TEXTURE, 8, 8);
       g.destroy();
     }
-    const scratch = this.inkEraseScratch ?? this.scene.add.image(0, 0, INK_ERASE_TEXTURE);
+    const scratch = this.inkEraseScratch ?? new Phaser.GameObjects.Image(this.scene, 0, 0, INK_ERASE_TEXTURE);
     this.inkEraseScratch = scratch;
     scratch
       .setPosition(0, 0)
       .setOrigin(0, 0)
       .setDisplaySize(this.inkLayer.width, this.inkLayer.height)
-      .setAlpha(INK_ERASE_ALPHA)
-      .setVisible(true);
+      .setAlpha(INK_ERASE_ALPHA);
     this.inkLayer.erase(scratch);
   }
 
@@ -986,7 +1001,8 @@ export class SkillSystem {
 
       const result = this.applySkillDamage(zone.skillId, target, zone.damage, {
         zoneRuntimeId: zone.runtimeId,
-        source: zone.advanced ? "ink_zone_advanced" : "ink_zone"
+        source: zone.advanced ? "ink_zone_advanced" : "ink_zone",
+        attackOriginWorld: { x: zone.worldX, y: zone.worldY }
       });
       if (isEnemyTarget(target)) {
         eventBus.emit("enemy_slow_requested", {
@@ -1350,7 +1366,7 @@ export class SkillSystem {
       width: profile.width,
       damage: profile.damage,
       tickIntervalMs: profile.tickIntervalMs,
-      tickTimerMs: 0,
+      tickTimerMs: trail.revealDoneMs,
       ageMs: 0,
       durationMs: profile.durationMs,
       level: runtime.level,
@@ -1371,7 +1387,7 @@ export class SkillSystem {
       // 兜底：出掌爆点 + 逐点火浪（旧推浪逻辑）
       this.createFireBurstVfx(wall);
     }
-    runtime.cooldownMs = profile.cooldownMs;
+    runtime.cooldownMs = this.applyCooldownReduction(profile.cooldownMs);
     this.options.playSfx(runtime.advanced ? "skill_cast_advanced" : "skill_cast");
     eventBus.emit("skill_cast", {
       skillId: runtime.skillId,
@@ -1700,7 +1716,8 @@ export class SkillSystem {
 
       const result = this.applySkillDamage(wall.skillId, target, wall.damage, {
         wallRuntimeId: wall.runtimeId,
-        source: wall.advanced ? "fire_wall_advanced" : "fire_wall"
+        source: wall.advanced ? "fire_wall_advanced" : "fire_wall",
+        attackOriginWorld: { x: wall.worldX, y: wall.worldY }
       });
       // 灼烧：仅确认命中的敌人才被点燃；重复命中刷新延迟（最后一次命中 2s 后再跳）
       if (result?.damaged && isEnemyTarget(target)) {
@@ -1715,7 +1732,8 @@ export class SkillSystem {
       ticksRemaining: wall.burnTicks,
       nextTickInMs: FIRE_WALL_BURN_DELAY_MS,
       damage: wall.damage,
-      advanced: wall.advanced
+      advanced: wall.advanced,
+      attackOriginWorld: { x: wall.worldX, y: wall.worldY }
     });
   }
 
@@ -1732,7 +1750,8 @@ export class SkillSystem {
 
       const result = this.applySkillDamageById(burn.skillId, runtimeId, burn.damage, {
         source: burn.advanced ? "fire_wall_burn_advanced" : "fire_wall_burn",
-        damageKind: "crit"
+        damageKind: "crit",
+        attackOriginWorld: burn.attackOriginWorld
       });
       if (!result?.damaged) {
         this.burnStates.delete(runtimeId);
@@ -1968,17 +1987,19 @@ export class SkillSystem {
     });
   }
 
-  private updateProjectiles(deltaMs: number, targets: CombatTargetSnapshot[]): void {
+  private updateProjectiles(deltaMs: number, targetGrid: CombatTargetGrid): void {
     const deltaSeconds = deltaMs / 1000;
     for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
       const projectile = this.projectiles[index];
       const step = projectile.speed * deltaSeconds;
+      const previousX = projectile.worldX;
+      const previousY = projectile.worldY;
       projectile.worldX += projectile.directionX * step;
       projectile.worldY += projectile.directionY * step;
       projectile.distanceTraveled += step;
       this.updateProjectileScreenPosition(projectile);
 
-      if (this.tryHitEnemyWithProjectile(projectile, targets)) {
+      if (this.tryHitEnemyWithProjectile(projectile, targetGrid, previousX, previousY)) {
         if (projectile.pierceRemaining <= 0) {
           this.destroyProjectile(index);
           continue;
@@ -2053,20 +2074,41 @@ export class SkillSystem {
     }
   }
 
-  private tryHitEnemyWithProjectile(projectile: ProjectileRuntime, targets: CombatTargetSnapshot[]): boolean {
+  private tryHitEnemyWithProjectile(
+    projectile: ProjectileRuntime,
+    targetGrid: CombatTargetGrid,
+    previousX: number,
+    previousY: number
+  ): boolean {
+    const targets = targetGrid.querySegment(
+      previousX,
+      previousY,
+      projectile.worldX,
+      projectile.worldY,
+      projectile.radius
+    );
     for (const target of targets) {
       if (projectile.hitEnemyIds.has(target.runtimeId)) {
         continue;
       }
 
       const hitDistance = target.collisionRadius + projectile.radius;
-      if (Math.hypot(target.worldX - projectile.worldX, target.worldY - projectile.worldY) > hitDistance) {
+      if (!segmentIntersectsCircle(
+        previousX,
+        previousY,
+        projectile.worldX,
+        projectile.worldY,
+        target.worldX,
+        target.worldY,
+        hitDistance
+      )) {
         continue;
       }
 
       const result = this.applySkillDamage(projectile.skillId, target, projectile.damage, {
         projectileRuntimeId: projectile.runtimeId,
-        source: projectile.advanced ? "advanced_projectile" : "projectile"
+        source: projectile.advanced ? "advanced_projectile" : "projectile",
+        attackOriginWorld: { x: projectile.worldX, y: projectile.worldY }
       });
       if (!result?.damaged) {
         continue;
@@ -2099,7 +2141,8 @@ export class SkillSystem {
 
       const result = this.applySkillDamage(orbital.skillId, target, profile.damage, {
         orbitalRuntimeId: orbital.runtimeId,
-        source: "orbit"
+        source: "orbit",
+        attackOriginWorld: { x: worldX, y: worldY }
       });
       if (result?.damaged) {
         this.orbitalHitCooldowns.set(cooldownKey, profile.perEnemyHitCooldownMs);
@@ -2124,7 +2167,8 @@ export class SkillSystem {
       const result = this.applySkillDamage(wave.skillId, target, wave.damage, {
         waveRuntimeId: wave.runtimeId,
         source: "aoe_wave",
-        knockback: wave.knockback
+        knockback: wave.knockback,
+        attackOriginWorld: { x: wave.worldX, y: wave.worldY }
       });
       wave.hitEnemyIds.add(target.runtimeId);
       if (result?.damaged && !result.killed) {
@@ -2154,7 +2198,9 @@ export class SkillSystem {
     damage: number,
     metadata: Record<string, unknown>
   ): CombatDamageResult | undefined {
-    const result = this.options.damageTarget(runtimeId, damage, skillId);
+    const origin = metadata.attackOriginWorld;
+    const attackOriginWorld = isPoint(origin) ? origin : undefined;
+    const result = this.options.damageTarget(runtimeId, damage, skillId, attackOriginWorld);
     if (!result?.damaged) {
       return undefined;
     }
@@ -2531,18 +2577,22 @@ export class SkillSystem {
 
   private getCooldownMs(runtime: SkillRuntime): number {
     if (skillConfigs[runtime.skillId].kind === "projectile") {
-      return this.getProjectileProfile(runtime).cooldownMs;
+      return this.applyCooldownReduction(this.getProjectileProfile(runtime).cooldownMs);
     }
     if (skillConfigs[runtime.skillId].kind === "aoe") {
-      return this.getWaveProfile(runtime).cooldownMs;
+      return this.applyCooldownReduction(this.getWaveProfile(runtime).cooldownMs);
     }
     if (skillConfigs[runtime.skillId].kind === "zone") {
-      return this.getZoneProfile(runtime).cooldownMs;
+      return this.applyCooldownReduction(this.getZoneProfile(runtime).cooldownMs);
     }
     if (skillConfigs[runtime.skillId].kind === "wall") {
-      return this.getWallProfile(runtime).cooldownMs;
+      return this.applyCooldownReduction(this.getWallProfile(runtime).cooldownMs);
     }
     return 0;
+  }
+
+  private applyCooldownReduction(cooldownMs: number): number {
+    return Math.max(100, Math.round(cooldownMs * (1 - this.cooldownReductionRatio)));
   }
 
   /** 该技能当前等级/进阶状态下的配置期望伤害，作为暴击阈值基准（均值 2 倍判暴击）。 */
@@ -2957,6 +3007,54 @@ function rotatePoint(point: Point, degrees: number): Point {
     x: point.x * cos - point.y * sin,
     y: point.x * sin + point.y * cos
   };
+}
+
+function isPoint(value: unknown): value is Point {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const point = value as Partial<Point>;
+  return Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+/**
+ * Per-frame broad phase for fast projectiles. At the 180-enemy desktop cap,
+ * a 60px projectile step now checks the few adjacent 128px cells instead of
+ * scanning every target for every projectile.
+ */
+class CombatTargetGrid {
+  private static readonly CELL_SIZE = 128;
+  private readonly cells = new Map<string, CombatTargetSnapshot[]>();
+  private maxRadius = 0;
+
+  constructor(targets: CombatTargetSnapshot[]) {
+    for (const target of targets) {
+      this.maxRadius = Math.max(this.maxRadius, target.collisionRadius);
+      const key = this.keyFor(target.worldX, target.worldY);
+      const cell = this.cells.get(key) ?? [];
+      cell.push(target);
+      this.cells.set(key, cell);
+    }
+  }
+
+  querySegment(startX: number, startY: number, endX: number, endY: number, radius: number): CombatTargetSnapshot[] {
+    const padding = Math.max(0, radius) + this.maxRadius;
+    const minCellX = Math.floor((Math.min(startX, endX) - padding) / CombatTargetGrid.CELL_SIZE);
+    const maxCellX = Math.floor((Math.max(startX, endX) + padding) / CombatTargetGrid.CELL_SIZE);
+    const minCellY = Math.floor((Math.min(startY, endY) - padding) / CombatTargetGrid.CELL_SIZE);
+    const maxCellY = Math.floor((Math.max(startY, endY) + padding) / CombatTargetGrid.CELL_SIZE);
+    const candidates: CombatTargetSnapshot[] = [];
+    for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+        candidates.push(...(this.cells.get(`${cellX}:${cellY}`) ?? []));
+      }
+    }
+    return candidates;
+  }
+
+  private keyFor(worldX: number, worldY: number): string {
+    return `${Math.floor(worldX / CombatTargetGrid.CELL_SIZE)}:${Math.floor(worldY / CombatTargetGrid.CELL_SIZE)}`;
+  }
 }
 
 function getNumericData(view: Phaser.GameObjects.GameObject, key: string, fallback: number): number {

@@ -98,11 +98,11 @@ survivor-web/game/
 ```json
 {
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 127.0.0.1"
   }
 }
 ```

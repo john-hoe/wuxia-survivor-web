@@ -1,0 +1,20 @@
+{
+  "name": "wuxia-survivor-web-public",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@11.11.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "npm --prefix game run dev",
+    "build": "npm --prefix game run build",
+    "typecheck": "npm --prefix game run typecheck",
+    "lint": "npm --prefix game run lint",
+    "test": "npm --prefix game test",
+    "test:dpr": "npm --prefix game run test:dpr",
+    "test:browser": "npm --prefix game run test:browser",
+    "build:sites": "npm run build && node tools/sites/build-sites.mjs",
+    "check": "npm --prefix game run check"
+  }
+}

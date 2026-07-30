@@ -16,7 +16,7 @@ const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: "game-root",
   backgroundColor: "#11140f",
-  // 高 DPR 高清渲染：画布物理尺寸 = 设计尺寸 960×540 × K（K = min(devicePixelRatio, 2)），
+  // 高 DPR 高清渲染：画布物理尺寸 = 设计尺寸 960×540 × K（桌面 K≤2，受限触屏设备 K≤1.5），
   // 各场景相机 setZoom(K) + centerOn(480,270) 把设计内容铺满 K 倍画布（见 ui/designSize.ts）
   width: RENDER_WIDTH,
   height: RENDER_HEIGHT,
@@ -47,4 +47,6 @@ const config: Phaser.Types.Core.GameConfig = {
 
 const game = new Phaser.Game(config);
 // QA 探针：自动化验收/控制台读取相机 zoom、画布尺寸等运行态（只读句柄，不影响游戏逻辑）
-(window as unknown as { __WUXIA_GAME__?: Phaser.Game }).__WUXIA_GAME__ = game;
+if (import.meta.env.DEV) {
+  (window as unknown as { __WUXIA_GAME__?: Phaser.Game }).__WUXIA_GAME__ = game;
+}

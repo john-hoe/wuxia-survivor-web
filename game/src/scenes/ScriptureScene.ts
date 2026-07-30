@@ -11,7 +11,10 @@ import {
 } from "../ui/minimalTheme";
 import { fadeIn, FONT_BODY, FONT_MONO, FONT_TITLE, PALETTE, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
+import { announceAccessibleText, setAccessibleActions } from "../utils/accessibility";
+import { preloadScriptureArtAssets, registerArtAnimations } from "../utils/artAssets";
 import { getAudioSystem, getRunSummary, getSaveData, setSaveData } from "../utils/registry";
+import { gameplayRandom } from "../utils/random";
 import { enterScreen } from "../utils/screenFlow";
 import { JuiceSystem } from "../systems/JuiceSystem";
 import { saveSystem } from "../systems/SaveSystem";
@@ -20,21 +23,11 @@ import { SCENE_KEYS } from "./sceneKeys";
 type ScriptureSceneData = {
   returnTo?: "menu" | "result";
   runSummary?: RunSummary;
-  view?: ScriptureView;
 };
 
-type ScriptureView = "meta" | "scripture";
+type ScriptureView = "meridian" | "scripture";
 type ScriptureRarity = "common" | "rare" | "elite" | "epic";
 type ScriptureRewardKind = "fragment" | "copper" | "skin" | "title";
-
-type MetaUpgradeDefinition = {
-  key: keyof SaveData["metaUpgrades"];
-  title: string;
-  description: string;
-  effect: string;
-  iconKey: string;
-  costs: number[];
-};
 
 type ScriptureRewardDefinition = {
   id: string;
@@ -77,27 +70,28 @@ type LayoutTunerHandle = LayoutTunerTarget & {
 const PULL_ONCE_COST = 300;
 const PULL_TEN_COST = 3000;
 const RARE_OR_BETTER_PITY = 20;
-const TEN_RESULT_ROW_LAYOUT = { x: 17.9, y: 14.5, width: 790, height: 92 } as const;
+const TEN_RESULT_ROW_LAYOUT = { x: 0, y: 8, width: 640, height: 190 } as const;
 const TEN_RESULT_SLOT_LAYOUTS = [
-  { slotX: -312.1, slotY: -5.5, labelX: -312.1, labelY: 42.5 },
-  { slotX: -239.1, slotY: -5.5, labelX: -240.8, labelY: 43.3 },
-  { slotX: -171.2, slotY: -2.1, labelX: -170.4, labelY: 43.3 },
-  { slotX: -99.9, slotY: -3, labelX: -98.2, labelY: 42.5 },
-  { slotX: -32, slotY: -3.8, labelX: -35.4, labelY: 41.6 },
-  { slotX: 35, slotY: -3, labelX: 35, labelY: 42.5 },
-  { slotX: 104.6, slotY: -4.7, labelX: 107.1, labelY: 42.5 },
-  { slotX: 175, slotY: -3, labelX: 176.7, labelY: 42.5 },
-  { slotX: 243.8, slotY: -4.7, labelX: 247.2, labelY: 42.5 },
-  { slotX: 308.3, slotY: -4.7, labelX: 312.5, labelY: 43.3 }
+  { slotX: -240, slotY: -54, labelX: -240, labelY: -18 },
+  { slotX: -120, slotY: -54, labelX: -120, labelY: -18 },
+  { slotX: 0, slotY: -54, labelX: 0, labelY: -18 },
+  { slotX: 120, slotY: -54, labelX: 120, labelY: -18 },
+  { slotX: 240, slotY: -54, labelX: 240, labelY: -18 },
+  { slotX: -240, slotY: 48, labelX: -240, labelY: 84 },
+  { slotX: -120, slotY: 48, labelX: -120, labelY: 84 },
+  { slotX: 0, slotY: 48, labelX: 0, labelY: 84 },
+  { slotX: 120, slotY: 48, labelX: 120, labelY: 84 },
+  { slotX: 240, slotY: 48, labelX: 240, labelY: 84 }
 ] as const;
 
 /** 卷轴式结果演出：纸面尺寸 / 木轴参数 / 展开与合拢时长（方向D d-scripture 原型）。 */
 const SCROLL_RESULT_LAYOUT = {
   /** 卷轴中心下移到 y=450：概率列表末行（绝学 y≈347）保持可见，面板占用揭示期空出的中下部 */
-  y: 450,
+  y: 430,
   paperHeight: 136,
+  tenPaperHeight: 250,
   singlePaperWidth: 560,
-  tenPaperWidth: 780,
+  tenPaperWidth: 660,
   rodWidth: 24,
   /** 轴身超出纸面上下缘的长度 */
   rodOverhang: 8,
@@ -117,33 +111,6 @@ type ScrollRig = {
   width: number;
   rodOffset: number;
 };
-
-const META_UPGRADES: MetaUpgradeDefinition[] = [
-  {
-    key: "max_hp",
-    title: "体魄训练",
-    description: "最大血量",
-    effect: "每级 +5%",
-    iconKey: "meta_icon_body_training",
-    costs: [120, 220, 360, 520, 720]
-  },
-  {
-    key: "move_speed",
-    title: "轻功步法",
-    description: "移动速度",
-    effect: "每级 +3%",
-    iconKey: "meta_icon_lightfoot",
-    costs: [120, 220, 360, 520, 720]
-  },
-  {
-    key: "pickup_radius",
-    title: "磁石锦囊",
-    description: "拾取半径",
-    effect: "每级 +5%",
-    iconKey: "meta_icon_magnet_pouch",
-    costs: [100, 200, 320, 480, 680]
-  }
-];
 
 const SCRIPTURE_REWARDS: ScriptureRewardDefinition[] = [
   {
@@ -238,7 +205,6 @@ type TenRevealEntry = {
 export class ScriptureScene extends Phaser.Scene {
   private returnTo: "menu" | "result" = "menu";
   private runSummary?: RunSummary;
-  private activeView: ScriptureView = "scripture";
   private content?: Phaser.GameObjects.Container;
   private resultPanel?: Phaser.GameObjects.Container;
   private debugOverlay?: Phaser.GameObjects.Container;
@@ -257,18 +223,25 @@ export class ScriptureScene extends Phaser.Scene {
   private scrollRig?: ScrollRig;
   private resultContent?: Phaser.GameObjects.Container;
   private resultClosing = false;
+  private pullBusy = false;
+  private resultRevealComplete = false;
+  private currentResultIds: string[] = [];
 
   constructor() {
     super(SCENE_KEYS.scripture);
   }
 
+  preload(): void {
+    preloadScriptureArtAssets(this);
+  }
+
   init(data: ScriptureSceneData): void {
     this.returnTo = data.returnTo ?? "menu";
     this.runSummary = data.runSummary;
-    this.activeView = data.view ?? "scripture";
   }
 
   create(): void {
+    registerArtAnimations(this);
     applyResolutionCamera(this);
     enterScreen(this, "scripture");
     eventBus.emit("scripture_screen_opened", {});
@@ -286,6 +259,8 @@ export class ScriptureScene extends Phaser.Scene {
     this.scrollRig = undefined;
     this.resultContent = undefined;
     this.resultClosing = false;
+    this.resultRevealComplete = false;
+    this.currentResultIds = [];
     this.debugOverlay = undefined;
     this.pullButtons = [];
     this.statusText = undefined;
@@ -296,15 +271,10 @@ export class ScriptureScene extends Phaser.Scene {
     this.content = this.add.container(0, 0);
 
     const centerX = DESIGN_WIDTH / 2;
-    this.addViewTab(centerX - 90, "局外成长", "meta");
+    this.addViewTab(centerX - 90, "局外成长", "meridian");
     this.addViewTab(centerX + 90, "翻阅秘籍", "scripture");
     this.addToContent(addMinimalBackRow(this, () => this.returnFromScene()).container);
-
-    if (this.activeView === "meta") {
-      this.drawMetaView();
-    } else {
-      this.drawScriptureView();
-    }
+    this.drawScriptureView();
 
     // 视图切换：content 容器 120ms 淡入（与设置/暂停一致）
     this.content.setAlpha(0);
@@ -314,6 +284,7 @@ export class ScriptureScene extends Phaser.Scene {
       duration: 120,
       ease: Phaser.Math.Easing.Linear
     });
+    this.refreshAccessibleActions();
   }
 
   /** 信息行左段：铜钱小字（标签次级色 13px + 数值芥金 FONT_MONO 14px），x 为左缘。 */
@@ -369,27 +340,6 @@ export class ScriptureScene extends Phaser.Scene {
     value.once(Phaser.GameObjects.Events.DESTROY, () => pulse.remove());
   }
 
-  private drawMetaView(): void {
-    const saveData = getSaveData(this);
-    this.addCopperInfo(200, 170, saveData.copper);
-    this.addToContent(this.add.text(760, 170, "铜钱来自战后清点 · 最高 5 级", {
-      color: PALETTE.textSecondary,
-      fontFamily: FONT_BODY,
-      fontSize: "13px"
-    }).setOrigin(1, 0.5).setResolution(2));
-
-    // 三张去面板化成长卡，92px 等距节奏
-    const cardYs = [226, 318, 410];
-    META_UPGRADES.forEach((upgrade, index) => {
-      this.addMetaUpgradeCard(upgrade, cardYs[index] ?? 226, saveData);
-    });
-    this.statusText = this.addToContent(this.add.text(DESIGN_WIDTH / 2, 474, "", {
-      color: PALETTE.legacyGoldCss,
-      fontFamily: FONT_BODY,
-      fontSize: "14px"
-    }).setOrigin(0.5).setResolution(2));
-  }
-
   private drawScriptureView(): void {
     const saveData = getSaveData(this);
     const centerX = DESIGN_WIDTH / 2;
@@ -410,41 +360,14 @@ export class ScriptureScene extends Phaser.Scene {
 
     // 极简菜单行抽卡："翻阅一次" 主 highlight；铜钱不足禁用
     const pullOnce = addMinimalMenuRow(this, centerX, 428, `翻阅一次 · ${PULL_ONCE_COST} 铜钱`, () => this.pullScripture(1), { highlight: true, fontSize: 22 });
-    pullOnce.setEnabled(saveData.copper >= PULL_ONCE_COST);
+    pullOnce.setEnabled(true);
     const pullTen = addMinimalMenuRow(this, centerX, 474, `翻阅十次 · ${PULL_TEN_COST} 铜钱`, () => this.pullScripture(10), { fontSize: 22 });
-    pullTen.setEnabled(saveData.copper >= PULL_TEN_COST);
+    pullTen.setEnabled(true);
     this.pullButtons = [pullOnce, pullTen];
     this.pullButtons.forEach((handle) => {
       this.addToContent(handle.container);
       this.resultHiddenObjects.push(handle.container);
     });
-  }
-
-  /** 成长卡：无底色，图标 + 名称/效果/等级左排，价格与购买行右排，底部 1px 低透 hairline 分隔。 */
-  private addMetaUpgradeCard(upgrade: MetaUpgradeDefinition, y: number, saveData: SaveData): void {
-    const centerX = DESIGN_WIDTH / 2;
-    const level = saveData.metaUpgrades[upgrade.key];
-    const maxLevel = upgrade.costs.length;
-    const nextCost = upgrade.costs[level];
-    const canBuy = nextCost !== undefined && saveData.copper >= nextCost;
-
-    this.addIcon(upgrade.iconKey, centerX - 262, y, 40);
-    this.addToContent(this.add.text(centerX - 228, y - 15, upgrade.title, {
-      color: PALETTE.textPrimary,
-      fontFamily: FONT_TITLE,
-      fontSize: "20px"
-    }).setOrigin(0, 0.5).setResolution(2));
-    this.addToContent(this.add.text(centerX - 228, y + 15, `${upgrade.description} ${upgrade.effect} · 等级 ${level}/${maxLevel}`, {
-      color: PALETTE.textSecondary,
-      fontFamily: FONT_BODY,
-      fontSize: "13px"
-    }).setOrigin(0, 0.5).setResolution(2));
-
-    const button = addMinimalMenuRow(this, centerX + 180, y, nextCost === undefined ? "已满" : `提升 · ${nextCost} 铜钱`, () => this.purchaseMetaUpgrade(upgrade), { fontSize: 18 });
-    button.setEnabled(canBuy);
-    this.addToContent(button.container);
-    // 卡片底部 1px 低透 hairline 分隔
-    this.addToContent(this.add.rectangle(centerX, y + 46, 600, 1, PALETTE.accentGold, 0.16));
   }
 
   /**
@@ -551,41 +474,18 @@ export class ScriptureScene extends Phaser.Scene {
     });
   }
 
-  private purchaseMetaUpgrade(upgrade: MetaUpgradeDefinition): void {
-    const saveData = cloneSaveData(getSaveData(this));
-    const level = saveData.metaUpgrades[upgrade.key];
-    const cost = upgrade.costs[level];
-    if (cost === undefined || saveData.copper < cost) {
-      this.setStatus("铜钱不足");
-      return;
-    }
-
-    saveData.copper -= cost;
-    saveData.metaUpgrades[upgrade.key] = Math.min(upgrade.costs.length, level + 1);
-    if (!saveSystem.write(saveData)) {
-      this.setStatus("本地存档失败，请稍后再试");
-      return;
-    }
-
-    setSaveData(this, saveData);
-    getAudioSystem(this).playPlaceholder("ui_click");
-    eventBus.emit("meta_upgrade_purchased", {
-      key: upgrade.key,
-      level: saveData.metaUpgrades[upgrade.key],
-      cost,
-      remainingCopper: saveData.copper
-    });
-    this.renderView();
-    this.setStatus(`${upgrade.title} 已提升到 ${saveData.metaUpgrades[upgrade.key]} 级`);
-  }
-
   private pullScripture(count: 1 | 10): void {
+    if (this.pullBusy) {
+      return;
+    }
     const saveData = cloneSaveData(getSaveData(this));
     const cost = count === 1 ? PULL_ONCE_COST : PULL_TEN_COST;
     if (saveData.copper < cost) {
       this.setStatus("铜钱不足");
       return;
     }
+    this.pullBusy = true;
+    this.pullButtons.forEach((button) => button.setEnabled(false));
 
     eventBus.emit("scripture_pull_started", {
       count,
@@ -596,6 +496,8 @@ export class ScriptureScene extends Phaser.Scene {
     const results = Array.from({ length: count }, () => this.generateScriptureResult(saveData));
 
     if (!saveSystem.write(saveData)) {
+      this.pullBusy = false;
+      this.pullButtons.forEach((button) => button.setEnabled(true));
       this.setStatus("本地存档失败，请稍后再试");
       return;
     }
@@ -674,13 +576,11 @@ export class ScriptureScene extends Phaser.Scene {
   }
 
   private showResultPanel(results: ScripturePullResult[]): void {
-    eventBus.emit("scripture_result_confirmed", {
-      count: results.length,
-      rewardIds: results.map((result) => result.reward.id)
-    });
     this.destroyLayoutTunerOverlay();
     this.resultPanel?.destroy(true);
     this.resultClosing = false;
+    this.resultRevealComplete = false;
+    this.currentResultIds = results.map((result) => result.reward.id);
     this.scrollRig = undefined;
     this.resultContent = undefined;
     this.pendingLayoutTargets = [];
@@ -690,7 +590,7 @@ export class ScriptureScene extends Phaser.Scene {
     const paperWidth = isTen
       ? getSafePanelWidth(this, SCROLL_RESULT_LAYOUT.tenPaperWidth)
       : getSafePanelWidth(this, SCROLL_RESULT_LAYOUT.singlePaperWidth, 80);
-    const paperHeight = SCROLL_RESULT_LAYOUT.paperHeight;
+    const paperHeight = isTen ? SCROLL_RESULT_LAYOUT.tenPaperHeight : SCROLL_RESULT_LAYOUT.paperHeight;
     const headerY = -(paperHeight / 2 + 16);
 
     // 卷轴演出骨架：纸面（贴图或程序化兜底）+ 左右木轴 + 全卷点击收回热区
@@ -708,14 +608,14 @@ export class ScriptureScene extends Phaser.Scene {
     const contentChildren: Phaser.GameObjects.GameObject[] = [header];
     if (isTen) {
       contentChildren.push(...this.createTenResultCards(results));
-      contentChildren.push(this.createSkipRevealText(paperWidth));
+      contentChildren.push(this.createSkipRevealText(paperWidth, paperHeight));
     } else {
       contentChildren.push(...this.createSingleResultCard(results[0]));
     }
-    contentChildren.push(this.createResultContinueText(paperWidth));
+    contentChildren.push(this.createResultContinueText(paperWidth, paperHeight));
     this.resultContent = this.add.container(0, 0, contentChildren);
 
-    this.resultPanel = this.add.container(DESIGN_WIDTH / 2, SCROLL_RESULT_LAYOUT.y, [rig.container, this.resultContent]);
+    this.resultPanel = this.add.container(DESIGN_WIDTH / 2, isTen ? 380 : SCROLL_RESULT_LAYOUT.y, [rig.container, this.resultContent]);
     this.content?.add(this.resultPanel);
     this.refreshLayoutTunerOverlay();
 
@@ -733,14 +633,26 @@ export class ScriptureScene extends Phaser.Scene {
     if (isTen) {
       // 展开到位后按既有错峰节奏逐槽翻面（跳过逻辑不变）
       this.revealTimers.push(this.time.delayedCall(SCROLL_RESULT_LAYOUT.openMs, () => this.startTenReveal(results)));
+    } else {
+      this.revealTimers.push(this.time.delayedCall(SCROLL_RESULT_LAYOUT.openMs + 850, () => {
+        this.resultRevealComplete = true;
+      }));
     }
+    setAccessibleActions(this, "秘籍揭晓", [
+      ...(isTen ? [{ label: "跳过揭晓动画", onActivate: () => this.skipTenReveal() }] : []),
+      { label: "继续", onActivate: () => this.dismissResultPanel() }
+    ], results.map((result) => `${RARITY_LABELS[result.reward.rarity]} ${result.reward.title}`).join("；"));
   }
 
   /** 结果关闭：内容淡出，卷轴向中合拢收回（260ms）后再销毁面板。 */
   private dismissResultPanel(): void {
-    if (!this.resultPanel || this.resultClosing) {
+    if (!this.resultPanel || this.resultClosing || !this.resultRevealComplete) {
       return;
     }
+    eventBus.emit("scripture_result_confirmed", {
+      count: this.currentResultIds.length,
+      rewardIds: [...this.currentResultIds]
+    });
     this.destroyLayoutTunerOverlay();
     this.clearRevealState();
     const rig = this.scrollRig;
@@ -775,8 +687,12 @@ export class ScriptureScene extends Phaser.Scene {
     this.resultContent = undefined;
     this.resultPanel?.destroy(true);
     this.resultPanel = undefined;
+    this.pullBusy = false;
+    this.resultRevealComplete = false;
+    this.currentResultIds = [];
     this.pendingLayoutTargets = [];
     this.resultHiddenObjects.forEach((gameObject) => gameObject.setVisible(true));
+    this.refreshAccessibleActions();
   }
 
   /** 组装卷轴：纸面 Image（可裁宽）+ 左右木轴 + 点击收回热区，初始为合拢态。 */
@@ -1049,6 +965,7 @@ export class ScriptureScene extends Phaser.Scene {
   private createSingleResultCard(result: ScripturePullResult): Phaser.GameObjects.GameObject[] {
     const objects: Phaser.GameObjects.GameObject[] = [];
     const slot = this.createTunableRewardSlot("single.rewardSlot", result.reward.iconKey, 0, -26, 52, 56);
+    this.applyRarityFrame(slot, result.reward.rarity, 56);
     objects.push(slot);
     this.setSlotIconVisible(slot, false);
     // 卷轴展开期间整槽隐藏，展开到位后落墨显现
@@ -1148,7 +1065,8 @@ export class ScriptureScene extends Phaser.Scene {
   private createSmallResultCard(slotX: number, slotY: number, labelX: number, labelY: number, result: ScripturePullResult): Phaser.GameObjects.GameObject[] {
     const objects: Phaser.GameObjects.GameObject[] = [];
     const prefix = `ten.${this.pendingLayoutTargets.filter((entry) => entry.id.startsWith("ten.") && entry.id.endsWith(".slot")).length + 1}`;
-    const slot = this.createTunableRewardSlot(`${prefix}.slot`, result.reward.iconKey, slotX, slotY, 40, 44);
+    const slot = this.createTunableRewardSlot(`${prefix}.slot`, result.reward.iconKey, slotX, slotY, 52, 56);
+    this.applyRarityFrame(slot, result.reward.rarity, 56);
     objects.push(slot);
     this.setSlotIconVisible(slot, false);
     // 卷轴展开期间整槽隐藏，翻面揭示时再亮起
@@ -1168,7 +1086,7 @@ export class ScriptureScene extends Phaser.Scene {
 
   /** 文字页签：选中 FONT_TITLE 20px 芥金 + 笔触下划线；未选中 16px 次级色；hover 变金。 */
   private addViewTab(x: number, label: string, view: ScriptureView): void {
-    const selected = this.activeView === view;
+    const selected = view === "scripture";
     const text = this.addToContent(this.add.text(x, 126, label, {
       color: selected ? PALETTE.accentGoldCss : PALETTE.textSecondary,
       fontFamily: FONT_TITLE,
@@ -1183,17 +1101,12 @@ export class ScriptureScene extends Phaser.Scene {
     text.on(Phaser.Input.Events.POINTER_OVER, () => text.setColor(PALETTE.accentGoldCss));
     text.on(Phaser.Input.Events.POINTER_OUT, () => text.setColor(PALETTE.textSecondary));
     text.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      if (this.activeView === view) {
-        return;
-      }
       getAudioSystem(this).playPlaceholder("ui_click");
-      // 「局外成长」路由到经脉图场景（墨晕 B 转场）；本页保留翻阅秘籍视图
-      if (view === "meta") {
-        transitionTo(this, SCENE_KEYS.meridian, { returnTo: "scripture" });
-        return;
-      }
-      this.activeView = view;
-      this.renderView();
+      transitionTo(this, SCENE_KEYS.meridian, {
+        returnTo: "scripture",
+        scriptureReturnTo: this.returnTo,
+        runSummary: this.runSummary
+      });
     });
   }
 
@@ -1230,6 +1143,13 @@ export class ScriptureScene extends Phaser.Scene {
   private setSlotIconVisible(slot: Phaser.GameObjects.Container, visible: boolean): void {
     const icon = slot.getData("icon") as Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle | undefined;
     icon?.setVisible(visible);
+  }
+
+  private applyRarityFrame(slot: Phaser.GameObjects.Container, rarity: ScriptureRarity, size: number): void {
+    const color = PALETTE.rarityInt[rarity] ?? PALETTE.legacyGold;
+    const frame = this.add.rectangle(0, 0, size, size, 0x000000, 0)
+      .setStrokeStyle(rarity === "epic" ? 3 : 2, color, 0.95);
+    slot.addAt(frame, 0);
   }
 
   private getSlotWorldPosition(slot: Phaser.GameObjects.Container): { x: number; y: number } {
@@ -1313,8 +1233,8 @@ export class ScriptureScene extends Phaser.Scene {
   }
 
   /** 跳过热区：卷面上方右侧小字；立即补全所有未揭示格。 */
-  private createSkipRevealText(panelWidth: number): Phaser.GameObjects.Text {
-    const text = this.add.text(panelWidth / 2 - 30, -(SCROLL_RESULT_LAYOUT.paperHeight / 2 + 16), "跳过", {
+  private createSkipRevealText(panelWidth: number, panelHeight: number): Phaser.GameObjects.Text {
+    const text = this.add.text(panelWidth / 2 - 30, -(panelHeight / 2 + 16), "跳过", {
       color: "#d6c28d",
       fontFamily: FONT_BODY,
       fontSize: "15px",
@@ -1340,6 +1260,7 @@ export class ScriptureScene extends Phaser.Scene {
   /** 十连条目全部揭示（revealed 标记齐）时收尾隐藏"跳过"。 */
   private maybeHideSkipReveal(): void {
     if (this.tenRevealEntries.length > 0 && this.tenRevealEntries.every((entry) => entry.revealed)) {
+      this.resultRevealComplete = true;
       this.hideSkipRevealText();
     }
   }
@@ -1382,8 +1303,8 @@ export class ScriptureScene extends Phaser.Scene {
     this.time.delayedCall(2800, () => trail.destroy());
   }
 
-  private createResultContinueText(_panelWidth: number): Phaser.GameObjects.Text {
-    const text = this.add.text(0, SCROLL_RESULT_LAYOUT.paperHeight / 2 + 12, "继续", {
+  private createResultContinueText(_panelWidth: number, panelHeight: number): Phaser.GameObjects.Text {
+    const text = this.add.text(0, panelHeight / 2 + 12, "继续", {
       color: "#f7f0d0",
       fontFamily: FONT_BODY,
       fontSize: "16px",
@@ -1584,6 +1505,25 @@ export class ScriptureScene extends Phaser.Scene {
       return;
     }
     this.statusText.setText(message);
+    announceAccessibleText(message);
+  }
+
+  private refreshAccessibleActions(): void {
+    const saveData = getSaveData(this);
+    const actions = [
+      { label: `翻阅一次，消耗${PULL_ONCE_COST}铜钱`, onActivate: () => this.pullScripture(1) },
+      { label: `翻阅十次，消耗${PULL_TEN_COST}铜钱`, onActivate: () => this.pullScripture(10) },
+      {
+        label: "局外成长",
+        onActivate: () => transitionTo(this, SCENE_KEYS.meridian, {
+          returnTo: "scripture",
+          scriptureReturnTo: this.returnTo,
+          runSummary: this.runSummary
+        })
+      },
+      { label: "返回", onActivate: () => this.returnFromScene() }
+    ];
+    setAccessibleActions(this, "翻阅秘籍", actions, `当前铜钱${saveData.copper}`);
   }
 
   private returnFromScene(): void {
@@ -1636,7 +1576,7 @@ function getRevealAudioEvent(results: ScripturePullResult[]): string {
 }
 
 function rollRarity(): ScriptureRarity {
-  const roll = Math.random();
+  const roll = gameplayRandom();
   if (roll < 0.65) {
     return "common";
   }
@@ -1651,7 +1591,7 @@ function rollRarity(): ScriptureRarity {
 
 function pickRewardByRarity(rarity: ScriptureRarity): ScriptureRewardDefinition {
   const candidates = SCRIPTURE_REWARDS.filter((reward) => reward.rarity === rarity);
-  return candidates[Math.floor(Math.random() * candidates.length)] ?? SCRIPTURE_REWARDS[0];
+  return candidates[Math.floor(gameplayRandom() * candidates.length)] ?? SCRIPTURE_REWARDS[0];
 }
 
 function isDuplicateReward(saveData: SaveData, reward: ScriptureRewardDefinition): boolean {

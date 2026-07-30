@@ -5,9 +5,10 @@ import { saveSystem } from "../systems/SaveSystem";
 import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { FONT_MONO, FONT_TITLE, PALETTE } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
-import { preloadArtAssets, registerArtAnimations } from "../utils/artAssets";
+import { preloadEssentialArtAssets, registerArtAnimations } from "../utils/artAssets";
 import { installDebugHooks } from "../utils/debugHooks";
 import { setConfigLoadResult, setSaveData } from "../utils/registry";
+import { seedFromString, setGameplaySeed } from "../utils/random";
 import { SCENE_KEYS } from "./sceneKeys";
 
 const BOOT_BAR_WIDTH = 420;
@@ -22,15 +23,18 @@ export class BootScene extends Phaser.Scene {
     // 加载屏建在 preload：高清相机必须最先接入（setZoom(K) + centerOn 设计中心）
     applyResolutionCamera(this);
     this.createLoadingScreen();
-    preloadArtAssets(this);
+    preloadEssentialArtAssets(this);
   }
 
   create(): void {
     registerArtAnimations(this);
+    setGameplaySeed(createSessionSeed());
 
     const configLoadResult = configSystem.load();
     eventBus.setHistoryLimit(configLoadResult.config.debug.eventHistoryLimit);
-    installDebugHooks();
+    if (import.meta.env.DEV) {
+      installDebugHooks();
+    }
     setConfigLoadResult(this, configLoadResult);
     eventBus.emit("config_loaded", {
       status: configLoadResult.status,
@@ -42,16 +46,7 @@ export class BootScene extends Phaser.Scene {
     setSaveData(this, saveData);
     this.registry.set("audioSystem", new AudioSystem(saveData.settings));
 
-    // 等 Web 字体就绪再进主菜单，避免标题先用回退字体渲染后跳变
-    const startMenu = (): void => {
-      this.scene.start(SCENE_KEYS.menu);
-    };
-    const fontSet = typeof document === "undefined" ? undefined : document.fonts;
-    if (fontSet?.ready) {
-      void fontSet.ready.then(startMenu, startMenu);
-    } else {
-      startMenu();
-    }
+    this.scene.start(SCENE_KEYS.menu);
   }
 
   private createLoadingScreen(): void {
@@ -89,5 +84,19 @@ export class BootScene extends Phaser.Scene {
       fill.setScale(Math.max(0.001, value), 1);
       percentText.setText(`${Math.round(value * 100)}%`);
     });
+  }
+}
+
+function createSessionSeed(): number {
+  try {
+    const requested = new URLSearchParams(window.location.search).get("seed");
+    if (requested !== null && /^\d+$/.test(requested)) {
+      return Number(requested) >>> 0;
+    }
+    const values = new Uint32Array(1);
+    globalThis.crypto.getRandomValues(values);
+    return values[0];
+  } catch {
+    return seedFromString(`${Date.now()}:${performance.now()}`);
   }
 }

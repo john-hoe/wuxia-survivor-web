@@ -27,8 +27,8 @@ export const PALETTE = {
   legacyGold: 0xd6c28d,
   legacyGoldCss: "#d6c28d",
   /** 朱砂：警示 / Boss / 受击 */
-  cinnabar: 0xc00000,
-  cinnabarCss: "#c00000",
+  cinnabar: 0xe05a47,
+  cinnabarCss: "#e05a47",
   /** 低血红 */
   lowHp: 0xf1001e,
   lowHpCss: "#f1001e",
@@ -43,13 +43,13 @@ export const PALETTE = {
     common: "#b8b3a4",
     rare: "#7d9b76",
     elite: "#a99a20",
-    epic: "#c00000"
+    epic: "#e05a47"
   } as Record<string, string>,
   rarityInt: {
     common: 0xb8b3a4,
     rare: 0x7d9b76,
     elite: 0xa99a20,
-    epic: 0xc00000
+    epic: 0xe05a47
   } as Record<string, number>
 };
 
@@ -63,8 +63,20 @@ export const FONT_BODY =
 export const FONT_MONO =
   "'Noto Sans Mono', 'SF Mono', Menlo, Consolas, monospace";
 
+export function shouldReduceMotion(scene?: Phaser.Scene): boolean {
+  const mediaReduced = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const saveData = scene?.registry.get("saveData") as { settings?: { lowVfxMode?: boolean } } | undefined;
+  return mediaReduced || saveData?.settings?.lowVfxMode === true;
+}
+
 /** 场景淡入（墨黑）。每个 UI 场景 create() 末尾调用一次即可。 */
 export function fadeIn(scene: Phaser.Scene, ms = 250): void {
+  if (shouldReduceMotion(scene)) {
+    scene.cameras.main.fadeIn(Math.min(ms, 80), 10, 10, 10);
+    return;
+  }
   // 若上一场以斜锋扫墨换场（transitionTo），此处反向扫墨收回，墨痕同源无缝衔接
   if (consumeInkSweepRevealPending() && inkWipeOut(scene, { mode: "sweep", durationMs: 850 })) {
     return;
@@ -84,6 +96,10 @@ export function transitionTo(
   data?: Record<string, unknown>,
   ms = 1150
 ): void {
+  if (shouldReduceMotion(scene)) {
+    scene.scene.start(key, data);
+    return;
+  }
   const inkStarted = inkWipeIn(scene, {
     mode: "sweep",
     durationMs: ms,

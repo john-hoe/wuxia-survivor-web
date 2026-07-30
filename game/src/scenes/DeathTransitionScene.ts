@@ -4,7 +4,7 @@ import { inkWipeIn, inkWipeOut } from "../fx/InkWipe";
 import { createArtPanel, getSafePanelWidth } from "../ui/ArtPanel";
 import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { spacedText } from "../ui/minimalTheme";
-import { FONT_BODY, FONT_TITLE, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
+import { FONT_BODY, FONT_TITLE, PALETTE, fadeIn } from "../ui/visualConstants";
 import { getAudioSystem, setRunSummary } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
 import { SCENE_KEYS } from "./sceneKeys";
@@ -153,6 +153,8 @@ export class DeathTransitionScene extends Phaser.Scene {
     };
     setRunSummary(this, runSummary);
     this.scene.stop(SCENE_KEYS.game);
-    transitionTo(this, SCENE_KEYS.result, runSummary);
+    // This scene is already a full-screen transition. Starting another 1.15 s
+    // ink wipe here made the authored 2.2 s death beat take ~3.35 s.
+    this.scene.start(SCENE_KEYS.result, runSummary);
   }
 }

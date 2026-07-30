@@ -37,8 +37,6 @@ export class HeroMovementSystem {
   private readonly baseMoveSpeed: number;
   private moveSpeed: number;
   private moveSpeedBonusLevels = 0;
-  // 20480px is a shared period for 512px and 1024px MVP background tiles, keeping rebase visually continuous.
-  private readonly rebaseThreshold = 20480;
   private worldX = 0;
   private worldY = 0;
   private deltaX = 0;
@@ -78,7 +76,10 @@ export class HeroMovementSystem {
   update(deltaMs: number): HeroMovementSnapshot {
     this.readInput();
 
-    const clampedDeltaSeconds = Math.min(deltaMs, 50) / 1000;
+    // Keep hero, enemies, projectiles and the run clock on the same 100 ms
+    // simulation ceiling. A smaller hero-only ceiling made low-FPS play slower
+    // while enemies continued at the normal simulation speed.
+    const clampedDeltaSeconds = Math.min(Math.max(0, deltaMs), 100) / 1000;
     const previousX = this.worldX;
     const previousY = this.worldY;
     this.deltaX = this.inputX * this.moveSpeed * clampedDeltaSeconds;
@@ -86,8 +87,7 @@ export class HeroMovementSystem {
     this.worldX += this.deltaX;
     this.worldY += this.deltaY;
 
-    const rebased = this.rebaseIfNeeded();
-    this.emitMovementIfNeeded(previousX, previousY, rebased);
+    this.emitMovementIfNeeded(previousX, previousY);
 
     return this.getSnapshot();
   }
@@ -160,29 +160,7 @@ export class HeroMovementSystem {
     };
   }
 
-  private rebaseIfNeeded(): boolean {
-    if (Math.abs(this.worldX) < this.rebaseThreshold && Math.abs(this.worldY) < this.rebaseThreshold) {
-      return false;
-    }
-
-    const offsetX = calculateRebaseOffset(this.worldX, this.rebaseThreshold);
-    const offsetY = calculateRebaseOffset(this.worldY, this.rebaseThreshold);
-    this.worldX -= offsetX;
-    this.worldY -= offsetY;
-    this.originRebaseCount += 1;
-    eventBus.emit("origin_rebased", {
-      originRebaseCount: this.originRebaseCount,
-      offsetX,
-      offsetY
-    });
-    return true;
-  }
-
-  private emitMovementIfNeeded(previousX: number, previousY: number, rebased: boolean): void {
-    if (rebased) {
-      return;
-    }
-
+  private emitMovementIfNeeded(previousX: number, previousY: number): void {
     const movedDistance = Math.hypot(this.worldX - previousX, this.worldY - previousY);
     if (movedDistance <= 0.01) {
       return;
@@ -206,12 +184,4 @@ export class HeroMovementSystem {
 
 function roundForDebug(value: number): number {
   return Math.round(value * 1000) / 1000;
-}
-
-function calculateRebaseOffset(value: number, threshold: number): number {
-  if (Math.abs(value) < threshold) {
-    return 0;
-  }
-
-  return Math.trunc(value / threshold) * threshold;
 }

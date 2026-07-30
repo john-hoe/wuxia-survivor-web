@@ -1,8 +1,8 @@
-# Wuxia Survivor Web Prototype
+# Wuxia Survivor Web
 
 ## 项目定位
 
-这是一个独立于 `vega 的世界` 的 Web 武侠 survivor-like 小游戏原型。
+这是一个 Phaser 3 + TypeScript + Vite 实现的 Web 武侠 survivor-like 游戏。
 
 目标不是复制《Survivor.io》的 IP、美术、角色、技能名、关卡或数值，而是学习它的底层玩法结构，并用原创武侠江湖风格表达：
 
@@ -25,18 +25,68 @@
 
 这个项目只服务个人和朋友游玩，所以所有成长、解锁和奖励都必须来自游玩本身。
 
-## MVP 目标
+## 当前可玩内容
 
-先做一个 6 到 8 分钟可玩的网页版本：
-
-- 1 个可移动少侠。
-- 3 种 P0 自动招式。
-- 3 类普通江湖敌人 + 1 类精英敌人。
-- 1 个首关头目。
+- 1 个可移动少侠，键盘与触控摇杆输入。
+- 5 种自动招式与对应升级/进阶。
+- 多类普通江湖敌人、精英敌人。
+- 3 张地图：青石山道、枫叶官道、夜雨破庙。
+- 每张地图对应头目与音乐。
 - 内力光点/秘籍残页、领悟、三选一。
-- 3 个招式进阶组合。
-- 1 个 MVP 关卡：`青石山道`。
 - 铜钱结算、铜钱抽秘籍和本地存档。
+
+## 本地运行
+
+要求 Node.js 20.19 或更高版本；推荐使用仓库 `.nvmrc` 指定的 Node 22。
+
+```bash
+cd game
+npm ci
+npm run dev
+```
+
+开发服务器只监听 `127.0.0.1`。终端会显示本机访问地址。
+
+也可以留在仓库根目录运行 `npm run dev`；根目录脚本会转发到 `game/`。
+
+## 质量检查与构建
+
+```bash
+npm run check
+```
+
+该命令依次执行 ESLint、TypeScript 类型检查、Vitest 契约测试和生产构建。
+单独命令为 `npm run lint`、`npm run typecheck`、`npm test`、`npm run build`。
+构建输出位于 `game/dist/`，Vite `base` 已设置为相对路径，可部署在项目子路径。
+
+Sites 生产部署使用 `npm run build:sites`，它会在通过游戏生产构建后生成
+Cloudflare Workers 兼容的 `dist/server` 和静态 `dist/client` 输出。
+
+生产构建启动后，可另外运行浏览器走查：
+
+```bash
+npm run test:browser
+npm run test:dpr
+```
+
+两项检查使用受信任的本机 Chrome 和 localhost HTTP，不开启
+`--allow-file-access-from-files` 或 unsafe SwiftShader 参数。
+
+资产门禁位于 `tools/asset-pipeline/`。其依赖、完整图片清单校验、真实对边接缝校验
+和 BGM PCM 首尾门禁的运行方式见
+[`tools/asset-pipeline/README.md`](tools/asset-pipeline/README.md)。
+
+## 浏览器与存档
+
+- 推荐当前稳定版 Chrome、Edge、Firefox 或 Safari。
+- 存档使用浏览器 `localStorage`，不上传服务器。
+- 浏览器禁用本地存储时仍可游玩，但页面会提示当前会话改动无法持久化。
+- 移动端请使用横屏；竖屏时战斗会暂停。
+
+## 授权边界
+
+本仓库当前没有授予开源许可。公开可见不等于允许复制或再分发，详见
+[`LICENSE-STATUS.md`](LICENSE-STATUS.md)。音频与生成资产来源仍应以资产来源清单为准。
 
 ## 文档入口
 

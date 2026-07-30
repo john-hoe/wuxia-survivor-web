@@ -7,6 +7,7 @@ export class EventBus {
   private readonly history: EventHistoryEntry[] = [];
   private historyLimit = 200;
   private sequence = 0;
+  private historyEnabled = import.meta.env.DEV;
 
   on<T = unknown>(eventName: GameEventName, listener: Listener<T>): () => void {
     const listenersForEvent = this.listeners.get(eventName) ?? new Set<Listener>();
@@ -46,6 +47,13 @@ export class EventBus {
     }
   }
 
+  setHistoryEnabled(enabled: boolean): void {
+    this.historyEnabled = enabled;
+    if (!enabled) {
+      this.clearHistory();
+    }
+  }
+
   getHistory(): EventHistoryEntry[] {
     return this.history.map((entry) => ({
       ...entry,
@@ -76,6 +84,9 @@ export class EventBus {
   }
 
   private record(eventName: GameEventName, payload: unknown): void {
+    if (!this.historyEnabled) {
+      return;
+    }
     this.history.push({
       sequence: ++this.sequence,
       name: eventName,

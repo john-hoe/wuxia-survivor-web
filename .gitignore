@@ -18,7 +18,9 @@ test-results/
 *.key
 
 # local QA/evidence artifacts
-evidence/
+evidence/*
+!evidence/2026-07-30-audit-remediation/
+!evidence/2026-07-30-audit-remediation/**
 game/test-results/
 game/.omc/
 game/src/assets/_incoming/

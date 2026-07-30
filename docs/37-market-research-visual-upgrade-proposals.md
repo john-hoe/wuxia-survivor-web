@@ -3,6 +3,18 @@
 > 调研范围：海外头部（Vampire Survivors / Halls of Torment / Soulstone / DRG:S / 20MTD / Nordic Ashes / Death Must Die）、亚洲与武侠同类（弹壳特攻队 / 弓箭传说 / 通神榜 / 暖雪 / 行侠仗义五千年）、Phaser 3.90 渲染技术可行性、国风 2D 标杆（鬼谷八荒 / 太吾绘卷 / 暖雪 / 墨斗 / 斩妖行 / 了不起的修仙模拟器）。
 > 游戏现状：打击感/抽卡演出/极简 UI/BGM 音效/氛围三层已完成；已知短板=地图偏静态、技能特效少、局外成长表现一般。
 
+## 来源与证据边界
+
+访问日期：2026-07-30。
+
+- [Vampire Survivors 官方 Steam 公告](https://steamcommunity.com/app/1794680/announcements/)：版本与主题更新的一手入口。
+- [Soulstone Survivors 官方 Steam 页面](https://store.steampowered.com/app/2066020/)：明确描述角色、构筑和大型技能树。
+- [Phaser 3.90 FX 官方文档](https://docs.phaser.io/api-documentation/3.90.0/namespace/fx)：确认 Glow、Vignette、Wipe 等 FX 能力。
+- [Phaser 粒子官方文档](https://docs.phaser.io/phaser/concepts/gameobjects/particles)：确认 ParticleEmitter 的对象与配置模型。
+- [Phaser 相机官方文档](https://docs.phaser.io/phaser/concepts/cameras)：确认相机缩放、震动、闪白等表现能力及生命周期注意事项。
+
+下文关于具体游戏“反馈密度”“画风不统一差评”“危险色惯例”等属于设计者观察与归纳，原始截图、商店版本号和逐条研究笔记没有保存在仓库中，不能当成定量市场事实。方案成本也是相对工程估算，不是工时报价。后续复用这些结论时应重新采样并保存版本、链接、截图和观察记录。
+
 ## 市场结论（五条共性规律）
 
 1. **反馈密度 > 特效精度**：弓箭传说场景美术低成本，靠击退分级/受击形变/数字配色就做出强手感；弹壳靠数量规模。爽感是系统工程，不是美术质量。

@@ -1,5 +1,6 @@
 import type { EnemyId } from "./enemies";
 import { skillConfigs, skillOrder, type AdvanceKeyId, type SkillId } from "./skills";
+import { gameplayRandom } from "../utils/random";
 
 export type InnerPowerTier = "small" | "medium" | "large" | "boss";
 
@@ -114,7 +115,8 @@ export function getInnerPowerRequiredForLevel(level: number): number {
 export function createInsightOptions(
   insightIndex: number,
   selectedInsightIds: ReadonlySet<string> = new Set(),
-  skillState: InsightSkillState = createDefaultSkillState()
+  skillState: InsightSkillState = createDefaultSkillState(),
+  random: () => number = gameplayRandom
 ): InsightOption[] {
   if (insightIndex === 0) {
     return normalizeOptions([
@@ -127,6 +129,7 @@ export function createInsightOptions(
   const nextMagnetLevel = getNextPassiveLevel(selectedInsightIds, "magnet_pouch_", PASSIVE_MAX_LEVEL);
   const nextLightfootLevel = getNextPassiveLevel(selectedInsightIds, "lightfoot_", PASSIVE_MAX_LEVEL);
   const nextVitalityLevel = getNextPassiveLevel(selectedInsightIds, "vitality_", PASSIVE_MAX_LEVEL);
+  const nextCooldownLevel = getNextPassiveLevel(selectedInsightIds, "breath_cycle_", PASSIVE_MAX_LEVEL);
   const passives: InsightOption[] = [];
 
   if (nextMagnetLevel !== undefined) {
@@ -164,6 +167,9 @@ export function createInsightOptions(
       applyEffectId: "passive_max_hp_1"
     });
   }
+  if (nextCooldownLevel !== undefined) {
+    passives.push(createPassiveOption("cooldown", nextCooldownLevel));
+  }
 
   const options: Array<InsightOption | undefined> = [];
   options.push(...createReadyAdvanceOptions(skillState));
@@ -194,8 +200,9 @@ export function createInsightOptions(
     }
   }
 
-  options.push(...pickRotatingPassives(passives, insightIndex, 3));
-  return normalizeOptions(options, selectedInsightIds, skillState, insightIndex);
+  options.push(...passives);
+  const legalOptions = normalizeOptions(options, selectedInsightIds, skillState, insightIndex);
+  return selectInsightOptions(legalOptions, insightIndex, skillState, random);
 }
 
 function createDefaultSkillState(): InsightSkillState {
@@ -249,7 +256,13 @@ function normalizeOptions(
     }
   }
 
-  return Array.from(unique.values()).slice(0, 3);
+  if (unique.size < 3) {
+    for (const option of createRecurringOptions(insightIndex)) {
+      unique.set(option.id, option);
+    }
+  }
+
+  return Array.from(unique.values());
 }
 
 function createFallbackPassiveOptions(selectedInsightIds: ReadonlySet<string>, insightIndex: number): InsightOption[] {
@@ -257,6 +270,7 @@ function createFallbackPassiveOptions(selectedInsightIds: ReadonlySet<string>, i
   const nextMagnetLevel = getNextPassiveLevel(selectedInsightIds, "magnet_pouch_", PASSIVE_MAX_LEVEL);
   const nextLightfootLevel = getNextPassiveLevel(selectedInsightIds, "lightfoot_", PASSIVE_MAX_LEVEL);
   const nextVitalityLevel = getNextPassiveLevel(selectedInsightIds, "vitality_", PASSIVE_MAX_LEVEL);
+  const nextCooldownLevel = getNextPassiveLevel(selectedInsightIds, "breath_cycle_", PASSIVE_MAX_LEVEL);
   if (nextMagnetLevel !== undefined) {
     candidates.push(createPassiveOption("magnet", nextMagnetLevel));
   }
@@ -265,6 +279,9 @@ function createFallbackPassiveOptions(selectedInsightIds: ReadonlySet<string>, i
   }
   if (nextVitalityLevel !== undefined) {
     candidates.push(createPassiveOption("vitality", nextVitalityLevel));
+  }
+  if (nextCooldownLevel !== undefined) {
+    candidates.push(createPassiveOption("cooldown", nextCooldownLevel));
   }
   return pickRotatingPassives(candidates, insightIndex, 3);
 }
@@ -356,7 +373,7 @@ function createAdvanceKeyOption(skillId: SkillId, skillState: InsightSkillState)
   };
 }
 
-function createPassiveOption(passive: "magnet" | "lightfoot" | "vitality", level: number): InsightOption {
+function createPassiveOption(passive: "magnet" | "lightfoot" | "vitality" | "cooldown", level: number): InsightOption {
   if (passive === "magnet") {
     return {
       id: `magnet_pouch_${level}`,
@@ -378,6 +395,18 @@ function createPassiveOption(passive: "magnet" | "lightfoot" | "vitality", level
       typeLabel: "被动属性",
       iconKey: "passive_lightfoot",
       applyEffectId: "passive_move_speed_1"
+    };
+  }
+
+  if (passive === "cooldown") {
+    return {
+      id: `breath_cycle_${level}`,
+      category: "passive",
+      title: "行气周天",
+      description: "所有招式冷却缩短 5%",
+      typeLabel: "被动属性",
+      iconKey: "ui_icon_upgrade_cooldown",
+      applyEffectId: "passive_skill_cooldown_1"
     };
   }
 
@@ -486,4 +515,143 @@ function pickRotatingPassives(passives: InsightOption[], insightIndex: number, c
 
   const startIndex = Math.max(0, insightIndex - 1) % passives.length;
   return Array.from({ length: count }, (_, offset) => passives[(startIndex + offset) % passives.length]);
+}
+
+function selectInsightOptions(
+  options: InsightOption[],
+  insightIndex: number,
+  skillState: InsightSkillState,
+  random: () => number
+): InsightOption[] {
+  if (options.length <= 3) {
+    return shuffle(options, random).slice(0, 3);
+  }
+
+  const readyAdvance = options.find((option) => option.category === "skill_advance");
+  const selected: InsightOption[] = readyAdvance ? [readyAdvance] : [];
+
+  if (insightIndex === 1) {
+    pushRandomFromCategory(selected, options, "skill_upgrade", random);
+    pushRandomFromCategory(selected, options, "passive", random);
+  } else if (insightIndex === 2 && getOwnedSkillIds(skillState).length <= 1) {
+    pushRandomFromCategory(selected, options, "new_skill", random);
+  }
+
+  while (selected.length < 3) {
+    const remaining = options.filter((option) => !selected.some((entry) => entry.id === option.id));
+    if (remaining.length === 0) {
+      break;
+    }
+    const weighted = remaining.map((option) => ({
+      option,
+      weight: getCategoryWeight(option.category, insightIndex + 2, readyAdvance !== undefined)
+    }));
+    const picked = pickWeighted(weighted, random);
+    selected.push(picked);
+  }
+
+  return selected;
+}
+
+function pushRandomFromCategory(
+  selected: InsightOption[],
+  options: InsightOption[],
+  category: InsightCategory,
+  random: () => number
+): void {
+  const candidates = options.filter(
+    (option) => option.category === category && !selected.some((entry) => entry.id === option.id)
+  );
+  if (candidates.length > 0) {
+    selected.push(candidates[Math.min(candidates.length - 1, Math.floor(random() * candidates.length))]);
+  }
+}
+
+function getCategoryWeight(category: InsightCategory, level: number, advanceReady: boolean): number {
+  if (category === "skill_advance") {
+    return advanceReady ? 35 : level >= 9 ? 10 : 0;
+  }
+  if (level <= 4) {
+    return category === "new_skill" || category === "skill_upgrade"
+      ? 40
+      : category === "passive"
+        ? 15
+        : 5;
+  }
+  if (level <= 8) {
+    return category === "new_skill"
+      ? 20
+      : category === "skill_upgrade"
+        ? 50
+        : category === "passive"
+          ? 20
+          : 10;
+  }
+  return category === "new_skill"
+    ? 10
+    : category === "skill_upgrade"
+      ? 45
+      : category === "passive"
+        ? 25
+        : 10;
+}
+
+function pickWeighted(
+  entries: Array<{ option: InsightOption; weight: number }>,
+  random: () => number
+): InsightOption {
+  const totalWeight = entries.reduce((sum, entry) => sum + Math.max(0, entry.weight), 0);
+  if (totalWeight <= 0) {
+    return entries[0].option;
+  }
+  let cursor = random() * totalWeight;
+  for (const entry of entries) {
+    cursor -= Math.max(0, entry.weight);
+    if (cursor < 0) {
+      return entry.option;
+    }
+  }
+  return entries.at(-1)?.option ?? entries[0].option;
+}
+
+function shuffle(options: InsightOption[], random: () => number): InsightOption[] {
+  const result = [...options];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const other = Math.min(index, Math.floor(random() * (index + 1)));
+    [result[index], result[other]] = [result[other], result[index]];
+  }
+  return result;
+}
+
+function createRecurringOptions(insightIndex: number): InsightOption[] {
+  const suffix = Math.max(0, insightIndex);
+  return [
+    {
+      id: `recurring_breath_${suffix}`,
+      category: "passive",
+      title: "吐纳精进",
+      description: "所有招式冷却再缩短 1%",
+      typeLabel: "周天精进",
+      iconKey: "ui_icon_upgrade_cooldown",
+      applyEffectId: "recurring_skill_cooldown_1"
+    },
+    {
+      id: `recurring_vitality_${suffix}`,
+      category: "passive",
+      title: "固本培元",
+      description: "最大气血提高 2 点",
+      typeLabel: "周天精进",
+      iconKey: "passive_max_hp",
+      applyEffectId: "recurring_max_hp_2"
+    },
+    {
+      id: `recurring_recovery_${suffix}`,
+      category: "passive",
+      title: "调息养元",
+      description: "立即恢复 20 点气血",
+      typeLabel: "周天精进",
+      iconKey: "passive_max_hp",
+      applyEffectId: "recurring_heal_20"
+    }
+  ];
 }

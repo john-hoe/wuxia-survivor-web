@@ -6,6 +6,7 @@ import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/design
 import { addMinimalBackdrop, addMinimalBackRow, addMinimalTitle, spacedText } from "../ui/minimalTheme";
 import { FONT_MONO, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
+import { setAccessibleActions } from "../utils/accessibility";
 import { getAudioSystem, getSaveData, setSaveData } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
 import { SCENE_KEYS } from "./sceneKeys";
@@ -14,7 +15,7 @@ type SettingsSceneData = {
   returnTo?: "menu" | "pause";
 };
 
-type VolumeKey = "musicVolume" | "sfxVolume";
+type VolumeKey = "masterVolume" | "musicVolume" | "sfxVolume";
 type ToggleKey = "muted" | "lowVfxMode" | "damageNumbers";
 
 type SliderRefs = {
@@ -47,8 +48,8 @@ type ShakeSegmentRefs = {
  * 行区 540 宽居中，行高 54（7 行纵向节奏，底部避让返回行），图标 20×20 置于标签左侧。
  */
 const TITLE_Y = 58;
-const FIRST_ROW_Y = 150;
-const ROW_HEIGHT = 54;
+const FIRST_ROW_Y = 132;
+const ROW_HEIGHT = 48;
 const ROW_LABEL_OFFSET_X = -270;
 const ROW_LABEL_FONT_SIZE = "16px";
 const ROW_LABEL_FONT = "'Noto Serif SC', 'Songti SC', 'SimSun', serif";
@@ -84,6 +85,7 @@ export class SettingsScene extends Phaser.Scene {
   private fullscreenToggle?: ToggleRefs;
   private shakeSegments?: ShakeSegmentRefs;
   private activeSliderKey?: VolumeKey;
+  private persistenceStatusText?: Phaser.GameObjects.Text;
 
   constructor() {
     super(SCENE_KEYS.settings);
@@ -122,6 +124,16 @@ export class SettingsScene extends Phaser.Scene {
     });
 
     this.renderControls();
+    this.persistenceStatusText = this.add
+      .text(DESIGN_WIDTH / 2, DESIGN_HEIGHT - 26, "", {
+        color: "#efb08c",
+        fontFamily: ROW_LABEL_FONT,
+        fontSize: "13px"
+      })
+      .setOrigin(0.5)
+      .setDepth(70)
+      .setAlpha(0.92);
+    this.refreshAccessibleActions();
     fadeIn(this);
   }
 
@@ -134,13 +146,14 @@ export class SettingsScene extends Phaser.Scene {
     this.activeSliderKey = undefined;
     this.controls = this.add.container(0, 0);
 
-    this.addVolumeRow("音乐", "musicVolume", FIRST_ROW_Y, "icon_music");
-    this.addVolumeRow("音效", "sfxVolume", FIRST_ROW_Y + ROW_HEIGHT, "icon_sfx");
-    this.addToggleRow("静音", "muted", FIRST_ROW_Y + ROW_HEIGHT * 2, "icon_mute");
-    this.addToggleRow("低特效", "lowVfxMode", FIRST_ROW_Y + ROW_HEIGHT * 3, "icon_lowvfx");
-    this.addToggleRow("伤害飘字", "damageNumbers", FIRST_ROW_Y + ROW_HEIGHT * 4, "icon_kill");
-    this.addShakeScaleRow(FIRST_ROW_Y + ROW_HEIGHT * 5, "icon_sfx");
-    this.addFullscreenRow(FIRST_ROW_Y + ROW_HEIGHT * 6);
+    this.addVolumeRow("总音量", "masterVolume", FIRST_ROW_Y, "icon_sfx");
+    this.addVolumeRow("音乐", "musicVolume", FIRST_ROW_Y + ROW_HEIGHT, "icon_music");
+    this.addVolumeRow("音效", "sfxVolume", FIRST_ROW_Y + ROW_HEIGHT * 2, "icon_sfx");
+    this.addToggleRow("静音", "muted", FIRST_ROW_Y + ROW_HEIGHT * 3, "icon_mute");
+    this.addToggleRow("低特效", "lowVfxMode", FIRST_ROW_Y + ROW_HEIGHT * 4, "icon_lowvfx");
+    this.addToggleRow("伤害飘字", "damageNumbers", FIRST_ROW_Y + ROW_HEIGHT * 5, "icon_kill");
+    this.addShakeScaleRow(FIRST_ROW_Y + ROW_HEIGHT * 6, "icon_sfx");
+    this.addFullscreenRow(FIRST_ROW_Y + ROW_HEIGHT * 7);
 
     // C 规格：左下角「← 返回」（语义不变：menu 来→transitionTo menu；pause 来→resume pause）
     const backRow = addMinimalBackRow(this, () => this.returnBack());
@@ -204,7 +217,7 @@ export class SettingsScene extends Phaser.Scene {
     this.drawToggleCapsule(refs);
     this.drawToggleKnob(refs, this.settings[key]);
 
-    const hitArea = this.add.zone(toggleX, y, TOGGLE_WIDTH + 20, TOGGLE_HEIGHT + 24).setInteractive({ useHandCursor: true });
+    const hitArea = this.add.zone(toggleX, y, 72, 72).setInteractive({ useHandCursor: true });
     hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => this.updateSetting(key));
     this.addToControls(hitArea);
   }
@@ -303,7 +316,7 @@ export class SettingsScene extends Phaser.Scene {
       this.addToControls(optionText);
 
       const hitArea = this.add
-        .zone(centersX[index], y, SEGMENT_OPTION_WIDTH - 4, SEGMENT_HIT_HEIGHT)
+        .zone(centersX[index], y, Math.max(56, SEGMENT_OPTION_WIDTH - 4), Math.max(56, SEGMENT_HIT_HEIGHT))
         .setInteractive({ useHandCursor: true });
       hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => this.updateShakeScale(level));
       this.addToControls(hitArea);
@@ -387,7 +400,7 @@ export class SettingsScene extends Phaser.Scene {
       return;
     }
 
-    const hitArea = this.add.zone(toggleX, y, TOGGLE_WIDTH + 20, TOGGLE_HEIGHT + 24).setInteractive({ useHandCursor: true });
+    const hitArea = this.add.zone(toggleX, y, 72, 72).setInteractive({ useHandCursor: true });
     hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => {
       getAudioSystem(this).playPlaceholder("ui_click");
       // 无头浏览器/权限被拒时会静默失败，开关态由 ENTER/LEAVE 事件回同步
@@ -432,7 +445,7 @@ export class SettingsScene extends Phaser.Scene {
     this.addToControls(graphics);
     this.sliders[key] = { graphics, valueText, trackX, trackY: y, trackWidth };
 
-    const hitArea = this.add.zone(trackX, y, trackWidth + 36, 44).setInteractive({ useHandCursor: true });
+    const hitArea = this.add.zone(trackX, y, trackWidth + 36, 72).setInteractive({ useHandCursor: true });
     hitArea.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
       this.activeSliderKey = key;
       // 高 DPR：滑杆几何为设计单位，pointer.x 是 K 倍渲染像素，须取相机变换后的 worldX
@@ -505,13 +518,53 @@ export class SettingsScene extends Phaser.Scene {
     if (!this.settings) {
       return;
     }
-    const saveData = saveSystem.updateSettings(this.settings, getSaveData(this));
-    setSaveData(this, saveData);
-    getAudioSystem(this).updateSettings(saveData.settings);
+    const updateResult = saveSystem.updateSettings(this.settings, getSaveData(this));
+    setSaveData(this, updateResult.saveData);
+    getAudioSystem(this).updateSettings(updateResult.saveData.settings);
+    this.persistenceStatusText?.setText(
+      updateResult.written ? "" : "设置仅本次生效，本地存档当前不可写"
+    );
     if (playClick) {
       getAudioSystem(this).playPlaceholder("ui_click");
     }
-    eventBus.emit("settings_changed", { settings: saveData.settings });
+    eventBus.emit("settings_changed", {
+      settings: updateResult.saveData.settings,
+      persisted: updateResult.written
+    });
+    this.refreshAccessibleActions();
+  }
+
+  private refreshAccessibleActions(): void {
+    if (!this.settings) {
+      return;
+    }
+    const adjustVolume = (key: VolumeKey, delta: number): void => {
+      if (!this.settings) {
+        return;
+      }
+      this.settings[key] = Phaser.Math.Clamp(Number((this.settings[key] + delta).toFixed(1)), 0, 1);
+      this.persistSettings(false);
+      this.renderControls();
+    };
+    setAccessibleActions(this, "设置", [
+      { label: `总音量 ${this.settings.masterVolume}，降低`, onActivate: () => adjustVolume("masterVolume", -0.1) },
+      { label: `总音量 ${this.settings.masterVolume}，提高`, onActivate: () => adjustVolume("masterVolume", 0.1) },
+      { label: `音乐音量 ${this.settings.musicVolume}，降低`, onActivate: () => adjustVolume("musicVolume", -0.1) },
+      { label: `音乐音量 ${this.settings.musicVolume}，提高`, onActivate: () => adjustVolume("musicVolume", 0.1) },
+      { label: `音效音量 ${this.settings.sfxVolume}，降低`, onActivate: () => adjustVolume("sfxVolume", -0.1) },
+      { label: `音效音量 ${this.settings.sfxVolume}，提高`, onActivate: () => adjustVolume("sfxVolume", 0.1) },
+      { label: `静音，当前${this.settings.muted ? "开启" : "关闭"}`, onActivate: () => this.updateSetting("muted") },
+      { label: `低特效，当前${this.settings.lowVfxMode ? "开启" : "关闭"}`, onActivate: () => this.updateSetting("lowVfxMode") },
+      { label: `伤害飘字，当前${this.settings.damageNumbers ? "开启" : "关闭"}`, onActivate: () => this.updateSetting("damageNumbers") },
+      {
+        label: `震屏强度 ${this.settings.shakeScale}`,
+        onActivate: () => {
+          const index = this.currentShakeScaleIndex();
+          this.updateShakeScale(shakeScaleLevels[(index + 1) % shakeScaleLevels.length]);
+        }
+      },
+      { label: "返回", onActivate: () => this.returnBack() }
+    ], "可用按钮逐项调整音量和视觉反馈。");
   }
 
   private returnBack(): void {

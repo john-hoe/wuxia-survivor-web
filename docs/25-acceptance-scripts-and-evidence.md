@@ -4,6 +4,10 @@
 
 本文细化 [08 Acceptance Checklist](08-acceptance-checklist.md)，定义什么叫 MVP 真的完成，以及每轮开发需要留下什么证据。
 
+> Public-checkout correction (2026-07-30): historical evidence directories
+> referenced by older task records are absent. A path is not evidence unless
+> the file is tracked and readable in the current clone.
+
 第一性原则：
 
 - 没有验收脚本和证据，就不能算完成。
@@ -77,17 +81,10 @@ review/
 
 ## 自动检查
 
-后续工程创建后，每轮至少跑：
+每轮至少跑完整仓库门：
 
 ```bash
-npm run typecheck
-npm run build
-```
-
-如果接入 lint：
-
-```bash
-npm run lint
+npm run check
 ```
 
 通过线：
@@ -125,7 +122,7 @@ npm run lint
 7. 获得铜钱。
 8. 重开一局。
 9. 铜钱足够时翻阅秘籍一次。
-10. 确认翻阅秘籍页面概率默认可见、铜钱不足时按钮置灰、结果卡和重复补偿可读。
+10. 确认翻阅秘籍页面概率默认可见、铜钱不足时有明确文字提示、结果卡和重复补偿可读。
 11. 刷新页面，确认铜钱、设置、记录保留。
 
 ### 页面流截图脚本
@@ -201,6 +198,8 @@ survivor-web/evidence/
       09-elite.png
       10-boss.png
 ```
+
+每个证据包还必须记录 `git rev-parse HEAD`、Node/浏览器版本、操作系统、执行命令、开始/结束时间和原始控制台日志。自动化失败必须返回非零退出码；缺少截图或 raw samples 时不得把相应视觉/性能项标记为通过。
 
 ## metrics.json 建议
 

@@ -188,7 +188,7 @@ export const DEFAULT_BOSS_ID: BossId = "heifeng_chief";
  * QA-005：stageMapConfig.maps 每个条目都必须在此显式登记，ConfigSystem 构建期断言缺失即抛错；
  * 未列出地图的 DEFAULT_BOSS_ID 回退仅保留为运行时兜底，不再是正式地图的隐式约定。
  */
-export const MAP_BOSS_IDS: Record<string, BossId> = {
+export const MAP_BOSS_IDS: Record<StageMapId, BossId> = {
   qingshi_mountain_road: "heifeng_chief",
   maple_official_road: "duanjian_escort",
   temple_ruin_nightrain: "xiejiao_tanzhu"
@@ -196,6 +196,9 @@ export const MAP_BOSS_IDS: Record<string, BossId> = {
 
 /** 按地图 id 解析 Boss 配置；mapId 缺失/无映射时回退默认 Boss（黑风寨主）——仅作运行时兜底，正式地图映射以 MAP_BOSS_IDS + ConfigSystem 构建期断言为准。 */
 export function resolveBossConfigForMap(mapId: string | undefined): BossConfig {
-  const bossId = (mapId ? MAP_BOSS_IDS[mapId] : undefined) ?? DEFAULT_BOSS_ID;
+  const bossId: BossId = mapId && Object.prototype.hasOwnProperty.call(MAP_BOSS_IDS, mapId)
+    ? MAP_BOSS_IDS[mapId as StageMapId]
+    : DEFAULT_BOSS_ID;
   return bossConfigsById[bossId];
 }
+import type { StageMapId } from "./gameConfig";
