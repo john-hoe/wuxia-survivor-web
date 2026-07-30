@@ -28,6 +28,7 @@ type BossRuntime = {
   aliveMs: number;
   chargeCooldownMs: number;
   whirlwindCooldownMs: number;
+  recoveryMs: number;
   currentAttack: BossAttackId | "none";
   lastAttack: BossAttackId | "none";
   attackDamageApplied: boolean;
@@ -132,6 +133,7 @@ const HERO_COLLISION_RADIUS = 18;
 const INTRO_OFFSET_Y = -420;
 const INTRO_TARGET_OFFSET_Y = -90;
 const IDLE_ATTACK_CHECK_MS = 250;
+const MIN_ATTACK_RECOVERY_MS = 1000;
 // 素材 2 倍高清化：boss 帧尺寸 ×2（208→416），缩放系数 ÷2（0.58→0.29）保持屏幕显示尺寸不变。
 const BOSS_SPRITE_SCALE = 0.29;
 /** 气场升级：Boss 显示尺寸在现有 viewScale 基准上乘法叠加（碰撞半径不变） */
@@ -210,6 +212,7 @@ export class BossSystem {
 
     runtime.chargeCooldownMs = Math.max(0, runtime.chargeCooldownMs - clampedDeltaMs);
     runtime.whirlwindCooldownMs = Math.max(0, runtime.whirlwindCooldownMs - clampedDeltaMs);
+    runtime.recoveryMs = Math.max(0, runtime.recoveryMs - clampedDeltaMs);
     runtime.hitSquashMs = Math.max(0, runtime.hitSquashMs - clampedDeltaMs);
     runtime.windupRecoilMs = Math.max(0, runtime.windupRecoilMs - clampedDeltaMs);
     runtime.ghostCooldownMs = Math.max(0, runtime.ghostCooldownMs - clampedDeltaMs);
@@ -286,6 +289,7 @@ export class BossSystem {
       aliveMs: 0,
       chargeCooldownMs: 900,
       whirlwindCooldownMs: 2400,
+      recoveryMs: 0,
       currentAttack: "none",
       lastAttack: "none",
       attackDamageApplied: false,
@@ -530,7 +534,7 @@ export class BossSystem {
     }
 
     this.chooseAttackAccumulatorMs += deltaMs;
-    if (this.chooseAttackAccumulatorMs < IDLE_ATTACK_CHECK_MS) {
+    if (runtime.recoveryMs > 0 || this.chooseAttackAccumulatorMs < IDLE_ATTACK_CHECK_MS) {
       return;
     }
     this.chooseAttackAccumulatorMs = 0;
@@ -574,6 +578,7 @@ export class BossSystem {
     if (runtime.stateMs >= this.config.charge.activeMs) {
       this.clearAttackView(runtime);
       runtime.chargeCooldownMs = this.config.charge.cooldownMs;
+      runtime.recoveryMs = MIN_ATTACK_RECOVERY_MS;
       runtime.lastAttack = "charge_slash";
       this.transitionTo(runtime, "idle");
     }
@@ -609,6 +614,7 @@ export class BossSystem {
     if (runtime.stateMs >= this.config.whirlwind.activeMs) {
       this.clearAttackView(runtime);
       runtime.whirlwindCooldownMs = this.config.whirlwind.cooldownMs;
+      runtime.recoveryMs = MIN_ATTACK_RECOVERY_MS;
       runtime.lastAttack = "whirlwind_blade";
       this.transitionTo(runtime, "idle");
     }
@@ -626,37 +632,35 @@ export class BossSystem {
     runtime.inkShadow.setAlpha(INK_SHADOW_ALPHA * (1 - progress));
     // 轮廓光随死亡演出同步淡出消散
     runtime.bodyGlow.setAlpha(BODY_GLOW_ALPHA_MAX * (1 - progress));
-    if (runtime.stateMs < 900 || runtime.deathNotified) {
+    if (runtime.stateMs < 900) {
       return;
     }
 
-    runtime.deathNotified = true;
-    runtime.stageCleared = true;
     this.transitionTo(runtime, "cleared");
-    eventBus.emit("stage_cleared", {
-      stageId: runtime.stageMapId,
-      bossId: this.config.id,
-      copperReward: this.config.copperReward
-    });
-    this.options.onBossDefeated({
-      bossId: this.config.id,
-      displayName: this.config.displayName,
-      copperReward: this.config.copperReward,
-      aliveSeconds: Math.round(runtime.aliveMs / 1000),
-      hitCount: runtime.hitCount,
-      attacksUsed: Array.from(runtime.attacksUsed)
-    });
   }
 
   private startNextAttack(runtime: BossRuntime): void {
-    const preferCharge = !runtime.attacksUsed.has("charge_slash")
-      || (runtime.chargeCooldownMs <= 0 && runtime.lastAttack !== "charge_slash")
-      || runtime.whirlwindCooldownMs > 0;
-    const attackId: BossAttackId = preferCharge && runtime.chargeCooldownMs <= 0
-      ? "charge_slash"
-      : runtime.whirlwindCooldownMs <= 0
+    const heroWorld = this.options.getHeroWorld();
+    const distance = Math.hypot(heroWorld.x - runtime.worldX, heroWorld.y - runtime.worldY);
+    const chargeReady = runtime.chargeCooldownMs <= 0;
+    const whirlwindReady = runtime.whirlwindCooldownMs <= 0;
+    const preferCharge = distance > this.config.whirlwind.endRadius * 0.85;
+    const attackId: BossAttackId | undefined = preferCharge
+      ? chargeReady
+        ? "charge_slash"
+        : whirlwindReady
+          ? "whirlwind_blade"
+          : undefined
+      : whirlwindReady
         ? "whirlwind_blade"
-        : "charge_slash";
+        : chargeReady
+          ? "charge_slash"
+          : undefined;
+
+    if (!attackId) {
+      this.transitionTo(runtime, "idle");
+      return;
+    }
 
     if (attackId === "charge_slash") {
       this.startChargeWindup(runtime);
@@ -718,7 +722,6 @@ export class BossSystem {
     this.scene.tweens.killTweensOf(runtime.bodyGlow);
     runtime.stageCleared = true;
     runtime.currentAttack = "none";
-    runtime.lastAttack = runtime.lastAttack === "none" ? runtime.currentAttack : runtime.lastAttack;
     this.options.playSfx("boss_defeated");
     eventBus.emit("boss_defeated", {
       bossId: this.config.id,
@@ -728,6 +731,22 @@ export class BossSystem {
       hitCount: runtime.hitCount,
       attacksUsed: Array.from(runtime.attacksUsed)
     });
+    if (!runtime.deathNotified) {
+      runtime.deathNotified = true;
+      eventBus.emit("stage_cleared", {
+        stageId: runtime.stageMapId,
+        bossId: this.config.id,
+        copperReward: this.config.copperReward
+      });
+      this.options.onBossDefeated({
+        bossId: this.config.id,
+        displayName: this.config.displayName,
+        copperReward: this.config.copperReward,
+        aliveSeconds: Math.round(runtime.aliveMs / 1000),
+        hitCount: runtime.hitCount,
+        attacksUsed: Array.from(runtime.attacksUsed)
+      });
+    }
     // 死亡演出：强震 + 暖白闪 + 金屑爆发 + 400ms 慢镜（time/tweens 双时间轴减速）
     const juice = JuiceSystem.get(this.scene);
     juice.bossDeath();

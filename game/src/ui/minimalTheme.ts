@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "./designSize";
-import { FONT_BODY, FONT_TITLE, PALETTE } from "./visualConstants";
+import { FONT_BODY, FONT_TITLE, PALETTE, shouldReduceMotion } from "./visualConstants";
 
 /**
  * 「极简碑林」共享视觉主题（方向 C）。
@@ -28,7 +28,7 @@ export interface MinimalRowHandle {
   setEnabled(enabled: boolean): void;
 }
 
-/** 字距模拟：字符间插  。导出供其他场景复用。 */
+/** 字距模拟：字符间插入窄空格（U+2009）。导出供其他场景复用。 */
 export function spacedText(text: string): string {
   return text.split("").join("\u2009");
 }
@@ -148,22 +148,24 @@ export function addMinimalBackdrop(scene: Phaser.Scene): void {
     const nearRight = scene.add.image(width + 218 * scaleFactor, bottomNear, "bamboo_edge_cluster")
       .setOrigin(1, 1).setDisplaySize(nearSize, nearSize).setAlpha(0.14).setFlipX(true).setDepth(-98);
 
-    scene.tweens.add({
-      targets: [nearLeft, farLeft],
-      x: `+=${14 * scaleFactor}`,
-      duration: 6800,
-      yoyo: true,
-      repeat: -1,
-      ease: Phaser.Math.Easing.Sine.InOut
-    });
-    scene.tweens.add({
-      targets: [nearRight, farRight],
-      x: `-=${14 * scaleFactor}`,
-      duration: 8200,
-      yoyo: true,
-      repeat: -1,
-      ease: Phaser.Math.Easing.Sine.InOut
-    });
+    if (!shouldReduceMotion(scene)) {
+      scene.tweens.add({
+        targets: [nearLeft, farLeft],
+        x: `+=${14 * scaleFactor}`,
+        duration: 6800,
+        yoyo: true,
+        repeat: -1,
+        ease: Phaser.Math.Easing.Sine.InOut
+      });
+      scene.tweens.add({
+        targets: [nearRight, farRight],
+        x: `-=${14 * scaleFactor}`,
+        duration: 8200,
+        yoyo: true,
+        repeat: -1,
+        ease: Phaser.Math.Easing.Sine.InOut
+      });
+    }
   }
 
   // 整体压暗（轻量墨纱，保留竹影可见）
@@ -254,7 +256,7 @@ export function addMinimalMenuRow(
 
   const container = scene.add.container(x, y, [text, underline]);
   const hitWidth = text.width + 32;
-  const hitHeight = text.height + 30;
+  const hitHeight = Math.max(72, text.height + 30);
   container.setInteractive(
     new Phaser.Geom.Rectangle(-hitWidth / 2, -hitHeight / 2, hitWidth, hitHeight),
     Phaser.Geom.Rectangle.Contains
@@ -265,6 +267,7 @@ export function addMinimalMenuRow(
 
   let enabled = true;
   let hovering = false;
+  let pressed = false;
 
   const applyHover = (over: boolean): void => {
     hovering = over;
@@ -294,9 +297,16 @@ export function addMinimalMenuRow(
     if (enabled) {
       applyHover(false);
     }
+    pressed = false;
   });
   container.on(Phaser.Input.Events.POINTER_DOWN, () => {
     if (enabled) {
+      pressed = true;
+    }
+  });
+  container.on(Phaser.Input.Events.POINTER_UP, () => {
+    if (enabled && pressed) {
+      pressed = false;
       onClick();
     }
   });
@@ -337,14 +347,15 @@ export function addMinimalBackRow(scene: Phaser.Scene, onClick: () => void): Min
 
   const container = scene.add.container(x, y, [text]);
   const hitWidth = text.width + 20;
-  const hitHeight = text.height + 16;
-  const hitArea = new Phaser.Geom.Rectangle(-10, -hitHeight / 2, hitWidth, hitHeight);
+  const hitHeight = Math.max(72, text.height + 16);
+  const hitArea = new Phaser.Geom.Rectangle(-10, -hitHeight / 2, Math.max(72, hitWidth), hitHeight);
   container.setInteractive(hitArea, Phaser.Geom.Rectangle.Contains);
   if (container.input) {
     container.input.cursor = "pointer";
   }
 
   let enabled = true;
+  let pressed = false;
   container.on(Phaser.Input.Events.POINTER_OVER, () => {
     if (enabled) {
       text.setColor(PALETTE.accentGoldCss);
@@ -354,9 +365,16 @@ export function addMinimalBackRow(scene: Phaser.Scene, onClick: () => void): Min
     if (enabled) {
       text.setColor(PALETTE.textSecondary);
     }
+    pressed = false;
   });
   container.on(Phaser.Input.Events.POINTER_DOWN, () => {
     if (enabled) {
+      pressed = true;
+    }
+  });
+  container.on(Phaser.Input.Events.POINTER_UP, () => {
+    if (enabled && pressed) {
+      pressed = false;
       onClick();
     }
   });

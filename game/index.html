@@ -2,9 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%2318251f'/%3E%3Cpath d='M32 8l8 22 16 6-16 6-8 14-8-14-16-6 16-6z' fill='%23f7f0d0'/%3E%3C/svg%3E" />
     <title>青石山道</title>
   </head>
@@ -18,18 +16,6 @@
         </div>
       </div>
     </main>
-    <script>
-      // 防触控板误触缩放：拦截捏合手势与 Ctrl+滚轮（浏览器设置里的缩放仍可用）
-      // —— 游戏内 pinch 会顶出 HUD/按钮，属于误触高发路径
-      for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
-        document.addEventListener(type, (event) => event.preventDefault(), { passive: false });
-      }
-      document.addEventListener("wheel", (event) => {
-        if (event.ctrlKey || event.metaKey) {
-          event.preventDefault();
-        }
-      }, { passive: false });
-    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

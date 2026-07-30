@@ -1,5 +1,9 @@
 # 13 Document Detailing Plan
 
+> Archived planning document. Its “next step” section predates the implemented
+> Phaser project and is retained only as decision history. See
+> [CURRENT-STATUS.md](CURRENT-STATUS.md) for current facts.
+
 ## 目的
 
 现有文档已经证明方向可行，但很多内容仍是方向描述。接下来要把文档逐步改成“能直接指导实现”的规格。

@@ -1,5 +1,9 @@
 # 06 Roadmap
 
+> Historical MVP roadmap. Several later content items now exist in runtime, but
+> this file has not been retroactively treated as acceptance evidence. Current
+> status is maintained in [CURRENT-STATUS.md](CURRENT-STATUS.md).
+
 ## Phase 0：文档和工程骨架
 
 工程骨架实现级规格见 [24 Technical Project Skeleton](24-technical-project-skeleton.md)。

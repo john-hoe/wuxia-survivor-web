@@ -1,5 +1,11 @@
 # 26 Task Tracker Dashboard
 
+> Historical snapshot: this board records the original MVP workflow through
+> 2026-05-09. It is not the current project status or a public evidence index.
+> Many referenced local evidence paths are absent from this checkout. Use
+> [CURRENT-STATUS.md](CURRENT-STATUS.md) and current executable checks for
+> present-tense claims.
+
 ## 目的
 
 本文是 `survivor-web` 的 MVP 任务看板，用来记录任务整体状态、分工、分工完成状态、依赖、验收标准和是否已经成功验收。
@@ -30,7 +36,7 @@
 | 指标 | 当前值 |
 | --- | ---: |
 | 总任务数 | 35 |
-| 已完成并验收 | 34 |
+| 已完成并验收（原团队记录） | 35 |
 | 待用户核对 | 0 |
 | Review 中 | 0 |
 | 进行中 | 0 |
@@ -97,14 +103,14 @@
 | SW-AUDIO-001 | done | Codex工程 | Codex工程 done | 接入基础音频系统和占位音效 | SW-ENG-003 | WebAudio 本地占位音效已接入；26 个 audio event、23 个 required placeholder event，`missingRequiredAudioEvents = 0`；按钮、命中、击杀、拾取、领悟、受伤、阵亡和预警类事件可触发；静音、音量 0、节流、24 voice cap、设置页写档和 console/page error 0 已验证；Codex 自审发现静音拖尾 P1 并已修复，Kimi/DeepSeek 无 P0-P2；证据见 `evidence/2026-05-08-sw-audio-001/` | yes |
 | SW-QA-001 | done | Codex工程 + 用户 | Codex工程 done / 用户 done | 完成 MVP 验收证据包 | SW-META-002, SW-AUDIO-001 | 3 分钟脚本、8 分钟脚本、页面流截图、性能记录、无付费入口检查通过；用户已在 2026-05-09 试玩确认 MVP 体感成功；证据见 `evidence/2026-05-09-sw-qa-001/` | yes |
 
-## Post-MVP 总览
+## Post-MVP 总览（2026-05-09 历史计划）
 
 执行路线见 [34 Post-MVP Route](34-post-mvp-route.md)。
 
 | 指标 | 当前值 |
 | --- | ---: |
 | Post-MVP 总任务数 | 7 |
-| 已完成并验收 | 1 |
+| 已完成并验收（当时记录） | 1 |
 | 进行中 | 0 |
 | 未开始 | 6 |
 | 阻塞 | 0 |

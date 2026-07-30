@@ -7,6 +7,7 @@ import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/design
 import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle } from "../ui/minimalTheme";
 import { FONT_BODY, FONT_MONO, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
+import { setAccessibleActions } from "../utils/accessibility";
 import { getAudioSystem, getRunSummary } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
 import { SCENE_KEYS } from "./sceneKeys";
@@ -27,8 +28,8 @@ const STATS_ROW_GAP = 46;
 const STATS_FIRST_ROW_Y = 176;
 const SAVE_LINE_Y = 358;
 const DETAIL_LINE_Y = 378;
-const MENU_ROW_GAP = 46;
-const MENU_FIRST_ROW_Y = 424;
+const MENU_ROW_GAP = 42;
+const MENU_FIRST_ROW_Y = 410;
 const MENU_FONT_SIZE = 24;
 const STATS_STAGGER_MS = 120;
 const COUNT_ROLL_MS = 600;
@@ -68,7 +69,7 @@ export class ResultScene extends Phaser.Scene {
 
     const isWin = this.runSummary.result === "win";
     const isDead = this.runSummary.result === "dead";
-    const title = isWin ? "凯旋归来" : this.runSummary.result === "debug" ? "调试终止" : "兵败山道";
+    const title = isWin ? "胜利 · 凯旋归来" : this.runSummary.result === "debug" ? "调试终止" : "失败 · 兵败山道";
     const sealChar = isWin ? "凯" : isDead ? "败" : undefined;
     // 标题描边：胜利芥金 / 失败朱砂 / 调试墨黑
     const titleStroke = isWin ? PALETTE.accentGoldCss : isDead ? PALETTE.cinnabarCss : "#101010";
@@ -181,30 +182,33 @@ export class ResultScene extends Phaser.Scene {
     }
 
     // 极简菜单行：再来一局（highlight 常显下划线）/ 翻阅秘籍 / 回主菜单
+    const restart = (): void => {
+      getAudioSystem(this).playPlaceholder("ui_click");
+      this.scene.stop(SCENE_KEYS.game);
+      transitionTo(this, SCENE_KEYS.game);
+    };
+    const scripture = (): void => {
+      getAudioSystem(this).playPlaceholder("ui_click");
+      transitionTo(this, SCENE_KEYS.scripture, { returnTo: "result", runSummary: this.runSummary });
+    };
+    const menu = (): void => {
+      getAudioSystem(this).playPlaceholder("ui_click");
+      this.scene.stop(SCENE_KEYS.game);
+      transitionTo(this, SCENE_KEYS.menu);
+    };
     const buttons: Array<{ label: string; highlight?: boolean; onClick: () => void }> = [
       {
         label: "再来一局",
         highlight: true,
-        onClick: () => {
-          getAudioSystem(this).playPlaceholder("ui_click");
-          this.scene.stop(SCENE_KEYS.game);
-          transitionTo(this, SCENE_KEYS.game);
-        }
+        onClick: restart
       },
       {
         label: "翻阅秘籍",
-        onClick: () => {
-          getAudioSystem(this).playPlaceholder("ui_click");
-          transitionTo(this, SCENE_KEYS.scripture, { returnTo: "result", runSummary: this.runSummary });
-        }
+        onClick: scripture
       },
       {
         label: "回主菜单",
-        onClick: () => {
-          getAudioSystem(this).playPlaceholder("ui_click");
-          this.scene.stop(SCENE_KEYS.game);
-          transitionTo(this, SCENE_KEYS.menu);
-        }
+        onClick: menu
       }
     ];
     buttons.forEach((button, index) => {
@@ -220,6 +224,11 @@ export class ResultScene extends Phaser.Scene {
         ease: Phaser.Math.Easing.Quadratic.Out
       });
     });
+    setAccessibleActions(this, title, [
+      { label: "再来一局", onActivate: restart },
+      { label: "翻阅秘籍", onActivate: scripture },
+      { label: "回主菜单", onActivate: menu }
+    ], `存活${formatTime(this.runSummary.survivalSeconds)}，击杀${this.runSummary.kills}，等级${this.runSummary.level}，获得铜钱${this.runSummary.copperEarned}。${this.runSummary.deathCause ?? ""}`);
 
     fadeIn(this);
   }

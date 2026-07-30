@@ -1,5 +1,11 @@
 # 29 Character Drop VFX Art Spec
 
+> Resolution note (2026-07-30): character dimensions in this historical
+> production brief are 1× logical authoring sizes. Runtime sprite sheets are
+> exported at 2× pixels per frame (for example hero 256×256 and basic enemy
+> 192×192). `game/src/data/artManifest.ts` is the current machine-readable
+> authority; do not export the 1× values below directly into the game.
+
 ## 目的
 
 本文承接 `SW-ART-003`、`SW-ART-004`、`SW-ART-005`，把角色、敌人、头目、掉落、招式弹体、图标和 VFX 细化到可生产、可接入、可验收的规格。

@@ -60,6 +60,8 @@ export class JuiceSystem {
   private damagePool: Phaser.GameObjects.Text[] = [];
   private ambientEmitter: Phaser.GameObjects.Particles.ParticleEmitter | null =
     null;
+  private readonly burstEmitters = new Set<Phaser.GameObjects.Particles.ParticleEmitter>();
+  private static readonly MAX_BURST_EMITTERS = 24;
   private levelUpZoomComplete?: () => void;
 
   private constructor(scene: Phaser.Scene) {
@@ -69,6 +71,10 @@ export class JuiceSystem {
     scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.resetLevelUpZoom();
       this.stopAmbient();
+      for (const emitter of this.burstEmitters) {
+        emitter.destroy();
+      }
+      this.burstEmitters.clear();
       for (const t of this.damagePool) {
         if (t.scene) {
           t.destroy();
@@ -85,7 +91,20 @@ export class JuiceSystem {
     this.lowVfx = low;
     if (low) {
       this.stopAmbient();
+    } else {
+      this.startAmbient();
     }
+  }
+
+  /** Debug/acceptance metric covering this system rather than skills alone. */
+  getActiveVfxCount(): number {
+    const damageNumbers = this.damagePool.filter((entry) => entry.active && entry.visible).length;
+    const ambientParticles = this.ambientEmitter?.getAliveParticleCount() ?? 0;
+    let burstParticles = 0;
+    for (const emitter of this.burstEmitters) {
+      burstParticles += emitter.getAliveParticleCount();
+    }
+    return damageNumbers + ambientParticles + burstParticles;
   }
 
   // ---------- 相机反馈 ----------
@@ -293,7 +312,13 @@ export class JuiceSystem {
       // 暴击/精英击杀：Back.easeOut 先大后小弹跳；其余二次渐出
       ease: style.bounce ? "Back.easeOut" : Phaser.Math.Easing.Quadratic.Out,
       onComplete: () => {
-        label.setActive(false).setVisible(false);
+        if (this.damagePool.includes(label)) {
+          label.setActive(false).setVisible(false);
+        } else if (label.scene) {
+          // Pool overflow is intentionally short-lived. Keeping an unpooled
+          // Phaser Text hidden would retain its resolution=2 canvas texture.
+          label.destroy();
+        }
       }
     });
   }
@@ -339,6 +364,15 @@ export class JuiceSystem {
       count: number;
     }
   ): void {
+    if (this.burstEmitters.size >= JuiceSystem.MAX_BURST_EMITTERS) {
+      const oldest = this.burstEmitters.values().next().value as
+        | Phaser.GameObjects.Particles.ParticleEmitter
+        | undefined;
+      oldest?.destroy();
+      if (oldest) {
+        this.burstEmitters.delete(oldest);
+      }
+    }
     const { texture, count, ...rest } = cfg;
     const emitter = this.scene.add.particles(x, y, texture, {
       blendMode: Phaser.BlendModes.ADD,
@@ -346,8 +380,12 @@ export class JuiceSystem {
       ...rest
     });
     emitter.setDepth(80);
+    this.burstEmitters.add(emitter);
     emitter.explode(count);
-    this.scene.time.delayedCall(900, () => emitter.destroy());
+    this.scene.time.delayedCall(900, () => {
+      this.burstEmitters.delete(emitter);
+      emitter.destroy();
+    });
   }
 
   private obtainText(

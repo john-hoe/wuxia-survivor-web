@@ -1,8 +1,9 @@
 import Phaser from "phaser";
-import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle } from "../ui/minimalTheme";
+import { addMinimalMenuRow, addMinimalTitle } from "../ui/minimalTheme";
 import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { fadeIn } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
+import { setAccessibleActions } from "../utils/accessibility";
 import { getAudioSystem } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
 import { SCENE_KEYS } from "./sceneKeys";
@@ -30,40 +31,21 @@ export class PauseScene extends Phaser.Scene {
 
     // 半透明墨底压暗游戏画面（暂停语义，保留在氛围底之下）
     this.add.rectangle(centerX, centerY, DESIGN_WIDTH, DESIGN_HEIGHT, 0x050705, 0.66);
-    addMinimalBackdrop(this);
     addMinimalTitle(this, "暂停", TITLE_Y, 46, "歇");
 
     const rows: Array<{ label: string; highlight?: boolean; onClick: () => void }> = [
       { label: "继续", highlight: true, onClick: () => this.resumeGame() },
       {
         label: "重新开始",
-        onClick: () => {
-          getAudioSystem(this).playPlaceholder("ui_click");
-          this.fadeOutThen(() => {
-            this.scene.stop(SCENE_KEYS.pause);
-            this.scene.stop(SCENE_KEYS.game);
-            this.scene.start(SCENE_KEYS.game);
-          });
-        }
+        onClick: () => this.restartGame()
       },
       {
         label: "回主菜单",
-        onClick: () => {
-          getAudioSystem(this).playPlaceholder("ui_click");
-          this.fadeOutThen(() => {
-            this.scene.stop(SCENE_KEYS.pause);
-            this.scene.stop(SCENE_KEYS.game);
-            this.scene.start(SCENE_KEYS.menu);
-          });
-        }
+        onClick: () => this.returnToMenu()
       },
       {
         label: "设置",
-        onClick: () => {
-          getAudioSystem(this).playPlaceholder("ui_click");
-          this.scene.launch(SCENE_KEYS.settings, { returnTo: "pause" });
-          this.scene.pause(SCENE_KEYS.pause);
-        }
+        onClick: () => this.openSettings()
       }
     ];
 
@@ -85,6 +67,23 @@ export class PauseScene extends Phaser.Scene {
       });
     });
 
+    const keyboard = this.input.keyboard;
+    if (keyboard) {
+      const resumeFromKeyboard = (): void => this.resumeGame();
+      keyboard.on("keydown-ESC", resumeFromKeyboard);
+      keyboard.on("keydown-P", resumeFromKeyboard);
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+        keyboard.off("keydown-ESC", resumeFromKeyboard);
+        keyboard.off("keydown-P", resumeFromKeyboard);
+      });
+    }
+    setAccessibleActions(this, "游戏已暂停", [
+      { label: "继续", onActivate: () => this.resumeGame() },
+      { label: "重新开始", onActivate: () => this.restartGame() },
+      { label: "回主菜单", onActivate: () => this.returnToMenu() },
+      { label: "设置", onActivate: () => this.openSettings() }
+    ]);
+
     fadeIn(this);
   }
 
@@ -104,5 +103,29 @@ export class PauseScene extends Phaser.Scene {
     eventBus.emit("pause_closed", {});
     this.scene.stop(SCENE_KEYS.pause);
     this.scene.resume(SCENE_KEYS.game);
+  }
+
+  private restartGame(): void {
+    getAudioSystem(this).playPlaceholder("ui_click");
+    this.fadeOutThen(() => {
+      this.scene.stop(SCENE_KEYS.pause);
+      this.scene.stop(SCENE_KEYS.game);
+      this.scene.start(SCENE_KEYS.game);
+    });
+  }
+
+  private returnToMenu(): void {
+    getAudioSystem(this).playPlaceholder("ui_click");
+    this.fadeOutThen(() => {
+      this.scene.stop(SCENE_KEYS.pause);
+      this.scene.stop(SCENE_KEYS.game);
+      this.scene.start(SCENE_KEYS.menu);
+    });
+  }
+
+  private openSettings(): void {
+    getAudioSystem(this).playPlaceholder("ui_click");
+    this.scene.launch(SCENE_KEYS.settings, { returnTo: "pause" });
+    this.scene.pause(SCENE_KEYS.pause);
   }
 }

@@ -16,9 +16,11 @@ import { DebugPanel } from "../ui/DebugPanel";
 import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { PALETTE, FONT_BODY, FONT_MONO, FONT_TITLE, fadeIn } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
-import { getArtAnimationKey } from "../utils/artAssets";
+import { setAccessibleActions } from "../utils/accessibility";
+import { getArtAnimationKey, preloadGameplayArtAssets, registerArtAnimations } from "../utils/artAssets";
 import { getAudioSystem, getConfigLoadResult, getSaveData, getScreenState, prepareScreenTransition, setRunSummary } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
+import { seedFromString, setGameplaySeed } from "../utils/random";
 import type { DebugSnapshot, GameEventName, RunSummary } from "../types";
 import { SCENE_KEYS } from "./sceneKeys";
 
@@ -251,27 +253,37 @@ export class GameScene extends Phaser.Scene {
   private elapsedMs = 0;
   private lastHudEventKey = "";
   private runId = "";
+  private runSeed = 0;
   private heroLevel = 1;
   private kills = 0;
   private innerPower = "0/24";
   private debugInsightShowcaseIndex = 0;
   // ── 墨染江山表现层状态（事件 + 快照双通道，防御并行代理实现差异）──
-  private moranCastEventSeen = false;
   private moranKnownUnlocked = false;
   private moranInkRippleCooldownUntilMs = 0;
   private moranAdvanceFxPrev = false;
   private lastMoranAdvanceFxAtMs = -10000;
+  private pausedForPortrait = false;
 
   constructor() {
     super(SCENE_KEYS.game);
   }
 
+  preload(): void {
+    const mapId = (this.registry.get("saveData") as { lastMapId?: string } | undefined)?.lastMapId
+      ?? stageMapConfig.defaultMapId;
+    preloadGameplayArtAssets(this, mapId);
+  }
+
   create(): void {
+    registerArtAnimations(this);
     applyResolutionCamera(this);
     enterScreen(this, "game");
     this.elapsedMs = 0;
     this.lastHudEventKey = "";
     this.runId = createRunId();
+    this.runSeed = resolveRunSeed(this.runId);
+    setGameplaySeed(this.runSeed);
     this.stageScrollX = 0;
     this.stageScrollY = 0;
     // QA-003① 出生安全区圆心：英雄出生点的散布世界（scroll 空间）坐标 = scroll 起点(0,0) + 英雄屏幕位置（屏幕中心）。
@@ -285,11 +297,11 @@ export class GameScene extends Phaser.Scene {
     this.stageMapSwitching = false;
     this.vignetteStatic = undefined;
     this.debugInsightShowcaseIndex = 0;
-    this.moranCastEventSeen = false;
     this.moranKnownUnlocked = false;
     this.moranInkRippleCooldownUntilMs = 0;
     this.moranAdvanceFxPrev = false;
     this.lastMoranAdvanceFxAtMs = -10000;
+    this.pausedForPortrait = false;
     this.heroLevel = 1;
     this.kills = 0;
     this.innerPower = "0/24";
@@ -344,7 +356,8 @@ export class GameScene extends Phaser.Scene {
         y: this.latestMovement?.velocityY ?? 0
       }),
       damageHero: (amount, source) => this.applyHeroDamage(amount, source),
-      getLowVfxMode: () => getSaveData(this).settings.lowVfxMode
+      getLowVfxMode: () => getSaveData(this).settings.lowVfxMode,
+      getStageMapId: () => this.currentMapId
     });
     this.latestEnemyDirector = this.enemyDirector.getSnapshot();
     this.bossSystem = new BossSystem(this, {
@@ -363,7 +376,14 @@ export class GameScene extends Phaser.Scene {
       initialPickupRadius: basePickupRadius,
       getSkillState: () => this.skillSystem?.getInsightState(),
       openInsight: (pendingInsight) => this.openInsight(pendingInsight),
-      playSfx: (eventId) => getAudioSystem(this).playPlaceholder(eventId)
+      playSfx: (eventId) => getAudioSystem(this).playPlaceholder(eventId),
+      healHero: (amount) => {
+        const healed = this.heroHealth?.heal(amount) ?? false;
+        if (healed) {
+          this.latestHealth = this.heroHealth?.getSnapshot();
+        }
+        return healed;
+      }
     });
     this.latestProgression = this.progressionSystem.getSnapshot();
     this.syncProgressionSnapshot();
@@ -374,11 +394,11 @@ export class GameScene extends Phaser.Scene {
         ...(this.enemyDirector?.getTargets() ?? []),
         ...(this.bossSystem?.getTargets() ?? [])
       ],
-      damageTarget: (runtimeId, amount, source) => {
+      damageTarget: (runtimeId, amount, source, attackOriginWorld) => {
         if (this.bossSystem?.isRuntimeId(runtimeId)) {
           return this.bossSystem.damageBoss(runtimeId, amount, source);
         }
-        return this.enemyDirector?.damageEnemy(runtimeId, amount, source);
+        return this.enemyDirector?.damageEnemy(runtimeId, amount, source, attackOriginWorld);
       },
       knockbackEnemy: (runtimeId, originWorld, distance, source) => this.enemyDirector?.knockbackEnemy(runtimeId, originWorld, distance, source) ?? false,
       onEnemyKilled: (result) => this.handleEnemyKilled(result),
@@ -414,7 +434,9 @@ export class GameScene extends Phaser.Scene {
     });
     fadeIn(this);
 
-    this.debugPanel = new DebugPanel(this, 16, 96, getConfigLoadResult(this).config.debug.debugPanelDefaultVisible);
+    if (import.meta.env.DEV) {
+      this.debugPanel = new DebugPanel(this, 16, 96, getConfigLoadResult(this).config.debug.debugPanelDefaultVisible);
+    }
 
     const keyboard = this.input.keyboard;
     if (keyboard) {
@@ -537,7 +559,6 @@ export class GameScene extends Phaser.Scene {
       "skill_zone_spawned",
       (payload) => {
         if (typeof payload?.skillId === "string" && payload.skillId.includes(MORAN_SKILL_ID_KEY)) {
-          this.moranCastEventSeen = true;
           this.playMoranZoneRing(payload.worldX, payload.worldY, payload.radius, payload.level, payload.advanced);
         }
       }
@@ -548,9 +569,21 @@ export class GameScene extends Phaser.Scene {
         this.playMoranAdvancePerformance();
       }
     });
+    const unsubscribeSettingsChanged = eventBus.on<{ settings?: { lowVfxMode?: boolean } }>(
+      "settings_changed",
+      (payload) => {
+        JuiceSystem.get(this).setLowVfx(payload?.settings?.lowVfxMode === true);
+        // Reapply active weather immediately so particle frequency and fog
+        // density follow the setting without waiting for a timeline change.
+        this.setWeather(this.weatherKind);
+        this.refreshNarrativeAlert();
+        this.refreshVignetteDynamics();
+      }
+    );
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       unsubscribeMoranCast();
       unsubscribeMoranAdvanced();
+      unsubscribeSettingsChanged();
     });
     // 色温叙事：精英预警压暗泛朱砂；精英被击杀/消失或兜底计时后回落。
     const unsubscribeEliteWarning = eventBus.on<{ warningSeconds?: number }>("enemy_elite_warning_started", (payload) => {
@@ -600,12 +633,34 @@ export class GameScene extends Phaser.Scene {
     });
 
     (getAudioSystem(this) as any)?.playMusic?.("music_stage_qingshi");
+    setAccessibleActions(this, "战斗中", [
+      { label: "暂停游戏", onActivate: () => this.openPause() }
+    ], "方向键或 W A S D 移动，P 或 Escape 暂停，招式会自动释放。");
+    this.installPortraitPauseGuard();
   }
 
   update(_time: number, delta: number): void {
     const activeDeltaMs = Math.min(delta, 100);
-    this.elapsedMs += activeDeltaMs;
     getAudioSystem(this).update(activeDeltaMs);
+
+    // A terminal outcome is committed synchronously. During the short visual
+    // transition, do not advance movement, enemies, skills, progression or time.
+    if (this.deathTransitionQueued) {
+      this.updateHealthFeedback(activeDeltaMs);
+      this.updateHud();
+      this.updateBossHud();
+      return;
+    }
+    if (this.bossEndQueued) {
+      if (this.bossSystem) {
+        this.latestBoss = this.bossSystem.update(activeDeltaMs);
+      }
+      this.updateBossHud();
+      this.debugPanel?.update(this.createDebugSnapshot());
+      return;
+    }
+
+    this.elapsedMs += activeDeltaMs;
 
     if (this.heroMovement) {
       this.latestMovement = this.heroMovement.update(activeDeltaMs);
@@ -641,6 +696,11 @@ export class GameScene extends Phaser.Scene {
     if (this.skillSystem && getScreenState(this) === "game") {
       this.latestSkillSnapshot = this.skillSystem.update(activeDeltaMs);
       this.updateMoranPresentation();
+      if (this.bossEndQueued) {
+        this.updateBossHud();
+        this.debugPanel?.update(this.createDebugSnapshot());
+        return;
+      }
     }
 
     if (this.progressionSystem && getScreenState(this) === "game") {
@@ -1531,6 +1591,15 @@ export class GameScene extends Phaser.Scene {
     return 1;
   }
 
+  private getWeatherParticleCount(): number {
+    return [
+      this.leafEmitter,
+      this.rainNearEmitter,
+      this.rainFarEmitter,
+      this.snowEmitter
+    ].reduce((count, emitter) => count + (emitter?.getAliveParticleCount() ?? 0), 0);
+  }
+
   private ensureWeatherTextures(): void {
     if (!this.textures.exists("weather_rain")) {
       const graphics = this.add.graphics();
@@ -2390,7 +2459,8 @@ export class GameScene extends Phaser.Scene {
     JuiceSystem.get(this).levelUp();
     this.time.delayedCall(350, () => {
       this.insightOpening = false;
-      if (getScreenState(this) !== "game") {
+      if (getScreenState(this) !== "game" || this.bossEndQueued || this.deathTransitionQueued) {
+        JuiceSystem.get(this).resetLevelUpZoom();
         return;
       }
       prepareScreenTransition(this, "insight");
@@ -2445,6 +2515,7 @@ export class GameScene extends Phaser.Scene {
   ): RunSummary {
     return {
       runId: this.runId,
+      randomSeed: this.runSeed,
       result,
       survivalSeconds: this.getElapsedSeconds(),
       kills: this.kills,
@@ -2534,7 +2605,9 @@ export class GameScene extends Phaser.Scene {
       skillDpsLast10s: skillSnapshot.skillDpsLast10s,
       advancedSkills: skillSnapshot.advancedSkills,
       gemsAlive: progression.gemsAlive,
-      activeVfx: skillSnapshot.activeVfx,
+      activeVfx: skillSnapshot.activeVfx
+        + JuiceSystem.get(this).getActiveVfxCount()
+        + this.getWeatherParticleCount(),
       audioVoices: getAudioSystem(this).getActiveVoices(),
       waveTimeSeconds: this.getElapsedSeconds(),
       directorState: enemyDirector.directorState,
@@ -2967,10 +3040,12 @@ export class GameScene extends Phaser.Scene {
       bossId: _summary.bossId
     });
     setRunSummary(this, runSummary);
-    JuiceSystem.get(this).bossDeath();
     this.setBossDim(false);
     this.debugPanel?.update(this.createDebugSnapshot());
-    this.time.delayedCall(520, () => {
+    this.time.delayedCall(950, () => {
+      if (getScreenState(this) !== "game" || !this.bossEndQueued) {
+        return;
+      }
       prepareScreenTransition(this, "result");
       this.scene.stop(SCENE_KEYS.game);
       this.scene.start(SCENE_KEYS.result, runSummary);
@@ -3020,6 +3095,19 @@ export class GameScene extends Phaser.Scene {
     if (result.option.applyEffectId === "passive_max_hp_1") {
       this.latestHealth = this.heroHealth?.increaseMaxHp(10);
     }
+    if (result.option.applyEffectId === "recurring_max_hp_2") {
+      this.latestHealth = this.heroHealth?.increaseMaxHp(2);
+    }
+    if (result.option.applyEffectId === "recurring_heal_20") {
+      this.heroHealth?.heal(20);
+      this.latestHealth = this.heroHealth?.getSnapshot();
+    }
+    if (result.option.applyEffectId === "passive_skill_cooldown_1") {
+      this.skillSystem?.increaseCooldownReduction(0.05);
+    }
+    if (result.option.applyEffectId === "recurring_skill_cooldown_1") {
+      this.skillSystem?.increaseCooldownReduction(0.01);
+    }
     this.applyInsightRecovery();
     this.latestSkillSnapshot = this.skillSystem?.getSnapshot();
     this.latestProgression = this.progressionSystem?.getSnapshot();
@@ -3035,7 +3123,34 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleHeroDeath(eventCause: string): void {
-    this.startDeathTransition("血量耗尽", eventCause);
+    this.startDeathTransition(formatDeathCause(eventCause), eventCause);
+  }
+
+  private installPortraitPauseGuard(): void {
+    const isTouchDevice = navigator.maxTouchPoints > 0
+      || window.matchMedia?.("(pointer: coarse)").matches === true;
+    if (!isTouchDevice) {
+      return;
+    }
+    const sync = (): void => {
+      const portrait = window.innerHeight > window.innerWidth;
+      if (portrait && !this.pausedForPortrait && getScreenState(this) === "game") {
+        this.pausedForPortrait = true;
+        getAudioSystem(this).suspendAll();
+        this.scene.pause(SCENE_KEYS.game);
+      } else if (!portrait && this.pausedForPortrait) {
+        this.pausedForPortrait = false;
+        getAudioSystem(this).resumeAll();
+        this.scene.resume(SCENE_KEYS.game);
+      }
+    };
+    window.addEventListener("resize", sync);
+    window.addEventListener("orientationchange", sync);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("orientationchange", sync);
+    });
+    sync();
   }
 
   private ensureStageTextures(): void {
@@ -3166,9 +3281,37 @@ export class GameScene extends Phaser.Scene {
   }
 }
 
+function formatDeathCause(source: string): string {
+  if (source === "boss_charge_slash") {
+    return "倒于首领冲锋";
+  }
+  if (source === "boss_whirlwind_blade") {
+    return "倒于首领旋风刀";
+  }
+  if (source === "boss_contact") {
+    return "被首领近身击倒";
+  }
+  if (source.startsWith("enemy")) {
+    return "倒于群敌围攻";
+  }
+  return "气血耗尽";
+}
+
 function createRunId(): string {
   const randomId = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   return `run_${randomId}`;
+}
+
+function resolveRunSeed(runId: string): number {
+  try {
+    const requested = new URLSearchParams(window.location.search).get("seed");
+    if (requested !== null && /^\d+$/.test(requested)) {
+      return Number(requested) >>> 0;
+    }
+  } catch {
+    // Non-browser test environments fall back to the run id hash.
+  }
+  return seedFromString(runId);
 }
 
 function formatSeconds(totalSeconds: number): string {
@@ -3198,18 +3341,28 @@ function createDamageEdgeFlash(scene: Phaser.Scene): Phaser.GameObjects.Rectangl
 }
 
 function createHudPauseButton(scene: Phaser.Scene, x: number, y: number, onClick: () => void, size = 34): void {
+  let pressed = false;
   if (scene.textures.exists("ui_icon_pause")) {
     const baseScale = size / 96;
     const icon = scene.add.image(x, y, "ui_icon_pause").setDisplaySize(size, size).setDepth(HUD_DEPTH_CONTENT);
-    const hitArea = scene.add.rectangle(x, y, size + 26, size + 18, 0x000000, 0).setDepth(HUD_DEPTH_TEXT);
+    const hitArea = scene.add.rectangle(x, y, 72, 72, 0x000000, 0).setDepth(HUD_DEPTH_TEXT);
     hitArea.setInteractive({ useHandCursor: true });
     hitArea.on(Phaser.Input.Events.POINTER_OVER, () => icon.setScale(baseScale * 1.08));
-    hitArea.on(Phaser.Input.Events.POINTER_OUT, () => icon.setScale(baseScale));
-    hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      icon.setScale(baseScale * 0.94);
-      onClick();
+    hitArea.on(Phaser.Input.Events.POINTER_OUT, () => {
+      pressed = false;
+      icon.setScale(baseScale);
     });
-    hitArea.on(Phaser.Input.Events.POINTER_UP, () => icon.setScale(baseScale * 1.08));
+    hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      pressed = true;
+      icon.setScale(baseScale * 0.94);
+    });
+    hitArea.on(Phaser.Input.Events.POINTER_UP, () => {
+      icon.setScale(baseScale * 1.08);
+      if (pressed) {
+        pressed = false;
+        onClick();
+      }
+    });
     return;
   }
 
@@ -3224,10 +3377,23 @@ function createHudPauseButton(scene: Phaser.Scene, x: number, y: number, onClick
     stroke: "#101010",
     strokeThickness: 3
   }).setOrigin(0.5).setDepth(HUD_DEPTH_TEXT).setResolution(2);
-  background.setInteractive({ useHandCursor: true });
-  background.on(Phaser.Input.Events.POINTER_OVER, () => background.setFillStyle(0x3a6f61, 1));
-  background.on(Phaser.Input.Events.POINTER_OUT, () => background.setFillStyle(0x2f5b4f, 0.95));
-  background.on(Phaser.Input.Events.POINTER_DOWN, onClick);
+  const hitArea = scene.add.rectangle(x, y, 72, 72, 0x000000, 0)
+    .setDepth(HUD_DEPTH_TEXT)
+    .setInteractive({ useHandCursor: true });
+  hitArea.on(Phaser.Input.Events.POINTER_OVER, () => background.setFillStyle(0x3a6f61, 1));
+  hitArea.on(Phaser.Input.Events.POINTER_OUT, () => {
+    pressed = false;
+    background.setFillStyle(0x2f5b4f, 0.95);
+  });
+  hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => {
+    pressed = true;
+  });
+  hitArea.on(Phaser.Input.Events.POINTER_UP, () => {
+    if (pressed) {
+      pressed = false;
+      onClick();
+    }
+  });
 }
 
 const DEBUG_INSIGHT_ART_SHOWCASES: Array<{ levelBefore: number; levelAfter: number; options: InsightOption[] }> = [

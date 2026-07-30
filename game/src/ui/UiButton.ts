@@ -38,6 +38,7 @@ export function createIconButton(
     ? scene.add.image(0, 0, textureKey).setDisplaySize(iconSize, iconSize)
     : scene.add.rectangle(0, 0, iconSize, iconSize, 0x102019, 1).setStrokeStyle(2, 0xd6c28d, 0.8);
   let enabled = true;
+  let pressed = false;
 
   const setBackgroundState = (state: "normal" | "hover" | "pressed" | "disabled"): void => {
     if (background instanceof Phaser.GameObjects.Image) {
@@ -68,19 +69,21 @@ export function createIconButton(
     }
     setBackgroundState("pressed");
     tweenButtonScale(scene, container, PRESS_SCALE, 70);
-    // 按下态保持 80ms 再触发回调，让"按下去"的反馈可被感知
+    pressed = true;
+  });
+  container.on(Phaser.Input.Events.POINTER_UP, () => {
+    if (!enabled || !pressed) {
+      return;
+    }
+    pressed = false;
     scene.time.delayedCall(PRESS_HOLD_MS, () => {
-      if (!container.active) {
+      if (!container.active || !enabled) {
         return;
       }
       tweenButtonScale(scene, container, 1, 190);
       onClick();
     });
-  });
-  container.on(Phaser.Input.Events.POINTER_UP, () => {
-    if (enabled) {
-      setBackgroundState("hover");
-    }
+    setBackgroundState("hover");
   });
   container.on(Phaser.Input.Events.POINTER_OVER, () => {
     if (!enabled) {
@@ -95,6 +98,7 @@ export function createIconButton(
     }
     setBackgroundState("normal");
     tweenButtonScale(scene, container, 1);
+    pressed = false;
   });
 
   container.setEnabled = (nextEnabled: boolean) => {
@@ -130,6 +134,7 @@ export function createTextButton(
   const normalStroke = 0xd6c28d;
   const disabledStroke = 0x7b7259;
   let enabled = true;
+  let pressed = false;
 
   const hasArtButton = scene.textures.exists("ui_button_primary");
   const hasDisabledArtButton = scene.textures.exists("ui_button_disabled");
@@ -188,19 +193,21 @@ export function createTextButton(
     }
     setBackgroundState("pressed");
     tweenButtonScale(scene, container, PRESS_SCALE, 70);
-    // 按下态保持 80ms 再触发回调
+    pressed = true;
+  });
+  container.on(Phaser.Input.Events.POINTER_UP, () => {
+    if (!enabled || !pressed) {
+      return;
+    }
+    pressed = false;
     scene.time.delayedCall(PRESS_HOLD_MS, () => {
-      if (!container.active) {
+      if (!container.active || !enabled) {
         return;
       }
       tweenButtonScale(scene, container, 1, 190);
       onClick();
     });
-  });
-  container.on(Phaser.Input.Events.POINTER_UP, () => {
-    if (enabled) {
-      setBackgroundState("hover");
-    }
+    setBackgroundState("hover");
   });
   container.on(Phaser.Input.Events.POINTER_OVER, () => {
     if (!enabled) {
@@ -215,6 +222,7 @@ export function createTextButton(
     }
     setBackgroundState("normal");
     tweenButtonScale(scene, container, 1);
+    pressed = false;
   });
 
   container.setEnabled = (nextEnabled: boolean) => {
@@ -263,6 +271,7 @@ export function createMenuRow(
   const restBarAlpha = highlight ? 0.55 : 0;
   const restTextColor = highlight ? PALETTE.accentGoldCss : PALETTE.textPrimary;
   let enabled = true;
+  let pressed = false;
 
   const background = scene.add.rectangle(0, 0, width, height, PALETTE.panelBg, highlight ? 0.22 : 0.14);
   const accentBar = scene.add.rectangle(-width / 2 + 1.5, 0, 3, height - 14, PALETTE.accentGold, restBarAlpha);
@@ -320,15 +329,22 @@ export function createMenuRow(
     tweenBar(restBarAlpha);
     tweenSlide(baseX);
     text.setColor(restTextColor);
+    pressed = false;
   });
   container.on(Phaser.Input.Events.POINTER_DOWN, () => {
     if (!enabled) {
       return;
     }
-    // alpha 0.7 闪 80ms 后再触发回调，让点击反馈可被感知
     container.setAlpha(0.7);
+    pressed = true;
+  });
+  container.on(Phaser.Input.Events.POINTER_UP, () => {
+    if (!enabled || !pressed) {
+      return;
+    }
+    pressed = false;
     scene.time.delayedCall(PRESS_HOLD_MS, () => {
-      if (!container.active) {
+      if (!container.active || !enabled) {
         return;
       }
       container.setAlpha(1);
@@ -355,7 +371,7 @@ export function createMenuRow(
 }
 
 function getButtonFontSize(label: string, width: number, height: number): number {
-  const visualLength = Array.from(label).reduce((total, char) => total + (/[\x00-\x7F]/.test(char) ? 0.55 : 1), 0);
+  const visualLength = Array.from(label).reduce((total, char) => total + ((char.codePointAt(0) ?? 0) <= 0x7f ? 0.55 : 1), 0);
   const heightLimit = Math.floor(height * 0.4);
   const widthLimit = Math.floor((width * 0.74) / Math.max(visualLength, 1));
   return Phaser.Math.Clamp(Math.min(24, heightLimit, widthLimit), 16, 24);

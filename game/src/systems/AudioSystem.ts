@@ -122,12 +122,10 @@ export class AudioSystem {
     if (this.isSfxSilent()) {
       this.stopAllVoices();
       this.stopHeartbeat();
-      if (!this.manuallySuspended && this.audioContext?.state === "running") {
-        void this.audioContext.suspend().catch(() => undefined);
-      }
-      return;
     }
-    if (!this.manuallySuspended && this.audioContext?.state === "suspended") {
+    if (!this.manuallySuspended && this.isAllSilent() && this.audioContext?.state === "running") {
+      void this.audioContext.suspend().catch(() => undefined);
+    } else if (!this.manuallySuspended && !this.isAllSilent() && this.audioContext?.state === "suspended") {
       void this.audioContext.resume().catch(() => undefined);
     }
     // 取消静音/音量恢复后，若有记录的目标 BGM 且当前未播，恢复播放
@@ -175,7 +173,7 @@ export class AudioSystem {
 
   resumeAll(): void {
     this.manuallySuspended = false;
-    if (this.isSfxSilent()) {
+    if (this.isAllSilent()) {
       return;
     }
     if (this.audioContext?.state === "suspended") {
@@ -199,12 +197,6 @@ export class AudioSystem {
     const context = this.ensureAudioContext();
     if (context?.state === "suspended") {
       void context.resume().catch(() => undefined);
-    }
-    // 手势解锁后预加载全部采样事件，避免首次播放回退 procedural。
-    for (const event of audioEvents) {
-      if (isSampleAudioPath(event.path)) {
-        void this.loadSample(event.path);
-      }
     }
     // QA-010：补播手势前记录的目标 BGM（手势前的 playMusic 仅记录 desiredMusicKey、不创建 AudioContext）
     if (this.desiredMusicKey && !this.currentMusic) {
@@ -294,6 +286,7 @@ export class AudioSystem {
   stopMusic(fadeMs = 500): void {
     ++this.musicToken;
     this.desiredMusicKey = undefined;
+    this.manuallySuspended = false;
     this.fadeOutCurrentMusic(fadeMs);
   }
 
@@ -492,7 +485,7 @@ export class AudioSystem {
     }
   }
 
-  /** 懒加载采样：fetch + decodeAudioData，结果按 path 缓存；失败缓存 undefined 并永久回退 procedural。 */
+  /** 懒加载采样：只缓存成功或进行中的请求；失败会移除条目，网络恢复后可重试。 */
   private loadSample(path: string): Promise<AudioBuffer | undefined> {
     const cached = this.sampleCache.get(path);
     if (cached) {
@@ -518,6 +511,11 @@ export class AudioSystem {
       }
     })();
     this.sampleCache.set(path, promise);
+    void promise.then((buffer) => {
+      if (!buffer && this.sampleCache.get(path) === promise) {
+        this.sampleCache.delete(path);
+      }
+    });
     return promise;
   }
 
@@ -564,6 +562,12 @@ export class AudioSystem {
 
   private isSfxSilent(): boolean {
     return this.settings.muted || this.settings.masterVolume <= 0.01 || this.settings.sfxVolume <= 0.01;
+  }
+
+  private isAllSilent(): boolean {
+    return this.settings.muted
+      || this.settings.masterVolume <= 0.01
+      || (this.settings.sfxVolume <= 0.01 && this.settings.musicVolume <= 0.01);
   }
 
   private getEventConfig(eventId: string): AudioEventConfig {

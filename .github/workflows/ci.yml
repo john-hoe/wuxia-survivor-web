@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: game/package-lock.json
+      - run: npm ci
+        working-directory: game
+      - run: npm run check
+        working-directory: game
+
+  asset-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: tools/asset-pipeline/requirements.txt
+      - run: python -m pip install -r tools/asset-pipeline/requirements.txt
+      - run: python tools/asset-pipeline/verify_assets.py game/src/assets --output asset-qa.json
+      - run: python tools/asset-pipeline/bgm_loop_check.py game/src/assets/audio/bgm_qingshi_loop.ogg
+      - run: python tools/asset-pipeline/bgm_loop_check.py game/src/assets/audio/bgm_maple_loop.ogg
+      - run: python tools/asset-pipeline/bgm_loop_check.py game/src/assets/audio/bgm_temple_loop.ogg

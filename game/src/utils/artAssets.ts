@@ -338,12 +338,77 @@ export const artAssetUrls = {
 export type ArtAssetId = keyof typeof artAssetUrls;
 
 export function preloadArtAssets(scene: Phaser.Scene): void {
+  preloadMatchingArtAssets(scene, () => true);
+}
+
+export function preloadEssentialArtAssets(scene: Phaser.Scene): void {
+  const essentialIds = new Set<string>([
+    "bamboo_edge_cluster",
+    "hero_shaoxia_idle",
+    "title_banner",
+    "ui_button_primary",
+    "ui_button_disabled",
+    "ui_icon_pause",
+    "ui_panel_settings"
+  ]);
+  preloadMatchingArtAssets(scene, (id) => (
+    essentialIds.has(id)
+    || id.startsWith("icon_")
+    || id.startsWith("ui_icon_back")
+    || id.startsWith("ui_icon_home")
+    || id.startsWith("ui_icon_low_vfx")
+    || id.startsWith("ui_icon_mute")
+    || id.startsWith("ui_icon_restart")
+    || id.startsWith("ui_icon_sound")
+  ));
+}
+
+export function preloadGameplayArtAssets(scene: Phaser.Scene, mapId: string): void {
+  const mapSpecific = getMapSpecificAssetIds(mapId);
+  preloadMatchingArtAssets(scene, (id) => (
+    mapSpecific.has(id)
+    || id.startsWith("hero_")
+    || id.startsWith("drop_inner_")
+    || id.startsWith("skill_")
+    || id.startsWith("vfx_")
+    || id.startsWith("ui_hud_")
+    || id.startsWith("ui_skill_")
+    || id.startsWith("ui_icon_skill_")
+    || id.startsWith("ui_icon_advance_")
+    || id.startsWith("ui_icon_passive_")
+    || id.startsWith("ui_icon_insight_")
+    || id === "ui_card_insight"
+    || id === "ui_mark_poison"
+    || id === "ui_panel_death"
+    || id === "ui_panel_result"
+    || id === "ui_panel_modal"
+    || id === "ui_divider_flourish"
+  ));
+}
+
+export function preloadScriptureArtAssets(scene: Phaser.Scene): void {
+  preloadMatchingArtAssets(scene, (id) => (
+    id.startsWith("meta_")
+    || id.startsWith("scripture_")
+    || id.startsWith("ui_scroll_")
+    || id.startsWith("ui_frame_rarity_")
+    || id.startsWith("ui_badge_")
+    || id.startsWith("ui_icon_scripture_")
+    || id === "ui_card_scripture"
+    || id === "vfx_scripture_reveal"
+  ));
+}
+
+function preloadMatchingArtAssets(scene: Phaser.Scene, include: (id: string) => boolean): void {
   const missingRequiredUrls = getMissingRequiredArtAssetUrlIds();
   if (missingRequiredUrls.length > 0) {
     throw new Error(`Missing required art asset URL imports: ${missingRequiredUrls.join(", ")}`);
   }
 
   for (const item of artManifest) {
+    if (!include(item.id) || scene.textures.exists(item.id)) {
+      continue;
+    }
     const url = artAssetUrls[item.id as ArtAssetId];
     if (!url) {
       continue;
@@ -360,6 +425,59 @@ export function preloadArtAssets(scene: Phaser.Scene): void {
 
     scene.load.image(item.id, url);
   }
+}
+
+function getMapSpecificAssetIds(mapId: string): Set<string> {
+  const shared = [
+    "enemy_bandit_grunt_walk",
+    "enemy_hound_run",
+    "enemy_shield_bandit_walk",
+    "enemy_wooden_dummy_elite_walk",
+    "rock_cluster",
+    "decor_flag",
+    "decor_stele",
+    "decor_winejar",
+    "distant_gate_shadow"
+  ];
+  if (mapId === "maple_official_road") {
+    return new Set([
+      ...shared,
+      "ground_maple_base",
+      "maple_tree_cluster",
+      "decor_stone_lion",
+      "decor_sword_mound",
+      "enemy_maple_bandit_walk",
+      "enemy_maple_wolf_run",
+      "enemy_maple_shield_walk",
+      "boss_duanjian_idle",
+      "boss_duanjian_attack"
+    ]);
+  }
+  if (mapId === "temple_ruin_nightrain") {
+    return new Set([
+      ...shared,
+      "ground_darktemple_base",
+      "decor_broken_buddha",
+      "decor_temple_ruin",
+      "decor_stone_lantern",
+      "decor_spirit_tablet",
+      "enemy_cultist_walk",
+      "enemy_scorpion_run",
+      "boss_tanzhu_idle",
+      "boss_tanzhu_attack"
+    ]);
+  }
+  return new Set([
+    ...shared,
+    "ground_qingshi_base",
+    "bamboo_edge_cluster",
+    "decor_lantern",
+    "wood_stake_flag",
+    "road_ribbon_a",
+    "road_ribbon_b",
+    "boss_heifeng_idle",
+    "boss_heifeng_attack"
+  ]);
 }
 
 export function registerArtAnimations(scene: Phaser.Scene): void {

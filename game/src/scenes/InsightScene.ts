@@ -4,6 +4,7 @@ import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/design
 import { createTextButton } from "../ui/UiButton";
 import { fadeIn, FONT_BODY, FONT_TITLE, PALETTE } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
+import { setAccessibleActions } from "../utils/accessibility";
 import { getAudioSystem } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
 import { SCENE_KEYS } from "./sceneKeys";
@@ -71,6 +72,16 @@ export class InsightScene extends Phaser.Scene {
     pendingInsight.options.forEach((option, index) => {
       this.createInsightCard(cardXs[index] ?? (230 + index * 250), option, index + 1, index);
     });
+    setAccessibleActions(
+      this,
+      "领悟选择",
+      pendingInsight.options.map((option) => ({
+        label: `${option.title}，${option.typeLabel}`,
+        description: option.description,
+        onActivate: () => this.selectCard(option.id)
+      })),
+      `从等级${pendingInsight.levelBefore}提升到等级${pendingInsight.levelAfter}，请选择一项。`
+    );
 
     const keyboard = this.input.keyboard;
     if (keyboard) {
@@ -97,10 +108,10 @@ export class InsightScene extends Phaser.Scene {
     let glow: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
     if (this.textures.exists("ui_card_insight")) {
       background = this.add.image(0, 0, "ui_card_insight")
-        .setDisplaySize(214, 306)
+        .setDisplaySize(220, 306)
         .setAlpha(0.98);
       glow = this.add.image(0, 0, "ui_card_insight")
-        .setDisplaySize(214, 306)
+        .setDisplaySize(220, 306)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setTint(0xf6d472)
         .setAlpha(0);
@@ -144,10 +155,10 @@ export class InsightScene extends Phaser.Scene {
       fontFamily: FONT_BODY,
       fontSize: "15px"
     }).setOrigin(0.5).setStroke("#14211b", 3).setResolution(2));
-    children.push(createTextButton(this, 0, 112, "领悟", () => this.selectCard(option.id), 150, 52));
+    children.push(createTextButton(this, 0, 112, "领悟", () => this.selectCard(option.id), 176, 56));
 
     const container = this.add.container(x, 306 + 34, children);
-    container.setSize(214, 306);
+    container.setSize(220, 306);
     container.setAlpha(0);
     container.setInteractive({ useHandCursor: true });
     const card: InsightCardRefs = { optionId: option.id, container, background, glow };
@@ -211,14 +222,14 @@ export class InsightScene extends Phaser.Scene {
     this.tweens.add({
       targets: picked.container,
       scale: 1.12,
-      duration: 260,
+      duration: 180,
       ease: Phaser.Math.Easing.Back.Out,
       onComplete: () => this.finishSelection()
     });
   }
 
   private finishSelection(): void {
-    this.time.delayedCall(300, () => {
+    this.time.delayedCall(100, () => {
       enterScreen(this, "game");
       this.scene.stop(SCENE_KEYS.insight);
       this.scene.resume(SCENE_KEYS.game);
@@ -389,5 +400,5 @@ function trimToVisualLength(text: string, maxUnits: number): string {
 }
 
 function getVisualLength(text: string): number {
-  return Array.from(text).reduce((total, char) => total + (/[\x00-\x7F]/.test(char) ? 0.55 : 1), 0);
+  return Array.from(text).reduce((total, char) => total + ((char.codePointAt(0) ?? 0) <= 0x7f ? 0.55 : 1), 0);
 }

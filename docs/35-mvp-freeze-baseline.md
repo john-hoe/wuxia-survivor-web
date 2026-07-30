@@ -1,5 +1,9 @@
 # 35 MVP Freeze Baseline
 
+> 历史记录，非当前验收事实源。文中引用的 `SW-QA-001` 原始证据、manifest
+> 和本地快照未进入公开仓库，因此相关通过结论当前不可独立复核。现行状态与
+> 可复验命令以 `docs/CURRENT-STATUS.md` 和根目录 `README.md` 为准。
+
 ## 目的
 
 本文记录 `survivor-web` MVP 通过后的冻结基线。它不是新玩法规格，而是后续数值平衡、正式音频、移动端适配和第二关开发的回退点。
@@ -77,7 +81,7 @@ npm run build
 完整 QA 可用既有脚本复跑，需要本地 dev server：
 
 ```bash
-npm run dev -- --host 0.0.0.0
+npm run dev -- --host 127.0.0.1
 node ../evidence/2026-05-09-sw-qa-001/run-sw-qa-001.cjs
 ```
 

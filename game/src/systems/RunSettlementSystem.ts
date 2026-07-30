@@ -8,6 +8,7 @@ import { saveSystem } from "./SaveSystem";
 
 const DIFFICULTY_MULTIPLIER = 1;
 const SETTLED_RUN_IDS_KEY = "settledRunIds";
+const MAX_PERSISTED_INTEGER = Number.MAX_SAFE_INTEGER;
 
 export type RunCopperBreakdown = {
   survivalCopper: number;
@@ -40,12 +41,12 @@ export function calculateRunCopper(summary: RunSummary): RunCopperBreakdown {
   const level = Math.max(1, readNonNegativeInteger(summary.level));
   const survivalCopper = isRewardable ? Math.floor(survivalSeconds / 10) : 0;
   const killCopper = isRewardable ? kills : 0;
-  const levelCopper = isRewardable ? level * 8 : 0;
-  const baseCopper = survivalCopper + killCopper + levelCopper;
+  const levelCopper = isRewardable ? safeInteger(level * 8) : 0;
+  const baseCopper = safeInteger(survivalCopper + killCopper + levelCopper);
   // QA-002：Boss 奖励按实际被击败 Boss 的 copperReward 结算（断剑镖头 180 / 黑风寨主 150），不再固定 150
   const bossRewardConfig = isRewardable && summary.bossDefeated ? resolveBossRewardConfig(summary) : undefined;
   const bossBonus = bossRewardConfig?.copperReward ?? 0;
-  const copperEarned = Math.floor((baseCopper + bossBonus) * DIFFICULTY_MULTIPLIER);
+  const copperEarned = safeInteger((baseCopper + bossBonus) * DIFFICULTY_MULTIPLIER);
 
   return {
     survivalCopper,
@@ -179,7 +180,7 @@ function applySummaryToSave(saveData: SaveData, runSummary: RunSummary, copperEa
   const shouldRecordRunStats = runSummary.result === "dead" || runSummary.result === "win";
   return {
     ...saveData,
-    copper: saveData.copper + copperEarned,
+    copper: safeInteger(saveData.copper + copperEarned),
     bestTimeSeconds: shouldRecordRunStats ? Math.max(saveData.bestTimeSeconds, runSummary.survivalSeconds) : saveData.bestTimeSeconds,
     bestKills: shouldRecordRunStats ? Math.max(saveData.bestKills, runSummary.kills) : saveData.bestKills,
     bestLevel: shouldRecordRunStats ? Math.max(saveData.bestLevel, runSummary.level) : saveData.bestLevel,
@@ -202,6 +203,7 @@ function applySummaryToSave(saveData: SaveData, runSummary: RunSummary, copperEa
 function normalizeRunSummary(summary: RunSummary): RunSummary {
   const normalized: RunSummary = {
     runId: readRunId(summary.runId),
+    randomSeed: readOptionalSeed(summary.randomSeed),
     result: readResultKind(summary.result),
     survivalSeconds: readNonNegativeInteger(summary.survivalSeconds),
     kills: readNonNegativeInteger(summary.kills),
@@ -216,6 +218,12 @@ function normalizeRunSummary(summary: RunSummary): RunSummary {
     (normalized as RunSummary & { bossId?: BossId }).bossId = bossId;
   }
   return normalized;
+}
+
+function readOptionalSeed(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value >>> 0
+    : undefined;
 }
 
 function readRunId(value: unknown): string {
@@ -243,7 +251,14 @@ function readNonNegativeInteger(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
   }
-  return Math.max(0, Math.floor(value));
+  return safeInteger(value);
+}
+
+function safeInteger(value: number): number {
+  if (!Number.isFinite(value)) {
+    return value > 0 ? MAX_PERSISTED_INTEGER : 0;
+  }
+  return Math.min(MAX_PERSISTED_INTEGER, Math.max(0, Math.floor(value)));
 }
 
 /** 防御性音频调用：AudioSystem 未注册或方法缺失时静默跳过。 */

@@ -23,10 +23,16 @@ let latestDebugSnapshot: DebugSnapshot | undefined;
 let latestSaveData: SaveData | undefined;
 
 export function setLatestDebugSnapshot(snapshot: DebugSnapshot): void {
+  if (!import.meta.env.DEV) {
+    return;
+  }
   latestDebugSnapshot = cloneDebugSnapshot(snapshot);
 }
 
 export function setLatestDebugScreenState(screenState: ScreenState): void {
+  if (!import.meta.env.DEV) {
+    return;
+  }
   if (!latestDebugSnapshot) {
     return;
   }
@@ -38,6 +44,9 @@ export function setLatestDebugScreenState(screenState: ScreenState): void {
 }
 
 export function setLatestSaveData(saveData: SaveData): void {
+  if (!import.meta.env.DEV) {
+    return;
+  }
   latestSaveData = cloneSaveData(saveData);
 }
 

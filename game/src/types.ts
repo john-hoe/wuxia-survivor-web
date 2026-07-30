@@ -6,7 +6,8 @@ export type ScreenState =
   | "settings"
   | "death_transition"
   | "result"
-  | "scripture";
+  | "scripture"
+  | "meridian";
 
 export type GameEventName =
   | "config_loaded"
@@ -52,6 +53,8 @@ export type GameEventName =
   | "skill_cooldown_ready"
   | "inner_power_gem_spawned"
   | "inner_power_gem_collected"
+  | "heal_drop_spawned"
+  | "heal_drop_collected"
   | "inner_power_changed"
   | "insight_ready"
   | "insight_opened"
@@ -86,6 +89,8 @@ export type RunResultKind = "dead" | "win" | "debug";
 
 export type RunSummary = {
   runId: string;
+  /** Seed for deterministic replay of gameplay decisions. */
+  randomSeed?: number;
   result: RunResultKind;
   survivalSeconds: number;
   kills: number;
@@ -116,7 +121,7 @@ export type SaveData = {
   bestKills: number;
   bestLevel: number;
   bossDefeated: boolean;
-  /** 菜单选关记住的地图 id（"qingshi_mountain_road" | "maple_official_road"；缺省/非法 = 青石山道）。 */
+  /** 菜单选关记住的地图 id；缺省/非法时回退 stageMapConfig.defaultMapId。 */
   lastMapId?: string;
   metaUpgrades: {
     max_hp: number;

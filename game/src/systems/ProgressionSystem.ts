@@ -9,9 +9,11 @@ import {
   type InsightOption,
   type PendingInsight
 } from "../data/progression";
+import { enemyConfigs } from "../data/enemies";
 import type { EnemyDamageResult } from "./EnemyDirectorSystem";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
+import { gameplayRandom } from "../utils/random";
 import { JuiceSystem } from "./JuiceSystem";
 
 type Point = {
@@ -30,6 +32,14 @@ type InnerPowerGemRuntime = {
   trailCooldownMs: number;
   absorbing: boolean;
   view: Phaser.GameObjects.Container | Phaser.GameObjects.Sprite;
+};
+
+type HealingDropRuntime = {
+  runtimeId: number;
+  worldX: number;
+  worldY: number;
+  ageMs: number;
+  view: Phaser.GameObjects.Container;
 };
 
 export type AppliedInsightResult = {
@@ -58,12 +68,16 @@ type ProgressionSystemOptions = {
   getSkillState?: () => InsightSkillState | undefined;
   openInsight: (pendingInsight: PendingInsight) => void;
   playSfx: (eventId: string) => void;
+  healHero?: (amount: number) => boolean;
+  random?: () => number;
 };
 
 const BASE_PICKUP_RADIUS_PX = 70;
 const MAGNET_EXTRA_RADIUS_PX = 80;
 const COLLECT_DISTANCE_PX = 22;
 const GEM_MAX_AGE_MS = 60000;
+const PICKUP_MAX_DISTANCE_PX = 1600;
+const HEAL_DROP_AMOUNT = 20;
 const INITIAL_MAGNET_SPEED_PX_PER_SECOND = 160;
 const MAX_MAGNET_SPEED_PX_PER_SECOND = 560;
 const MAGNET_ACCELERATION_MS = 350;
@@ -72,6 +86,7 @@ const MAX_MAGNET_TRAIL_SPRITES = 24;
 
 export class ProgressionSystem {
   private readonly gems: InnerPowerGemRuntime[] = [];
+  private readonly healingDrops: HealingDropRuntime[] = [];
   private readonly magnetTrails: Phaser.GameObjects.Sprite[] = [];
   private level = 1;
   private innerPower = 0;
@@ -95,17 +110,21 @@ export class ProgressionSystem {
     const clampedDeltaMs = Math.min(deltaMs, 100);
     this.recheckDelayMs = Math.max(0, this.recheckDelayMs - clampedDeltaMs);
     this.updateGems(clampedDeltaMs);
+    this.updateHealingDrops(clampedDeltaMs);
     this.triggerInsightIfReady();
     return this.getSnapshot();
   }
 
   spawnFromEnemyKill(result: EnemyDamageResult): void {
     const drop = enemyInnerPowerDrops[result.enemyId];
-    if (!drop || Math.random() > drop.chance) {
-      return;
+    const random = this.options.random ?? gameplayRandom;
+    if (drop && random() <= drop.chance) {
+      this.spawnGem(drop.tier, result.worldX, result.worldY);
     }
-
-    this.spawnGem(drop.tier, result.worldX, result.worldY);
+    const healChance = enemyConfigs[result.enemyId]?.healDropChance ?? 0;
+    if (healChance > 0 && random() <= healChance) {
+      this.spawnHealingDrop(result.worldX, result.worldY);
+    }
   }
 
   applyInsightOption(optionId: string): AppliedInsightResult {
@@ -159,7 +178,11 @@ export class ProgressionSystem {
     for (const trail of this.magnetTrails) {
       trail.destroy();
     }
+    for (const drop of this.healingDrops) {
+      drop.view.destroy();
+    }
     this.gems.length = 0;
+    this.healingDrops.length = 0;
     this.magnetTrails.length = 0;
   }
 
@@ -203,6 +226,10 @@ export class ProgressionSystem {
       }
 
       const distance = Math.hypot(gem.worldX - heroWorld.x, gem.worldY - heroWorld.y);
+      if (distance > PICKUP_MAX_DISTANCE_PX) {
+        this.destroyGem(index, "too_far");
+        continue;
+      }
       if (!gem.absorbing && distance <= this.pickupRadius + MAGNET_EXTRA_RADIUS_PX) {
         gem.absorbing = true;
         gem.magnetAgeMs = 0;
@@ -267,15 +294,25 @@ export class ProgressionSystem {
     }
 
     const levelBefore = this.level;
-    this.innerPower -= nextRequired;
-    this.level += 1;
+    const options = createInsightOptions(
+      this.insightCount,
+      this.selectedInsightIds,
+      this.options.getSkillState?.(),
+      this.options.random ?? gameplayRandom
+    )
+      .filter((option) => !this.selectedInsightIds.has(option.id))
+      .slice(0, 3);
+    if (options.length === 0) {
+      return;
+    }
+
     this.pendingInsight = {
       levelBefore,
-      levelAfter: this.level,
-      options: createInsightOptions(this.insightCount, this.selectedInsightIds, this.options.getSkillState?.())
-        .filter((option) => !this.selectedInsightIds.has(option.id))
-        .slice(0, 3)
+      levelAfter: this.level + 1,
+      options
     };
+    this.innerPower -= nextRequired;
+    this.level += 1;
     eventBus.emit("inner_power_changed", {
       innerPower: this.innerPower,
       nextRequired: getInnerPowerRequiredForLevel(this.level),
@@ -294,6 +331,71 @@ export class ProgressionSystem {
     if (effectId === "passive_pickup_radius_1") {
       this.pickupRadius = Math.min(145, this.pickupRadius + 15);
     }
+  }
+
+  private spawnHealingDrop(worldX: number, worldY: number): void {
+    const glow = this.scene.add.circle(0, 0, 16, 0x70c98c, 0.22)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    const bottle = this.scene.add.rectangle(0, 2, 14, 20, 0x77bf88, 0.95)
+      .setStrokeStyle(2, 0xe4f3d8, 0.9);
+    const cork = this.scene.add.rectangle(0, -10, 8, 5, 0xb98c5a, 1);
+    const crossH = this.scene.add.rectangle(0, 2, 9, 3, 0xf3f0d0, 0.9);
+    const crossV = this.scene.add.rectangle(0, 2, 3, 9, 0xf3f0d0, 0.9);
+    const view = this.scene.add.container(0, 0, [glow, bottle, cork, crossH, crossV]).setDepth(13);
+    const drop: HealingDropRuntime = {
+      runtimeId: this.nextGemRuntimeId++,
+      worldX,
+      worldY,
+      ageMs: 0,
+      view
+    };
+    this.healingDrops.push(drop);
+    this.updateHealingDropScreenPosition(drop);
+    eventBus.emit("heal_drop_spawned", {
+      runtimeId: drop.runtimeId,
+      amount: HEAL_DROP_AMOUNT,
+      worldX: roundForDebug(worldX),
+      worldY: roundForDebug(worldY)
+    });
+  }
+
+  private updateHealingDrops(deltaMs: number): void {
+    const heroWorld = this.options.getHeroWorld();
+    for (let index = this.healingDrops.length - 1; index >= 0; index -= 1) {
+      const drop = this.healingDrops[index];
+      drop.ageMs += deltaMs;
+      const distance = Math.hypot(drop.worldX - heroWorld.x, drop.worldY - heroWorld.y);
+      if (drop.ageMs >= GEM_MAX_AGE_MS || distance > PICKUP_MAX_DISTANCE_PX) {
+        drop.view.destroy();
+        this.healingDrops.splice(index, 1);
+        continue;
+      }
+      if (distance <= COLLECT_DISTANCE_PX + 12) {
+        const healed = this.options.healHero?.(HEAL_DROP_AMOUNT) ?? false;
+        if (healed) {
+          this.options.playSfx("heal_pickup");
+          JuiceSystem.get(this.scene).damageNumber(drop.view.x, drop.view.y - 6, `+${HEAL_DROP_AMOUNT}`, "heal");
+          eventBus.emit("heal_drop_collected", {
+            runtimeId: drop.runtimeId,
+            amount: HEAL_DROP_AMOUNT
+          });
+          drop.view.destroy();
+          this.healingDrops.splice(index, 1);
+          continue;
+        }
+      }
+      drop.view.setScale(1 + Math.sin((drop.ageMs + drop.runtimeId * 19) / 150) * 0.06);
+      this.updateHealingDropScreenPosition(drop);
+    }
+  }
+
+  private updateHealingDropScreenPosition(drop: HealingDropRuntime): void {
+    const heroWorld = this.options.getHeroWorld();
+    const heroScreen = this.options.getHeroScreen();
+    drop.view.setPosition(
+      heroScreen.x + drop.worldX - heroWorld.x,
+      heroScreen.y + drop.worldY - heroWorld.y
+    );
   }
 
   private createGemView(
@@ -396,7 +498,7 @@ export class ProgressionSystem {
     });
   }
 
-  private destroyGem(index: number, _reason: "collected" | "expired"): void {
+  private destroyGem(index: number, _reason: "collected" | "expired" | "too_far"): void {
     const [gem] = this.gems.splice(index, 1);
     gem.view.destroy();
   }

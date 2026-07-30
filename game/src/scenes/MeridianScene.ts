@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { JuiceSystem } from "../systems/JuiceSystem";
 import { saveSystem } from "../systems/SaveSystem";
-import type { SaveData } from "../types";
+import type { RunSummary, SaveData } from "../types";
 import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import {
   addMinimalBackdrop,
@@ -11,7 +11,9 @@ import {
 } from "../ui/minimalTheme";
 import { fadeIn, FONT_BODY, FONT_MONO, FONT_TITLE, PALETTE, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
+import { setAccessibleActions } from "../utils/accessibility";
 import { getAudioSystem, getSaveData, setSaveData } from "../utils/registry";
+import { enterScreen } from "../utils/screenFlow";
 import { SCENE_KEYS } from "./sceneKeys";
 
 /**
@@ -23,6 +25,8 @@ import { SCENE_KEYS } from "./sceneKeys";
 
 type MeridianSceneData = {
   returnTo?: string;
+  scriptureReturnTo?: "menu" | "result";
+  runSummary?: RunSummary;
 };
 
 type MetaUpgradeKey = keyof SaveData["metaUpgrades"];
@@ -203,6 +207,8 @@ const TAG_Y = 148;
 
 export class MeridianScene extends Phaser.Scene {
   private returnTo: "menu" | "scripture" = "scripture";
+  private scriptureReturnTo: "menu" | "result" = "menu";
+  private runSummary?: RunSummary;
   private dynamicRoot?: Phaser.GameObjects.Container;
   private selectedNodeId = "";
   private nodeViews = new Map<string, NodeView>();
@@ -217,7 +223,10 @@ export class MeridianScene extends Phaser.Scene {
 
   create(data?: MeridianSceneData): void {
     applyResolutionCamera(this);
+    enterScreen(this, "meridian");
     this.returnTo = data?.returnTo === "menu" ? "menu" : "scripture";
+    this.scriptureReturnTo = data?.scriptureReturnTo ?? "menu";
+    this.runSummary = data?.runSummary;
     for (const meridian of MERIDIANS) {
       for (const node of meridian.nodes) {
         this.nodeMeridian.set(node.id, meridian);
@@ -228,9 +237,7 @@ export class MeridianScene extends Phaser.Scene {
     addMinimalTitle(this, "经脉武学", 52, 46, "脉");
     this.drawFigureAndBaseMeridians();
     this.drawLegend();
-    addMinimalBackRow(this, () => {
-      transitionTo(this, this.returnTo === "menu" ? SCENE_KEYS.menu : SCENE_KEYS.scripture);
-    });
+    addMinimalBackRow(this, () => this.returnFromScene());
 
     this.selectedNodeId = this.findDefaultSelectedNodeId();
     this.refreshDynamic({ entrance: true });
@@ -374,6 +381,7 @@ export class MeridianScene extends Phaser.Scene {
     this.buildCaptions(saveData, opts?.entrance ?? false);
     this.buildSelectionRing();
     this.buildTag(saveData, opts?.entrance ?? false);
+    this.refreshAccessibleActions(saveData);
   }
 
   /** 顶部小字：铜钱 N · 已通穴位 n/15 */
@@ -457,7 +465,7 @@ export class MeridianScene extends Phaser.Scene {
         }
 
         const container = this.add.container(x, y, [halo, ring, core]).setDepth(3);
-        container.setInteractive(new Phaser.Geom.Circle(0, 0, 14), Phaser.Geom.Circle.Contains);
+        container.setInteractive(new Phaser.Geom.Circle(0, 0, 36), Phaser.Geom.Circle.Contains);
         if (container.input) {
           container.input.cursor = "pointer";
         }
@@ -638,16 +646,17 @@ export class MeridianScene extends Phaser.Scene {
     tag.add(this.add.rectangle(TAG_WIDTH / 2, 162, TAG_WIDTH - 44, 1, MERIDIAN_LINE_COLOR, 0.18));
 
     // 冲穴行（addMinimalMenuRow 小号）：可冲且铜钱够才可点
-    const canBuy = state === "avail" && nextCost !== undefined && saveData.copper >= nextCost;
     const ctaLabel = state === "locked"
       ? "未达 · 需先通前穴"
       : state === "lit"
         ? "此穴已通 · 气血周流"
         : nextCost === undefined
           ? "五重圆满"
-          : "点按冲开此穴";
+          : saveData.copper < nextCost
+            ? `铜钱不足 · 尚缺 ${nextCost - saveData.copper}`
+            : "点按冲开此穴";
     const cta = addMinimalMenuRow(this, TAG_WIDTH / 2, 186, ctaLabel, () => this.purchaseNode(node), { fontSize: 18 });
-    cta.setEnabled(state === "avail" && canBuy);
+    cta.setEnabled(state === "avail" && nextCost !== undefined);
     tag.add(cta.container);
 
     this.dynamicRoot?.add(tag);
@@ -706,6 +715,40 @@ export class MeridianScene extends Phaser.Scene {
     this.refreshDynamic({ litAnim: { meridianId: meridian.id, fromLevel: level } });
     this.animateLitExtension(meridian, level, level + 1);
     this.flashLitNode(node.id);
+  }
+
+  private refreshAccessibleActions(saveData: SaveData): void {
+    const actions = MERIDIANS.map((meridian) => {
+      const level = saveData.metaUpgrades[meridian.upgradeKey];
+      const node = meridian.nodes[level];
+      const cost = meridian.costs[level];
+      if (!node || cost === undefined) {
+        return {
+          label: `${meridian.title}，已达五重`,
+          onActivate: () => undefined
+        };
+      }
+      const shortage = Math.max(0, cost - saveData.copper);
+      return {
+        label: shortage > 0
+          ? `${meridian.title}第${CN[level + 1]}重，铜钱不足，尚缺${shortage}`
+          : `${meridian.title}第${CN[level + 1]}重，消耗${cost}铜钱`,
+        onActivate: () => this.purchaseNode(node)
+      };
+    });
+    actions.push({ label: "返回", onActivate: () => this.returnFromScene() });
+    setAccessibleActions(this, "经脉武学", actions, `当前铜钱${saveData.copper}`);
+  }
+
+  private returnFromScene(): void {
+    if (this.returnTo === "menu") {
+      transitionTo(this, SCENE_KEYS.menu);
+    } else {
+      transitionTo(this, SCENE_KEYS.scripture, {
+        returnTo: this.scriptureReturnTo,
+        runSummary: this.runSummary
+      });
+    }
   }
 
   /** 经络段玉色描边从旧重数延伸到新重数。 */

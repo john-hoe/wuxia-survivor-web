@@ -1,14 +1,32 @@
-import { feedbackSettingsDefaults, shakeScaleLevels } from "../data/gameConfig";
+import { feedbackSettingsDefaults, shakeScaleLevels, stageMapConfig, type StageMapId } from "../data/gameConfig";
 import type { GameSettings, SaveData } from "../types";
 import { eventBus } from "../utils/EventBus";
 
 export const SAVE_KEY = "wuxia_survivor_web_save_v1";
+const CURRENT_SCHEMA_VERSION = 1;
+const MAX_PERSISTED_INTEGER = Number.MAX_SAFE_INTEGER;
+
+export type SaveUpdateResult = {
+  saveData: SaveData;
+  written: boolean;
+};
 
 export class SaveSystem {
   private lastStatus = "not_loaded";
+  private writesBlocked = false;
 
   load(): SaveData {
-    const raw = window.localStorage.getItem(SAVE_KEY);
+    this.writesBlocked = false;
+    let raw: string | null;
+    try {
+      raw = window.localStorage.getItem(SAVE_KEY);
+    } catch (error) {
+      this.lastStatus = "storage_unavailable";
+      this.writesBlocked = true;
+      console.warn("Save read failed; using an in-memory default without overwriting storage.", error);
+      return this.createDefaultSave();
+    }
+
     if (!raw) {
       const saveData = this.createDefaultSave();
       this.write(saveData);
@@ -17,8 +35,13 @@ export class SaveSystem {
 
     try {
       const parsed = JSON.parse(raw) as Partial<SaveData>;
-      if (parsed.schemaVersion !== 1) {
-        throw new Error("Unsupported save schema");
+      if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+        this.lastStatus = "unsupported_schema";
+        this.writesBlocked = true;
+        console.warn(
+          `Unsupported save schema ${String(parsed.schemaVersion)}; preserving the stored data and using an in-memory default.`
+        );
+        return this.createDefaultSave();
       }
       this.lastStatus = "loaded";
       return this.withDefaults(parsed);
@@ -31,6 +54,11 @@ export class SaveSystem {
   }
 
   write(saveData: SaveData): boolean {
+    if (this.writesBlocked) {
+      this.lastStatus = "write_blocked";
+      console.warn("Save write skipped to preserve unreadable or newer stored data.");
+      return false;
+    }
     try {
       window.localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
       this.lastStatus = "written";
@@ -49,11 +77,20 @@ export class SaveSystem {
     }
   }
 
-  updateSettings(settings: GameSettings, currentSaveData?: SaveData): SaveData {
+  updateSettings(settings: GameSettings, currentSaveData?: SaveData): SaveUpdateResult {
     const saveData = currentSaveData ?? this.load();
-    saveData.settings = { ...settings };
-    this.write(saveData);
-    return saveData;
+    const nextSaveData: SaveData = {
+      ...saveData,
+      settings: { ...settings }
+    };
+    const written = this.write(nextSaveData);
+    return {
+      // A persistence failure must not silently revert the controls in the
+      // current session. The caller keeps the new in-memory value and exposes
+      // that it was not written.
+      saveData: nextSaveData,
+      written
+    };
   }
 
   getStatus(): string {
@@ -62,7 +99,7 @@ export class SaveSystem {
 
   createDefaultSave(): SaveData {
     return {
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       copper: 0,
       bestTimeSeconds: 0,
       bestKills: 0,
@@ -156,7 +193,7 @@ export class SaveSystem {
     if (typeof value !== "number" || !Number.isFinite(value)) {
       return fallback;
     }
-    return Math.max(0, Math.floor(value));
+    return Math.min(MAX_PERSISTED_INTEGER, Math.max(0, Math.floor(value)));
   }
 
   private readUpgradeLevel(value: unknown, fallback: number): number {
@@ -167,9 +204,11 @@ export class SaveSystem {
     return typeof value === "boolean" ? value : fallback;
   }
 
-  /** 选关地图 id 读档兼容：仅接受 stageMapConfig 双条目之一，其余（含缺失）回 undefined = 缺省青石。 */
-  private readLastMapId(value: unknown): string | undefined {
-    return value === "qingshi_mountain_road" || value === "maple_official_road" ? value : undefined;
+  /** 选关地图 id 读档兼容：接受当前地图配置中的任意 id。 */
+  private readLastMapId(value: unknown): StageMapId | undefined {
+    return typeof value === "string" && stageMapConfig.maps.some((map) => map.id === value)
+      ? (value as StageMapId)
+      : undefined;
   }
 
   private readVolume(value: unknown, fallback: number): number {

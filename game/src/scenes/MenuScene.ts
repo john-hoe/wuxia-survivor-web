@@ -6,6 +6,7 @@ import { applyResolutionCamera, DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/design
 import { addMinimalBackdrop, addMinimalMenuRow, addMinimalTitle, spacedText, type MinimalRowHandle } from "../ui/minimalTheme";
 import { FONT_BODY, PALETTE, fadeIn, transitionTo } from "../ui/visualConstants";
 import { eventBus } from "../utils/EventBus";
+import { setAccessibleActions } from "../utils/accessibility";
 import { getArtAnimationKey } from "../utils/artAssets";
 import { getAudioSystem, getSaveData, setSaveData } from "../utils/registry";
 import { enterScreen } from "../utils/screenFlow";
@@ -88,11 +89,23 @@ export class MenuScene extends Phaser.Scene {
 
     this.createHero(centerX, screenHeight);
 
-    const startRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y, "开始闯荡", () => {
+    const startGame = (): void => {
+      getAudioSystem(this).unlockFromGesture();
       getAudioSystem(this).playPlaceholder("ui_click");
       eventBus.emit("menu_start_clicked", {});
       transitionTo(this, SCENE_KEYS.game);
-    }, { highlight: true, fontSize: 28 });
+    };
+    const openScripture = (): void => {
+      getAudioSystem(this).unlockFromGesture();
+      getAudioSystem(this).playPlaceholder("ui_click");
+      transitionTo(this, SCENE_KEYS.scripture, { returnTo: "menu" });
+    };
+    const openSettings = (): void => {
+      getAudioSystem(this).unlockFromGesture();
+      getAudioSystem(this).playPlaceholder("ui_click");
+      transitionTo(this, SCENE_KEYS.settings, { returnTo: "menu" });
+    };
+    const startRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y, "开始闯荡", startGame, { highlight: true, fontSize: 28 });
 
     // 选关行（弱化小字）：读存档显示当前选，点击按 stageMapConfig.maps 顺序循环（三图）并写存档
     const selectedMapId = this.readSelectedMapId(saveData);
@@ -104,15 +117,9 @@ export class MenuScene extends Phaser.Scene {
     // QA-004：◀ ▶ 可点击箭头 + 行尾页码 + 行下"点击切换"提示（挂入选关行容器，随入场动画淡入）
     this.addMapRowChrome(mapRow);
 
-    const scriptureRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP + MENU_ROW_GAP, "翻阅秘籍", () => {
-      getAudioSystem(this).playPlaceholder("ui_click");
-      transitionTo(this, SCENE_KEYS.scripture, { returnTo: "menu" });
-    }, { fontSize: 28 });
+    const scriptureRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP + MENU_ROW_GAP, "翻阅秘籍", openScripture, { fontSize: 28 });
 
-    const settingsRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP + MENU_ROW_GAP * 2, "设置", () => {
-      getAudioSystem(this).playPlaceholder("ui_click");
-      transitionTo(this, SCENE_KEYS.settings, { returnTo: "menu" });
-    }, { fontSize: 28 });
+    const settingsRow = addMinimalMenuRow(this, centerX, MENU_FIRST_ROW_Y + MAP_ROW_GAP + MENU_ROW_GAP * 2, "设置", openSettings, { fontSize: 28 });
 
     // 行入场 stagger：alpha 0→1、y+10→0、delay index*90
     [startRow, mapRow, scriptureRow, settingsRow].forEach((row, index) => {
@@ -139,28 +146,45 @@ export class MenuScene extends Phaser.Scene {
 
     // QA-004：初始化页码 / 标题下"当前关卡 · X" / document.title / 画布 aria-label
     this.syncSelectedMapChrome();
+    setAccessibleActions(this, "青石山道主菜单", [
+      { label: "开始闯荡", onActivate: startGame },
+      { label: `切换关卡，当前${selectedMap.displayName}`, onActivate: () => this.cycleMapSelection() },
+      { label: "翻阅秘籍", onActivate: openScripture },
+      { label: "设置", onActivate: openSettings }
+    ], `铜钱${saveData.copper}，当前关卡${selectedMap.displayName}`);
 
     fadeIn(this);
   }
 
-  /** 右上角全屏切换：30×30 图标按钮，hover 提亮放大；不支持全屏的环境（iOS Safari）直接隐藏。 */
+  /** 右上角全屏切换：36px 图标、72px 命中区；不支持全屏的环境直接隐藏。 */
   private addFullscreenButton(): void {
     if (!this.scale.fullscreen.available) {
       return;
     }
     const button = this.textures.exists("icon_fullscreen")
-      ? this.add.image(DESIGN_WIDTH - 30, 30, "icon_fullscreen").setDisplaySize(30, 30)
-      : this.add.rectangle(DESIGN_WIDTH - 30, 30, 30, 30, 0x101010, 0.6).setStrokeStyle(1, 0xa99a20, 0.8);
+      ? this.add.image(DESIGN_WIDTH - 42, 42, "icon_fullscreen").setDisplaySize(36, 36)
+      : this.add.rectangle(DESIGN_WIDTH - 42, 42, 36, 36, 0x101010, 0.6).setStrokeStyle(1, 0xa99a20, 0.8);
+    const hitTarget = this.add.zone(DESIGN_WIDTH - 42, 42, 72, 72)
+      .setInteractive({ useHandCursor: true });
     const baseScale = button.scaleX;
     let restAlpha = 0.8;
-    button.setAlpha(restAlpha).setInteractive({ useHandCursor: true });
-    button.on(Phaser.Input.Events.POINTER_OVER, () => {
+    let pressed = false;
+    button.setAlpha(restAlpha);
+    hitTarget.on(Phaser.Input.Events.POINTER_OVER, () => {
       button.setAlpha(1).setScale(baseScale * 1.1);
     });
-    button.on(Phaser.Input.Events.POINTER_OUT, () => {
+    hitTarget.on(Phaser.Input.Events.POINTER_OUT, () => {
+      pressed = false;
       button.setAlpha(restAlpha).setScale(baseScale);
     });
-    button.on(Phaser.Input.Events.POINTER_DOWN, () => {
+    hitTarget.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      pressed = true;
+    });
+    hitTarget.on(Phaser.Input.Events.POINTER_UP, () => {
+      if (!pressed) {
+        return;
+      }
+      pressed = false;
       getAudioSystem(this).playPlaceholder("ui_click");
       try {
         this.scale.toggleFullscreen();
@@ -267,23 +291,37 @@ export class MenuScene extends Phaser.Scene {
 
   /** ◀ ▶ 箭头：加大热区 + hover 染金，点击按方向切换（阻止冒泡到选关行容器，避免一次点击连切两回）。 */
   private bindMapArrow(arrow: Phaser.GameObjects.Text, direction: number): void {
+    const hitSize = 72;
     arrow.setInteractive(
-      new Phaser.Geom.Rectangle(-18, -16, arrow.width + 36, arrow.height + 32),
+      new Phaser.Geom.Rectangle((arrow.width - hitSize) / 2, (arrow.height - hitSize) / 2, hitSize, hitSize),
       Phaser.Geom.Rectangle.Contains
     );
     if (arrow.input) {
       arrow.input.cursor = "pointer";
     }
+    let pressed = false;
     arrow.on(Phaser.Input.Events.POINTER_OVER, () => {
       arrow.setAlpha(1).setTint(PALETTE.accentGold);
     });
     arrow.on(Phaser.Input.Events.POINTER_OUT, () => {
+      pressed = false;
       arrow.setAlpha(0.7).clearTint();
     });
     arrow.on(
       Phaser.Input.Events.POINTER_DOWN,
       (_pointer: Phaser.Input.Pointer, _localX: number, _localY: number, event: Phaser.Types.Input.EventData) => {
         event.stopPropagation();
+        pressed = true;
+      }
+    );
+    arrow.on(
+      Phaser.Input.Events.POINTER_UP,
+      (_pointer: Phaser.Input.Pointer, _localX: number, _localY: number, event: Phaser.Types.Input.EventData) => {
+        event.stopPropagation();
+        if (!pressed) {
+          return;
+        }
+        pressed = false;
         this.cycleMapSelection(direction);
       }
     );

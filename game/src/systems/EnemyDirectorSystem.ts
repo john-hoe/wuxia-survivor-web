@@ -1,10 +1,12 @@
 import Phaser from "phaser";
+import { resolveBossConfigForMap } from "../data/bosses";
 import { combat001DirectorConfig, type EnemyDirectorConfig, type WaveDirectorState, type WaveSegment } from "../data/waves";
 import { enemyConfigs, MAP_ENEMY_TEXTURE_KEYS, BEHAVIOR_RESKIN_MAP_IDS, type ChargeBehavior, type EnemyBehavior, type EnemyConfig, type EnemyId, type PounceBehavior, type ShieldWallBehavior } from "../data/enemies";
 import type { GameEventName } from "../types";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../ui/designSize";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
+import { gameplayBetween, gameplayFloatBetween, gameplayPick, gameplayRandom } from "../utils/random";
 import { JuiceSystem } from "./JuiceSystem";
 
 type Point = {
@@ -183,6 +185,7 @@ type EnemyDirectorOptions = {
   getHeroVelocity?: () => Point;
   damageHero: (amount: number, source: string) => EnemyContactDamageResult | undefined;
   getLowVfxMode?: () => boolean;
+  getStageMapId?: () => string;
   config?: EnemyDirectorConfig;
 };
 
@@ -294,7 +297,7 @@ export class EnemyDirectorSystem {
   private bossRequestEmitted = false;
   private nextEliteSpawnSeconds = 0;
   private eliteWarning?: EliteWarningRuntime;
-  private readonly initialViewportClamp: "desktop" | "mobile";
+  private preciseElapsedSeconds = 0;
   private lastSpawnSide: SpawnSide | "none" = "none";
   private sameSpawnSideStreak = 0;
   private readonly spawnedEnemyIds = new Set<EnemyId>();
@@ -314,7 +317,7 @@ export class EnemyDirectorSystem {
   constructor(private readonly scene: Phaser.Scene, private readonly options: EnemyDirectorOptions) {
     this.config = options.config ?? combat001DirectorConfig;
     this.nextEliteSpawnSeconds = this.config.firstEliteSeconds;
-    this.initialViewportClamp = window.innerWidth <= 768 ? "mobile" : "desktop";
+    this.preciseElapsedSeconds = options.getElapsedSeconds();
     this.unsubscribeSlowRequest = eventBus.on("enemy_slow_requested", (payload) => {
       this.handleSlowRequest(payload);
     });
@@ -329,8 +332,10 @@ export class EnemyDirectorSystem {
 
   update(deltaMs: number): EnemyDirectorSnapshot {
     const clampedDeltaMs = Math.min(deltaMs, 100);
-    const elapsedSeconds = this.options.getElapsedSeconds();
+    this.preciseElapsedSeconds += clampedDeltaMs / 1000;
+    const elapsedSeconds = this.preciseElapsedSeconds;
     const segment = this.resolveSegment(this.getSegment(elapsedSeconds));
+    this.trimEnemiesToCap(segment.aliveCap);
     this.emitBossRequestIfNeeded(elapsedSeconds);
     this.ageRollingSamples(clampedDeltaMs);
     this.updateEnemies(clampedDeltaMs);
@@ -447,7 +452,7 @@ export class EnemyDirectorSystem {
     }
 
     const heroWorld = this.options.getHeroWorld();
-    const margin = Phaser.Math.Between(this.config.spawnOutsideMinPx, this.config.spawnOutsideMaxPx);
+    const margin = gameplayBetween(this.config.spawnOutsideMinPx, this.config.spawnOutsideMaxPx);
     const radius = Math.max(DESIGN_WIDTH, DESIGN_HEIGHT) / 2 + margin;
     let spawned = 0;
     for (let index = 0; index < budget; index += 1) {
@@ -455,7 +460,7 @@ export class EnemyDirectorSystem {
       if (!enemyId) {
         break;
       }
-      const angle = (Math.PI * 2 * index) / budget + Phaser.Math.FloatBetween(-0.15, 0.15);
+      const angle = (Math.PI * 2 * index) / budget + gameplayFloatBetween(-0.15, 0.15);
       this.spawnEnemy(enemyId, segment, {
         x: heroWorld.x + Math.cos(angle) * radius,
         y: heroWorld.y + Math.sin(angle) * radius,
@@ -865,7 +870,7 @@ export class EnemyDirectorSystem {
     }
 
     const totalWeight = candidates.reduce((sum, candidate) => sum + candidate.weight, 0);
-    let roll = Math.random() * totalWeight;
+    let roll = gameplayRandom() * totalWeight;
     for (const candidate of candidates) {
       roll -= candidate.weight;
       if (roll <= 0) {
@@ -1162,13 +1167,13 @@ export class EnemyDirectorSystem {
     const length = Math.hypot(awayX, awayY);
     const dirX = length > 0 ? awayX / length : 1;
     const dirY = length > 0 ? awayY / length : 0;
-    const distance = Phaser.Math.Between(30, 50);
+    const distance = gameplayBetween(30, 50);
     this.scene.tweens.add({
       targets: view,
       x: view.x + dirX * distance,
       y: view.y + dirY * distance,
       scaleY: view.scaleY * 0.2,
-      rotation: view.rotation + Phaser.Math.RND.pick([-1, 1]) * Phaser.Math.DegToRad(25),
+      rotation: view.rotation + gameplayPick([-1, 1]) * Phaser.Math.DegToRad(25),
       alpha: 0,
       duration: DEATH_TWEEN_MS,
       ease: "Quad.easeOut",
@@ -1185,7 +1190,7 @@ export class EnemyDirectorSystem {
     const view = enemy.view;
     const slideDirX = enemy.directionX !== 0 || enemy.directionY !== 0 ? enemy.directionX : 1;
     const slideDirY = enemy.directionY;
-    const slide = Phaser.Math.Between(10, 16);
+    const slide = gameplayBetween(10, 16);
     const flipSign = slideDirX >= 0 ? 1 : -1;
     this.scene.tweens.add({
       targets: view,
@@ -1219,11 +1224,11 @@ export class EnemyDirectorSystem {
         }
       }
     });
-    const shardCount = Phaser.Math.Between(3, 4);
+    const shardCount = gameplayBetween(3, 4);
     for (let index = 0; index < shardCount; index += 1) {
       this.spawnWoodShard(
-        view.x + Phaser.Math.Between(-16, 16),
-        view.y + Phaser.Math.Between(-34, 8),
+        view.x + gameplayBetween(-16, 16),
+        view.y + gameplayBetween(-34, 8),
         view.depth
       );
     }
@@ -1234,17 +1239,17 @@ export class EnemyDirectorSystem {
     const shard = this.scene.add.rectangle(
       x,
       y,
-      Phaser.Math.Between(10, 20),
-      Phaser.Math.Between(6, 14),
-      Phaser.Math.RND.pick(WOOD_SHARD_TINTS),
+      gameplayBetween(10, 20),
+      gameplayBetween(6, 14),
+      gameplayPick(WOOD_SHARD_TINTS),
       1
     )
       .setStrokeStyle(1, 0x2a1a10, 0.9)
       .setDepth(depth)
-      .setRotation(Math.random() * Math.PI);
-    const driftX = Phaser.Math.Between(-34, 34);
-    const rise = Phaser.Math.Between(30, 58);
-    const spin = Phaser.Math.RND.pick([-1, 1]) * Phaser.Math.FloatBetween(2.4, 4.6);
+      .setRotation(gameplayRandom() * Math.PI);
+    const driftX = gameplayBetween(-34, 34);
+    const rise = gameplayBetween(30, 58);
+    const spin = gameplayPick([-1, 1]) * gameplayFloatBetween(2.4, 4.6);
     this.scene.tweens.add({
       targets: shard,
       x: x + driftX,
@@ -1278,7 +1283,7 @@ export class EnemyDirectorSystem {
     const heroScreen = this.options.getHeroScreen();
 
     for (let attempt = 0; attempt < 12; attempt += 1) {
-      const margin = Phaser.Math.Between(this.config.spawnOutsideMinPx, this.config.spawnOutsideMaxPx);
+      const margin = gameplayBetween(this.config.spawnOutsideMinPx, this.config.spawnOutsideMaxPx);
       const spawn = this.createSpawnPointForSide(heroWorld, heroScreen, this.chooseSpawnSide(), margin);
       if (Math.hypot(spawn.x - heroWorld.x, spawn.y - heroWorld.y) >= this.config.minSpawnDistanceFromHeroPx) {
         return spawn;
@@ -1299,24 +1304,24 @@ export class EnemyDirectorSystem {
     const height = DESIGN_HEIGHT;
     const safeMinX = Math.min(96, width / 2);
     const safeMaxX = Math.max(safeMinX, width - safeMinX);
-    let screenX = width + margin;
-    let screenY = height / 2;
+    let screenX: number;
+    let screenY: number;
 
     if (side === "left") {
-      screenX = Phaser.Math.Between(-margin, -this.config.spawnOutsideMinPx);
-      screenY = Phaser.Math.Between(96, height - 96);
+      screenX = gameplayBetween(-margin, -this.config.spawnOutsideMinPx);
+      screenY = gameplayBetween(96, height - 96);
     } else if (side === "right") {
-      screenX = Phaser.Math.Between(width + this.config.spawnOutsideMinPx, width + margin);
-      screenY = Phaser.Math.Between(96, height - 96);
+      screenX = gameplayBetween(width + this.config.spawnOutsideMinPx, width + margin);
+      screenY = gameplayBetween(96, height - 96);
     } else if (side === "bottom") {
-      screenX = Phaser.Math.Between(safeMinX, safeMaxX);
-      screenY = Phaser.Math.Between(height + this.config.spawnOutsideMinPx, height + margin);
+      screenX = gameplayBetween(safeMinX, safeMaxX);
+      screenY = gameplayBetween(height + this.config.spawnOutsideMinPx, height + margin);
     } else if (side === "top") {
-      screenX = Phaser.Math.Between(safeMinX, safeMaxX);
-      screenY = Phaser.Math.Between(-margin, -this.config.spawnOutsideMinPx);
+      screenX = gameplayBetween(safeMinX, safeMaxX);
+      screenY = gameplayBetween(-margin, -this.config.spawnOutsideMinPx);
     } else {
-      screenX = Phaser.Math.RND.pick([-margin, width + margin]);
-      screenY = Phaser.Math.RND.pick([-margin, height + margin]);
+      screenX = gameplayPick([-margin, width + margin]);
+      screenY = gameplayPick([-margin, height + margin]);
     }
 
     return {
@@ -1357,7 +1362,7 @@ export class EnemyDirectorSystem {
       ? weightedSides.filter(([side]) => side !== this.lastSpawnSide)
       : weightedSides;
     const totalWeight = candidates.reduce((sum, [, weight]) => sum + weight, 0);
-    let roll = Math.random() * totalWeight;
+    let roll = gameplayRandom() * totalWeight;
     for (const [side, weight] of candidates) {
       roll -= weight;
       if (roll <= 0) {
@@ -1440,7 +1445,7 @@ export class EnemyDirectorSystem {
     }
     enemyView.setData("enemyId", config.id);
     enemyView.setData("role", config.role);
-    enemyView.setData("walkMs", Phaser.Math.Between(0, 800));
+    enemyView.setData("walkMs", gameplayBetween(0, 800));
     enemyView.setData("spriteArt", true);
     enemyView.setData("textureKey", textureKey);
     enemyView.setData("animationKey", animationKey);
@@ -1544,7 +1549,7 @@ export class EnemyDirectorSystem {
       .setAlpha(0.97);
     enemyView.setData("enemyId", config.id);
     enemyView.setData("role", config.role);
-    enemyView.setData("walkMs", Phaser.Math.Between(0, 800));
+    enemyView.setData("walkMs", gameplayBetween(0, 800));
     return enemyView;
   }
 
@@ -1564,7 +1569,7 @@ export class EnemyDirectorSystem {
       .setAlpha(0.97);
     enemyView.setData("enemyId", config.id);
     enemyView.setData("role", config.role);
-    enemyView.setData("walkMs", Phaser.Math.Between(0, 800));
+    enemyView.setData("walkMs", gameplayBetween(0, 800));
     return enemyView;
   }
 
@@ -1585,7 +1590,7 @@ export class EnemyDirectorSystem {
       .setAlpha(0.97);
     enemyView.setData("enemyId", config.id);
     enemyView.setData("role", config.role);
-    enemyView.setData("walkMs", Phaser.Math.Between(0, 800));
+    enemyView.setData("walkMs", gameplayBetween(0, 800));
     return enemyView;
   }
 
@@ -1613,7 +1618,7 @@ export class EnemyDirectorSystem {
       .setAlpha(0.98);
     enemyView.setData("enemyId", config.id);
     enemyView.setData("role", config.role);
-    enemyView.setData("walkMs", Phaser.Math.Between(0, 800));
+    enemyView.setData("walkMs", gameplayBetween(0, 800));
     return enemyView;
   }
 
@@ -1797,7 +1802,7 @@ export class EnemyDirectorSystem {
     const length = Math.hypot(toHeroX, toHeroY);
     enemy.lungeDirX = length > 0 ? toHeroX / length : (enemy.directionX !== 0 ? enemy.directionX : 1);
     enemy.lungeDirY = length > 0 ? toHeroY / length : enemy.directionY;
-    enemy.lungeDistance = Phaser.Math.Between(LUNGE_MIN_PX, LUNGE_MAX_PX);
+    enemy.lungeDistance = gameplayBetween(LUNGE_MIN_PX, LUNGE_MAX_PX);
     enemy.lungeAgeMs = 0;
   }
 
@@ -2065,8 +2070,8 @@ export class EnemyDirectorSystem {
    */
   private applyHitKnockback(enemy: EnemyRuntime): void {
     if (enemy.config.tier === "elite") {
-      const angle = Math.random() * Math.PI * 2;
-      const distance = Phaser.Math.Between(HIT_KNOCKBACK_ELITE_MIN_PX, HIT_KNOCKBACK_ELITE_MAX_PX);
+      const angle = gameplayRandom() * Math.PI * 2;
+      const distance = gameplayBetween(HIT_KNOCKBACK_ELITE_MIN_PX, HIT_KNOCKBACK_ELITE_MAX_PX);
       enemy.hitOffsetX = Math.cos(angle) * distance;
       enemy.hitOffsetY = Math.sin(angle) * distance;
     } else {
@@ -2076,7 +2081,7 @@ export class EnemyDirectorSystem {
       const length = Math.hypot(awayX, awayY);
       const dirX = length > 0 ? awayX / length : 1;
       const dirY = length > 0 ? awayY / length : 0;
-      const distance = Phaser.Math.Between(HIT_KNOCKBACK_NORMAL_MIN_PX, HIT_KNOCKBACK_NORMAL_MAX_PX);
+      const distance = gameplayBetween(HIT_KNOCKBACK_NORMAL_MIN_PX, HIT_KNOCKBACK_NORMAL_MAX_PX);
       enemy.hitOffsetX = dirX * distance;
       enemy.hitOffsetY = dirY * distance;
     }
@@ -2128,16 +2133,16 @@ export class EnemyDirectorSystem {
     }
     const texture = this.scene.textures.get(HIT_INK_SPLAT_TEXTURE);
     const frames = HIT_INK_SPLAT_FRAMES.filter((name) => texture.has(name));
-    const scale = Phaser.Math.FloatBetween(HIT_INK_SPLAT_SCALE_MIN, HIT_INK_SPLAT_SCALE_MAX);
+    const scale = gameplayFloatBetween(HIT_INK_SPLAT_SCALE_MIN, HIT_INK_SPLAT_SCALE_MAX);
     const splat = this.scene.add.sprite(
-      screenX + Phaser.Math.Between(-HIT_INK_SPLAT_JITTER_PX, HIT_INK_SPLAT_JITTER_PX),
-      screenY + Phaser.Math.Between(-HIT_INK_SPLAT_JITTER_PX, HIT_INK_SPLAT_JITTER_PX),
+      screenX + gameplayBetween(-HIT_INK_SPLAT_JITTER_PX, HIT_INK_SPLAT_JITTER_PX),
+      screenY + gameplayBetween(-HIT_INK_SPLAT_JITTER_PX, HIT_INK_SPLAT_JITTER_PX),
       HIT_INK_SPLAT_TEXTURE,
-      frames.length > 0 ? Phaser.Math.RND.pick(frames) : 0
+      frames.length > 0 ? gameplayPick(frames) : 0
     )
       .setDepth(depth)
       .setScale(scale)
-      .setRotation(Phaser.Math.FloatBetween(-0.6, 0.6))
+      .setRotation(gameplayFloatBetween(-0.6, 0.6))
       .setAlpha(0.92)
       .setBlendMode(Phaser.BlendModes.NORMAL);
     this.activeSplats.add(splat);
@@ -2167,7 +2172,7 @@ export class EnemyDirectorSystem {
       this.clearEliteWarning();
       if (this.canSpawnElite(elapsedSeconds, segment)) {
         this.spawnEnemy("wooden_dummy_elite", segment, spawn);
-        this.nextEliteSpawnSeconds = elapsedSeconds + Phaser.Math.Between(
+        this.nextEliteSpawnSeconds = elapsedSeconds + gameplayBetween(
           this.config.eliteRespawnMinSeconds,
           this.config.eliteRespawnMaxSeconds
         );
@@ -2186,7 +2191,11 @@ export class EnemyDirectorSystem {
     }
 
     const spawn = this.pickSpawnPoint(this.options.getHeroWorld());
-    const warning = this.createEliteWarning(spawn, this.nextEliteSpawnSeconds);
+    const spawnSeconds = Math.max(
+      this.nextEliteSpawnSeconds,
+      elapsedSeconds + this.config.eliteWarningSeconds
+    );
+    const warning = this.createEliteWarning(spawn, spawnSeconds);
     this.eliteWarning = warning;
     playSfxSafely(this.scene, "elite_warning");
     eventBus.emit("enemy_elite_warning_started", {
@@ -2201,6 +2210,9 @@ export class EnemyDirectorSystem {
   private canSpawnElite(elapsedSeconds: number, segment: ResolvedWaveSegment): boolean {
     const config = enemyConfigs.wooden_dummy_elite;
     if (elapsedSeconds < config.spawnAfterSeconds) {
+      return false;
+    }
+    if (elapsedSeconds >= this.config.bossRequestSeconds - 15) {
       return false;
     }
     if (this.getEliteAlive() >= this.config.maxEliteAlive) {
@@ -2290,7 +2302,7 @@ export class EnemyDirectorSystem {
 
   private resolveSegment(segment: WaveSegment): ResolvedWaveSegment {
     const lowVfxMode = this.options.getLowVfxMode?.() ?? false;
-    const platformClamp = lowVfxMode ? "low_vfx" : this.initialViewportClamp;
+    const platformClamp = lowVfxMode ? "low_vfx" : detectMobilePlatform() ? "mobile" : "desktop";
     const capLimit = platformClamp === "low_vfx"
       ? this.config.lowVfxAliveCap
       : platformClamp === "mobile"
@@ -2334,10 +2346,34 @@ export class EnemyDirectorSystem {
     }
 
     this.bossRequestEmitted = true;
+    const mapId = this.options.getStageMapId?.();
     eventBus.emit("boss_spawn_requested", {
-      bossId: "heifeng_chief",
+      bossId: mapId ? resolveBossConfigForMap(mapId).id : "heifeng_chief",
       waveTimeSeconds: elapsedSeconds
     });
+  }
+
+  private trimEnemiesToCap(aliveCap: number): void {
+    while (this.enemies.length > aliveCap) {
+      const heroWorld = this.options.getHeroWorld();
+      let candidateIndex = -1;
+      let farthestDistance = -1;
+      for (let index = 0; index < this.enemies.length; index += 1) {
+        const enemy = this.enemies[index];
+        if (enemy.config.tier === "elite") {
+          continue;
+        }
+        const distance = Math.hypot(enemy.worldX - heroWorld.x, enemy.worldY - heroWorld.y);
+        if (distance > farthestDistance) {
+          farthestDistance = distance;
+          candidateIndex = index;
+        }
+      }
+      if (candidateIndex < 0) {
+        break;
+      }
+      this.despawnEnemy(candidateIndex, "alive_cap_reduced", farthestDistance);
+    }
   }
 
   private ageRollingSamples(deltaMs: number): void {
@@ -2473,6 +2509,16 @@ function getSpriteRoleMotion(role: EnemyConfig["role"]): { rotateMs: number; rot
     return { rotateMs: 260, rotation: 0.02, pulseMs: 210, pulse: 0.006 };
   }
   return { rotateMs: 150, rotation: 0.026, pulseMs: 110, pulse: 0.008 };
+}
+
+export function detectMobilePlatform(): boolean {
+  const touchCapable = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
+  const coarsePointer = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(pointer: coarse)").matches;
+  const compactViewport = typeof window !== "undefined"
+    && Math.min(window.innerWidth, window.innerHeight) <= 600;
+  return touchCapable || coarsePointer || compactViewport;
 }
 
 function getOppositeSide(side: Exclude<SpawnSide, "corner">): Exclude<SpawnSide, "corner"> {

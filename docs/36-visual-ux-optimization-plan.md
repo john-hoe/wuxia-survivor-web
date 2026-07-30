@@ -161,24 +161,15 @@
 
 ---
 
-## 7. `~/.workspace/.env/apikey` 可用资源评估
+## 7. 外部生成服务边界
 
-文件里与本项目视觉/音频升级直接相关的 key（其余如 Supabase、Resend、GA4、社交/广告/代理类等与本次优化无关，不列入）：
+本仓库不记录开发者本机密钥路径、已开通服务清单或账号能力。资产生产者可自行选择满足质量和授权要求的供应商，但必须：
 
-| Key | 用途定位 | 在本方案中的用法 |
-|-----|----------|------------------|
-| **Gemini_API_Key** | 图像生成（gemini 图像模型） | **主力资产重绘**：Q 版国风统一画风的恶犬/Boss、青石板地面、剑气弹体、尘烟 VFX。带风格参考图 img2img 效果最好 |
-| **dragon code gpt-image-2 api_key**（附使用指南 dragoncode.codes） | gpt-image 图像生成 | **备选主力**：UI 面板重切（墨绿描金空槽血条、九宫格源图）、透明底 sprite。对精确透明背景/版式控制较好 |
-| **bailian_api_key**（阿里百炼） | 通义万相图像 + 通义模型 | **国风题材特化**：水墨竹子、山门、灯笼幡旗等国风点缀件；中文 prompt 理解最好，武侠语义不易跑偏 |
-| **Kling_AI_Access_Key / Secret_Key** | 可灵视频生成 | ① 主菜单动态背景（竹影摇曳循环视频 → 抽帧做序列帧或直接视频纹理）② Boss 登场演出参考 ③ 宣传视频 |
-| **seedance 2.0 api_key**（即梦） | 视频生成 | 与可灵互补：技能特效动态参考（剑气流光、水墨冲击）→ 抽帧转 spritesheet |
-| **Meshy_API_Key** | 3D 模型生成 | 统一画风的终极手段：生成 Q 版武侠角色 3D 模型 → 固定机位渲染 8 方向/动作帧 → 彻底解决"画风三系混杂" |
-| **minimax api_key** | MiniMax（语音/音乐生成） | **BGM 与音效**：生成武侠循环 BGM、木鱼/鼓点等短音效，弥补音频目录全空 |
-| **openrouter / deepseekv4 / z.ai / kimi coding / xiaomimimo** | 文本/多模态大模型 | 生成图像 prompt 工程、批量资产清单与验收脚本编写、辅助编码实施本方案 |
-| **cloudflare account id / deploy token** | Cloudflare 部署 | 优化完成后部署游戏到 Pages/CDN（静态托管 + 全球加速），可配 Turnstile（已有 key）防爬 |
-| **Tavily api_key** | 搜索 API | 后续做自动化美术参考调研/竞品监控时可用 |
-
-**推荐组合**：图像主力 Gemini + gpt-image-2（透明底/UI）+ 百炼（国风件）；视频 Kling/即梦抽帧做特效与动态菜单；MiniMax 出 BGM/SFX；若画风统一要求极高再引入 Meshy 渲染管线。
+- 只从仓库外环境变量读取凭证；
+- 不在日志、任务 JSON、截图或交接文档中写入密钥与完整鉴权头；
+- 为每个进入版本的资产记录 provider、model、prompt、尺寸、日期、来源文件和许可依据；
+- 远程下载使用 tracked 安全下载器的 HTTPS、hostname、MIME 和体积限制；
+- 提交前完成来源清单与授权复核，不能用“generated”单一标签代替。
 
 ---
 

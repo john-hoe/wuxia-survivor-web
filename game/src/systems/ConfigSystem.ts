@@ -2,6 +2,8 @@ import { artManifest, countMissingRequiredAssets } from "../data/artManifest";
 import { audioEvents, countMissingRequiredAudioEvents } from "../data/audio";
 import { MAP_BOSS_IDS } from "../data/bosses";
 import { debugConfig, feedbackSettingsDefaults, shakeScaleLevels, stageConfig, stageMapConfig } from "../data/gameConfig";
+import { enemyConfigs } from "../data/enemies";
+import { skillConfigs, skillOrder } from "../data/skills";
 import type { ConfigLoadResult, GameConfigBundle, ManifestStats } from "../types";
 
 const NOT_LOADED_RESULT: ConfigLoadResult = {
@@ -101,6 +103,39 @@ function validateConfig(config: GameConfigBundle): string[] {
   }
   if (!(shakeScaleLevels as readonly number[]).includes(feedbackSettingsDefaults.shakeScale)) {
     errors.push("feedbackSettingsDefaults.shakeScale must be one of the shakeScaleLevels presets");
+  }
+  const mapIds = new Set(stageMapConfig.maps.map((map) => map.id));
+  if (mapIds.size !== stageMapConfig.maps.length) {
+    errors.push("stageMapConfig map ids must be unique");
+  }
+  if (!mapIds.has(stageMapConfig.defaultMapId)) {
+    errors.push("stageMapConfig.defaultMapId must reference an existing map");
+  }
+  for (const map of stageMapConfig.maps) {
+    if (!(map.id in MAP_BOSS_IDS)) {
+      errors.push(`Map ${map.id} must have an explicit boss mapping`);
+    }
+    if (!audioEvents.some((event) => event.id === map.musicId && event.bus === "music")) {
+      errors.push(`Map ${map.id} references missing music event ${map.musicId}`);
+    }
+    const weightSum = map.scatterPool.reduce((sum, entry) => sum + entry.weight, 0);
+    if (map.scatterPool.some((entry) => !Number.isFinite(entry.weight) || entry.weight < 0) || Math.abs(weightSum - 1) > 0.001) {
+      errors.push(`Map ${map.id} scatter weights must be non-negative and sum to 1`);
+    }
+  }
+  for (const enemy of Object.values(enemyConfigs)) {
+    if (enemy.innerPowerDropChance < 0 || enemy.innerPowerDropChance > 1) {
+      errors.push(`Enemy ${enemy.id} innerPowerDropChance must be within [0,1]`);
+    }
+    if (enemy.healDropChance < 0 || enemy.healDropChance > 1) {
+      errors.push(`Enemy ${enemy.id} healDropChance must be within [0,1]`);
+    }
+  }
+  for (const skillId of skillOrder) {
+    const skill = skillConfigs[skillId];
+    if (!skill || skill.maxLevel < 1 || skill.levels.length !== skill.maxLevel) {
+      errors.push(`Skill ${skillId} must define exactly maxLevel level entries`);
+    }
   }
   return errors;
 }
