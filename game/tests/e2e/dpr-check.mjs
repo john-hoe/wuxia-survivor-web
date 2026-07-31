@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
 
-const baseUrl = process.env.WUXIA_BASE_URL ?? "http://127.0.0.1:4173";
+const baseUrl = process.env.WUXIA_BASE_URL ?? "http://127.0.0.1:5281";
 const outputRoot = resolve(process.env.WUXIA_EVIDENCE_DIR ?? "test-results/dpr");
 await mkdir(outputRoot, { recursive: true });
 
