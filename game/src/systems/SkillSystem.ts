@@ -8,7 +8,7 @@ import type { EnemyDamageResult, EnemyTargetSnapshot } from "./EnemyDirectorSyst
 import type { BossDamageResult, BossTargetSnapshot } from "./BossSystem";
 import { eventBus } from "../utils/EventBus";
 import { getArtAnimationKey } from "../utils/artAssets";
-import { segmentIntersectsCircle } from "../utils/geometry";
+import { getSegmentCircleFirstIntersection } from "../utils/geometry";
 import { JuiceSystem, type DamageKind } from "./JuiceSystem";
 
 type Point = {
@@ -2093,7 +2093,7 @@ export class SkillSystem {
       }
 
       const hitDistance = target.collisionRadius + projectile.radius;
-      if (!segmentIntersectsCircle(
+      const impactPoint = getSegmentCircleFirstIntersection(
         previousX,
         previousY,
         projectile.worldX,
@@ -2101,14 +2101,15 @@ export class SkillSystem {
         target.worldX,
         target.worldY,
         hitDistance
-      )) {
+      );
+      if (!impactPoint) {
         continue;
       }
 
       const result = this.applySkillDamage(projectile.skillId, target, projectile.damage, {
         projectileRuntimeId: projectile.runtimeId,
         source: projectile.advanced ? "advanced_projectile" : "projectile",
-        attackOriginWorld: { x: projectile.worldX, y: projectile.worldY }
+        attackOriginWorld: impactPoint
       });
       if (!result?.damaged) {
         continue;

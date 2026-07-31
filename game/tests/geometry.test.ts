@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { segmentIntersectsCircle } from "../src/utils/geometry";
+import {
+  getSegmentCircleFirstIntersection,
+  segmentIntersectsCircle
+} from "../src/utils/geometry";
 
 describe("segmentIntersectsCircle", () => {
   it("detects a fast projectile crossing a target between frames", () => {
@@ -13,5 +16,13 @@ describe("segmentIntersectsCircle", () => {
   it("handles a stationary projectile and clamps negative radii", () => {
     expect(segmentIntersectsCircle(2, 2, 2, 2, 2, 2, -1)).toBe(true);
     expect(segmentIntersectsCircle(2, 2, 2, 2, 2.1, 2, -1)).toBe(false);
+  });
+
+  it("returns the incoming-side impact point when a low-FPS step crosses a shield target", () => {
+    const impactPoint = getSegmentCircleFirstIntersection(-40, 0, 12, 0, 0, 0, 34);
+
+    expect(impactPoint).toEqual({ x: -34, y: 0 });
+    expect(Math.sign(impactPoint!.x) * -1).toBe(1);
+    expect(Math.sign(12) * -1).toBe(-1);
   });
 });
